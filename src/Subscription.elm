@@ -1,13 +1,10 @@
-module Subscription exposing (Subscription, batch, fromJs, none, onConnect, onDisconnect, onResize, timeEvery, toSub)
+module Subscription exposing (Subscription, batch, fromJs, none, onResize, timeEvery)
 
-import Browser.Events
 import Duration exposing (Duration)
 import Effect.Internal
 import Json.Decode
-import Lamdera
 import Pixels exposing (Pixels)
 import Quantity exposing (Quantity)
-import TestId exposing (ClientId, SessionId)
 import Time
 
 
@@ -48,16 +45,6 @@ fromJs =
     Effect.Internal.SubPort
 
 
-onConnect : (SessionId -> ClientId -> msg) -> Subscription BackendOnly msg
-onConnect =
-    Effect.Internal.OnConnect
-
-
-onDisconnect : (SessionId -> ClientId -> msg) -> Subscription BackendOnly msg
-onDisconnect =
-    Effect.Internal.OnDisconnect
-
-
 
 --map : (a -> b) -> FrontendSub a -> FrontendSub b
 --map mapFunc subscription =
@@ -78,30 +65,3 @@ onDisconnect =
 --                    portFunction msg_ |> Sub.map mapFunc
 --            in
 --            Port portName portFunction_ (msg >> mapFunc)
-
-
-toSub : Subscription restriction msg -> Sub msg
-toSub sub =
-    case sub of
-        Effect.Internal.SubBatch subs ->
-            List.map toSub subs |> Sub.batch
-
-        Effect.Internal.SubNone ->
-            Sub.none
-
-        Effect.Internal.TimeEvery duration msg ->
-            Time.every (Duration.inMilliseconds duration) msg
-
-        Effect.Internal.OnResize msg ->
-            Browser.Events.onResize (\w h -> msg (Pixels.pixels w) (Pixels.pixels h))
-
-        Effect.Internal.SubPort _ portFunction msg ->
-            portFunction msg
-
-        Effect.Internal.OnConnect msg ->
-            Lamdera.onConnect
-                (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))
-
-        Effect.Internal.OnDisconnect msg ->
-            Lamdera.onDisconnect
-                (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))

@@ -8,9 +8,12 @@ module Effect.Internal exposing
     , NavigationKey(..)
     , Subscription(..)
     , Task(..)
+    , toCmd
+    , toSub
     )
 
 import Browser.Dom
+import Browser.Events
 import Browser.Navigation
 import Bytes exposing (Bytes)
 import Bytes.Encode
@@ -58,6 +61,7 @@ type Effect restriction toMsg msg
     | Task (Task restriction msg msg)
     | Port String (Json.Encode.Value -> Cmd msg) Json.Encode.Value
     | SendToFrontend ClientId toMsg
+    | Broadcast toMsg
     | FileDownloadUrl { href : String }
     | FileDownloadString { name : String, mimeType : String, content : String }
     | FileDownloadBytes { name : String, mimeType : String, content : Bytes }
@@ -174,6 +178,9 @@ toCmd effect =
         FileSelectFiles mimeTypes msg ->
             File.Select.files mimeTypes (\file restOfFiles -> msg (RealFile file) (List.map RealFile restOfFiles))
 
+        Broadcast toMsg ->
+            Lamdera.broadcast toMsg
+
 
 toTask : Task restriction x b -> Task.Task x b
 toTask simulatedTask =
@@ -256,3 +263,30 @@ toTask simulatedTask =
                 MockFile { content } ->
                     -- This isn't the correct behavior but it should be okay as MockFile should never be used here.
                     Task.succeed content |> Task.andThen (\result -> toTask (function result))
+
+
+toSub : Subscription restriction msg -> Sub msg
+toSub sub =
+    case sub of
+        SubBatch subs ->
+            List.map toSub subs |> Sub.batch
+
+        SubNone ->
+            Sub.none
+
+        TimeEvery duration msg ->
+            Time.every (Duration.inMilliseconds duration) msg
+
+        OnResize msg ->
+            Browser.Events.onResize (\w h -> msg (Pixels.pixels w) (Pixels.pixels h))
+
+        SubPort _ portFunction msg ->
+            portFunction msg
+
+        OnConnect msg ->
+            Lamdera.onConnect
+                (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))
+
+        OnDisconnect msg ->
+            Lamdera.onDisconnect
+                (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))

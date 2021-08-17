@@ -1090,6 +1090,9 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
         FileSelectFiles strings function ->
             Debug.todo ""
 
+        Broadcast _ ->
+            state
+
 
 getPortSubscriptions :
     Subscription FrontendOnly frontendMsg
@@ -1221,6 +1224,14 @@ runBackendEffects frontendApp backendApp effect state =
 
         FileSelectFiles _ _ ->
             state
+
+        Broadcast toFrontend ->
+            { state
+                | frontends =
+                    Dict.map
+                        (\_ frontend -> { frontend | toFrontend = frontend.toFrontend ++ [ toFrontend ] })
+                        state.frontends
+            }
 
 
 runTask :

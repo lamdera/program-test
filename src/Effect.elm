@@ -9,15 +9,12 @@ module Effect exposing
     , navigationPushUrl
     , navigationReplaceUrl
     , none
-    , sendToBackend
-    , sendToFrontend
     , sendToJs
     )
 
 import Effect.Internal exposing (Effect(..), NavigationKey, Subscription(..))
 import Effect.Task
 import Json.Encode
-import TestId exposing (ClientId)
 
 
 type alias FrontendOnly =
@@ -42,11 +39,6 @@ none =
     None
 
 
-sendToBackend : toMsg -> Effect FrontendOnly toMsg msg
-sendToBackend =
-    SendToBackend
-
-
 navigationPushUrl : NavigationKey -> String -> Effect restriction toMsg msg
 navigationPushUrl =
     NavigationPushUrl
@@ -65,11 +57,6 @@ navigationLoad =
 sendToJs : String -> (Json.Encode.Value -> Cmd msg) -> Json.Encode.Value -> Effect FrontendOnly toMsg msg
 sendToJs =
     Port
-
-
-sendToFrontend : ClientId -> toMsg -> Effect BackendOnly toMsg msg
-sendToFrontend =
-    SendToFrontend
 
 
 type alias PortToJs =
@@ -126,3 +113,6 @@ map mapToMsg mapMsg frontendEffect =
 
         FileSelectFiles strings function ->
             FileSelectFiles strings (\file restOfFiles -> function file restOfFiles |> mapMsg)
+
+        Broadcast toMsg ->
+            Broadcast (mapToMsg toMsg)
