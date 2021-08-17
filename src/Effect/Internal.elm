@@ -1,11 +1,13 @@
-module TestInternal exposing
-    ( Effect(..)
+module Effect.Internal exposing
+    ( BackendOnly
+    , Effect(..)
     , File(..)
+    , FrontendOnly
     , HttpBody(..)
     , HttpRequest
     , NavigationKey(..)
-    , SimulatedTask(..)
     , Subscription(..)
+    , Task(..)
     )
 
 import Browser.Dom
@@ -23,6 +25,14 @@ import Quantity exposing (Quantity)
 import Task
 import TestId exposing (ClientId, SessionId)
 import Time
+
+
+type FrontendOnly
+    = FrontendOnly Never
+
+
+type BackendOnly
+    = BackendOnly Never
 
 
 type Subscription restriction msg
@@ -44,22 +54,22 @@ type Effect restriction toMsg msg
     | NavigationLoad String
     | SelectFile (List String) (File -> msg)
     | FileToUrl (String -> msg) File
-    | Task (SimulatedTask restriction msg msg)
+    | Task (Task restriction msg msg)
     | Port String (Json.Encode.Value -> Cmd msg) Json.Encode.Value
     | SendToFrontend ClientId toMsg
 
 
-type SimulatedTask restriction x a
+type Task restriction x a
     = Succeed a
     | Fail x
     | HttpTask (HttpRequest restriction x a)
-    | SleepTask Duration (() -> SimulatedTask restriction x a)
-    | GetTime (Time.Posix -> SimulatedTask restriction x a)
-    | GetTimeZone (Time.Zone -> SimulatedTask restriction x a)
-    | GetTimeZoneName (Time.ZoneName -> SimulatedTask restriction x a)
-    | GetViewport (Browser.Dom.Viewport -> SimulatedTask restriction x a)
-    | SetViewport (Quantity Float Pixels) (Quantity Float Pixels) (() -> SimulatedTask restriction x a)
-    | GetElement (Result Browser.Dom.Error Browser.Dom.Element -> SimulatedTask restriction x a) String
+    | SleepTask Duration (() -> Task restriction x a)
+    | GetTime (Time.Posix -> Task restriction x a)
+    | GetTimeZone (Time.Zone -> Task restriction x a)
+    | GetTimeZoneName (Time.ZoneName -> Task restriction x a)
+    | GetViewport (Browser.Dom.Viewport -> Task restriction x a)
+    | SetViewport (Quantity Float Pixels) (Quantity Float Pixels) (() -> Task restriction x a)
+    | GetElement (Result Browser.Dom.Error Browser.Dom.Element -> Task restriction x a) String
 
 
 type NavigationKey
@@ -77,7 +87,7 @@ type alias HttpRequest restriction x a =
     , url : String
     , body : HttpBody
     , headers : List ( String, String )
-    , onRequestComplete : Http.Response String -> SimulatedTask restriction x a
+    , onRequestComplete : Http.Response String -> Task restriction x a
     , timeout : Maybe Duration
     }
 
@@ -91,7 +101,7 @@ type HttpBody
     | JsonBody Json.Encode.Value
 
 
-toCmd : Effect restriction toBackend frontendMsg -> Cmd frontendMsg
+toCmd : Effect restriction toMsg msg -> Cmd msg
 toCmd effect =
     case effect of
         Batch effects ->
@@ -152,7 +162,7 @@ toCmd effect =
             Lamdera.sendToFrontend (TestId.clientIdToString clientId) toFrontend
 
 
-toTask : SimulatedTask restriction x b -> Task.Task x b
+toTask : Task restriction x b -> Task.Task x b
 toTask simulatedTask =
     case simulatedTask of
         Succeed a ->

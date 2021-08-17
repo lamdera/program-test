@@ -2,53 +2,60 @@ module Subscription exposing (Subscription, batch, fromJs, none, onConnect, onDi
 
 import Browser.Events
 import Duration exposing (Duration)
+import Effect.Internal
 import Json.Decode
 import Lamdera
 import Pixels exposing (Pixels)
 import Quantity exposing (Quantity)
-import SimulatedTask exposing (BackendOnly, FrontendOnly)
 import TestId exposing (ClientId, SessionId)
-import TestInternal
 import Time
 
 
+type alias FrontendOnly =
+    Effect.Internal.FrontendOnly
+
+
+type alias BackendOnly =
+    Effect.Internal.BackendOnly
+
+
 type alias Subscription restriction msg =
-    TestInternal.Subscription restriction msg
+    Effect.Internal.Subscription restriction msg
 
 
 batch : List (Subscription restriction msg) -> Subscription restriction msg
 batch =
-    TestInternal.SubBatch
+    Effect.Internal.SubBatch
 
 
 none : Subscription restriction msg
 none =
-    TestInternal.SubNone
+    Effect.Internal.SubNone
 
 
 timeEvery : Duration -> (Time.Posix -> msg) -> Subscription restriction msg
 timeEvery =
-    TestInternal.TimeEvery
+    Effect.Internal.TimeEvery
 
 
 onResize : (Quantity Int Pixels -> Quantity Int Pixels -> msg) -> Subscription FrontendOnly msg
 onResize =
-    TestInternal.OnResize
+    Effect.Internal.OnResize
 
 
 fromJs : String -> ((Json.Decode.Value -> msg) -> Sub msg) -> (Json.Decode.Value -> msg) -> Subscription FrontendOnly msg
 fromJs =
-    TestInternal.SubPort
+    Effect.Internal.SubPort
 
 
 onConnect : (SessionId -> ClientId -> msg) -> Subscription BackendOnly msg
 onConnect =
-    TestInternal.OnConnect
+    Effect.Internal.OnConnect
 
 
 onDisconnect : (SessionId -> ClientId -> msg) -> Subscription BackendOnly msg
 onDisconnect =
-    TestInternal.OnDisconnect
+    Effect.Internal.OnDisconnect
 
 
 
@@ -76,25 +83,25 @@ onDisconnect =
 toSub : Subscription restriction msg -> Sub msg
 toSub sub =
     case sub of
-        TestInternal.SubBatch subs ->
+        Effect.Internal.SubBatch subs ->
             List.map toSub subs |> Sub.batch
 
-        TestInternal.SubNone ->
+        Effect.Internal.SubNone ->
             Sub.none
 
-        TestInternal.TimeEvery duration msg ->
+        Effect.Internal.TimeEvery duration msg ->
             Time.every (Duration.inMilliseconds duration) msg
 
-        TestInternal.OnResize msg ->
+        Effect.Internal.OnResize msg ->
             Browser.Events.onResize (\w h -> msg (Pixels.pixels w) (Pixels.pixels h))
 
-        TestInternal.SubPort _ portFunction msg ->
+        Effect.Internal.SubPort _ portFunction msg ->
             portFunction msg
 
-        TestInternal.OnConnect msg ->
+        Effect.Internal.OnConnect msg ->
             Lamdera.onConnect
                 (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))
 
-        TestInternal.OnDisconnect msg ->
+        Effect.Internal.OnDisconnect msg ->
             Lamdera.onDisconnect
                 (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))

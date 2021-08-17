@@ -1,5 +1,7 @@
 module TestFramework exposing
     ( BackendApp
+    , BackendOnly
+    , FrontendOnly
     , HttpRequest
     , Instructions
     , State
@@ -29,27 +31,32 @@ import Browser.Dom
 import Date exposing (Date)
 import Duration exposing (Duration)
 import Effect exposing (Effect, PortToJs)
+import Effect.File as File
+import Effect.Http as Http exposing (HttpBody)
+import Effect.Internal exposing (Effect(..), File(..), NavigationKey(..), Task(..))
 import Expect exposing (Expectation)
 import Html exposing (Html)
 import Html.Attributes
-import Http
-import HttpEffect exposing (HttpBody)
 import Json.Decode
 import Json.Encode
 import List.Nonempty exposing (Nonempty)
-import MockFile
-import NavigationKey exposing (NavigationKey)
 import Quantity
-import SimulatedTask exposing (BackendOnly, FrontendOnly, SimulatedTask)
 import Subscription exposing (Subscription)
 import Test.Html.Event
 import Test.Html.Query
 import Test.Html.Selector
 import Test.Runner
 import TestId exposing (ButtonId, ClientId, DateInputId, HtmlId, NumberInputId, RadioButtonId, SessionId, TextInputId, TimeInputId)
-import TestInternal exposing (Effect(..), File(..), NavigationKey(..), SimulatedTask(..))
 import Time
 import Url exposing (Url)
+
+
+type alias FrontendOnly =
+    Effect.Internal.FrontendOnly
+
+
+type alias BackendOnly =
+    Effect.Internal.BackendOnly
 
 
 type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
@@ -67,7 +74,7 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
         { currentRequest : PortToJs, portRequests : List PortToJs }
         -> Maybe ( String, Json.Decode.Value )
     , portRequests : List PortToJs
-    , handleFileRequest : { mimeTypes : List String } -> Maybe MockFile.File
+    , handleFileRequest : { mimeTypes : List String } -> Maybe File.File
     , domain : Url
     }
 
@@ -301,7 +308,7 @@ testApp :
         ({ currentRequest : PortToJs, portRequests : List PortToJs }
          -> Maybe ( String, Json.Decode.Value )
         )
-    -> ({ mimeTypes : List String } -> Maybe MockFile.File)
+    -> ({ mimeTypes : List String } -> Maybe File.File)
     -> Url
     -> TestApp toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 testApp frontendApp backendApp handleHttpRequest handlePortToJs handleFileRequest domain =
@@ -345,36 +352,36 @@ getTimers :
     -> Dict Duration { msg : Time.Posix -> backendMsg, startTime : Time.Posix }
 getTimers currentTime backendSub =
     case backendSub of
-        TestInternal.SubBatch batch ->
+        Effect.Internal.SubBatch batch ->
             List.foldl (\sub dict -> Dict.union (getTimers currentTime sub) dict) Dict.empty batch
 
-        TestInternal.TimeEvery duration msg ->
+        Effect.Internal.TimeEvery duration msg ->
             Dict.singleton duration { msg = msg, startTime = currentTime }
 
         _ ->
             Dict.empty
 
 
-getClientDisconnectSubs : TestInternal.Subscription BackendOnly backendMsg -> List (SessionId -> ClientId -> backendMsg)
+getClientDisconnectSubs : Effect.Internal.Subscription BackendOnly backendMsg -> List (SessionId -> ClientId -> backendMsg)
 getClientDisconnectSubs backendSub =
     case backendSub of
-        TestInternal.SubBatch batch ->
+        Effect.Internal.SubBatch batch ->
             List.foldl (\sub list -> getClientDisconnectSubs sub ++ list) [] batch
 
-        TestInternal.OnDisconnect msg ->
+        Effect.Internal.OnDisconnect msg ->
             [ msg ]
 
         _ ->
             []
 
 
-getClientConnectSubs : TestInternal.Subscription BackendOnly backendMsg -> List (SessionId -> ClientId -> backendMsg)
+getClientConnectSubs : Effect.Internal.Subscription BackendOnly backendMsg -> List (SessionId -> ClientId -> backendMsg)
 getClientConnectSubs backendSub =
     case backendSub of
-        TestInternal.SubBatch batch ->
+        Effect.Internal.SubBatch batch ->
             List.foldl (\sub list -> getClientConnectSubs sub ++ list) [] batch
 
-        TestInternal.OnConnect msg ->
+        Effect.Internal.OnConnect msg ->
             [ msg ]
 
         _ ->
@@ -1102,10 +1109,10 @@ getPortSubscriptions :
     -> List { portName : String, msg : Json.Decode.Value -> frontendMsg }
 getPortSubscriptions subscription =
     case subscription of
-        TestInternal.SubBatch subscriptions ->
+        Effect.Internal.SubBatch subscriptions ->
             List.concatMap getPortSubscriptions subscriptions
 
-        TestInternal.SubPort portName _ msg ->
+        Effect.Internal.SubPort portName _ msg ->
             [ { portName = portName, msg = msg } ]
 
         _ ->
@@ -1224,7 +1231,7 @@ runTask :
     Maybe ClientId
     -> FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> SimulatedTask restriction x x
+    -> Task restriction x x
     -> ( State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, x )
 runTask maybeClientId frontendApp state task =
     case task of

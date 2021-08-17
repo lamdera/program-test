@@ -1,5 +1,7 @@
 module Effect exposing
-    ( Effect
+    ( BackendOnly
+    , Effect
+    , FrontendOnly
     , PortToJs
     , batch
     , fileToUrl
@@ -14,15 +16,23 @@ module Effect exposing
     , sendToJs
     )
 
+import Effect.File as File
+import Effect.Internal exposing (Effect(..), NavigationKey, Subscription(..))
+import Effect.Task
 import Json.Encode
-import MockFile
-import SimulatedTask exposing (BackendOnly, FrontendOnly, SimulatedTask)
 import TestId exposing (ClientId)
-import TestInternal exposing (Effect(..), NavigationKey, Subscription(..))
+
+
+type alias FrontendOnly =
+    Effect.Internal.FrontendOnly
+
+
+type alias BackendOnly =
+    Effect.Internal.BackendOnly
 
 
 type alias Effect restriction toMsg msg =
-    TestInternal.Effect restriction toMsg msg
+    Effect.Internal.Effect restriction toMsg msg
 
 
 batch : List (Effect restriction toMsg msg) -> Effect restriction toMsg msg
@@ -55,12 +65,12 @@ navigationLoad =
     NavigationLoad
 
 
-selectFile : List String -> (MockFile.File -> msg) -> Effect FrontendOnly toMsg msg
+selectFile : List String -> (File.File -> msg) -> Effect FrontendOnly toMsg msg
 selectFile =
     SelectFile
 
 
-fileToUrl : (String -> msg) -> MockFile.File -> Effect FrontendOnly toMsg msg
+fileToUrl : (String -> msg) -> File.File -> Effect FrontendOnly toMsg msg
 fileToUrl =
     FileToUrl
 
@@ -111,8 +121,8 @@ map mapToMsg mapMsg frontendEffect =
             FileToUrl (msg >> mapMsg) file
 
         Task simulatedTask ->
-            SimulatedTask.map mapMsg simulatedTask
-                |> SimulatedTask.mapError mapMsg
+            Effect.Task.map mapMsg simulatedTask
+                |> Effect.Task.mapError mapMsg
                 |> Task
 
         Port portName function value ->

@@ -1,4 +1,4 @@
-module HttpEffect exposing
+module Effect.Http exposing
     ( Header, header
     , emptyBody, stringBody, jsonBody
     , Expect(..), expectString, expectJson, expectWhatever, Error
@@ -46,15 +46,15 @@ to help you implement the function to provide when using [`ProgramTest.withBacke
 -}
 
 import Duration exposing (Duration)
+import Effect.Internal exposing (Effect(..), HttpBody(..), Task(..))
+import Effect.Task exposing (Task)
 import Http
 import Json.Decode exposing (Decoder)
 import Json.Encode
-import SimulatedTask exposing (SimulatedTask)
-import TestInternal exposing (Effect(..), HttpBody(..), SimulatedTask(..))
 
 
 type alias Effect restriction toMsg msg =
-    TestInternal.Effect restriction toMsg msg
+    Effect.Internal.Effect restriction toMsg msg
 
 
 {-| An HTTP header for configuring requests.
@@ -66,7 +66,7 @@ type alias Header =
 {-| Represents the body of a `Request`.
 -}
 type alias HttpBody =
-    TestInternal.HttpBody
+    Effect.Internal.HttpBody
 
 
 {-| Create a `GET` request.
@@ -130,7 +130,7 @@ request r =
         , url = r.url
         , headers = r.headers
         , body = r.body
-        , onRequestComplete = onResult >> SimulatedTask.succeed
+        , onRequestComplete = onResult >> Effect.Task.succeed
         , timeout = r.timeout
         }
         |> Task
@@ -275,7 +275,7 @@ task :
     , resolver : Resolver restriction x a
     , timeout : Maybe Duration
     }
-    -> SimulatedTask restriction x a
+    -> Task restriction x a
 task r =
     HttpTask
         { method = r.method
@@ -293,7 +293,7 @@ task r =
 {-| Describes how to resolve an HTTP task.
 -}
 type Resolver restriction x a
-    = StringResolver (Response String -> SimulatedTask restriction x a)
+    = StringResolver (Response String -> Task restriction x a)
 
 
 {-| Turn a response with a `String` body into a result.
@@ -304,9 +304,9 @@ stringResolver f =
         fromResult result =
             case result of
                 Err x ->
-                    SimulatedTask.fail x
+                    Effect.Task.fail x
 
                 Ok a ->
-                    SimulatedTask.succeed a
+                    Effect.Task.succeed a
     in
     StringResolver (f >> fromResult)

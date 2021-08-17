@@ -1,7 +1,5 @@
-module SimulatedTask exposing
-    ( BackendOnly
-    , FrontendOnly
-    , SimulatedTask
+module Effect.Task exposing
+    ( Task
     , andThen
     , fail
     , getElement
@@ -18,39 +16,35 @@ module SimulatedTask exposing
     , onError
     , setViewport
     , succeed
-    , toTask
     , wait
     )
 
 import Browser.Dom
 import Duration exposing (Duration)
-import Http
+import Effect.Internal exposing (Effect(..), HttpBody(..), Task(..))
 import Pixels exposing (Pixels)
-import Process
 import Quantity exposing (Quantity)
-import Task
-import TestInternal exposing (Effect(..), HttpBody(..), SimulatedTask(..))
 import Time
 
 
+type alias FrontendOnly =
+    Effect.Internal.FrontendOnly
+
+
+type alias BackendOnly =
+    Effect.Internal.BackendOnly
+
+
 type alias Effect restriction toMsg msg =
-    TestInternal.Effect restriction toMsg msg
+    Effect.Internal.Effect restriction toMsg msg
 
 
-type FrontendOnly
-    = FrontendOnly Never
-
-
-type BackendOnly
-    = BackendOnly Never
-
-
-type alias SimulatedTask restriction x a =
-    TestInternal.SimulatedTask restriction x a
+type alias Task restriction x a =
+    Effect.Internal.Task restriction x a
 
 
 {-| -}
-perform : (a -> msg) -> SimulatedTask restriction Never a -> Effect restriction toMsg msg
+perform : (a -> msg) -> Task restriction Never a -> Effect restriction toMsg msg
 perform f task =
     task
         |> map f
@@ -60,7 +54,7 @@ perform f task =
 
 {-| This is very similar to [`perform`](#perform) except it can handle failures!
 -}
-attempt : (Result x a -> msg) -> SimulatedTask restriction x a -> Effect restriction toMsg msg
+attempt : (Result x a -> msg) -> Task restriction x a -> Effect restriction toMsg msg
 attempt f task =
     task
         |> map (Ok >> f)
@@ -68,37 +62,37 @@ attempt f task =
         |> Task
 
 
-getTime : SimulatedTask restriction x Time.Posix
+getTime : Task restriction x Time.Posix
 getTime =
     GetTime Succeed
 
 
-wait : Duration -> SimulatedTask restriction x ()
+wait : Duration -> Task restriction x ()
 wait duration =
     SleepTask duration Succeed
 
 
-getTimeZone : SimulatedTask FrontendOnly x Time.Zone
+getTimeZone : Task FrontendOnly x Time.Zone
 getTimeZone =
     GetTimeZone Succeed
 
 
-getTimeZoneName : SimulatedTask FrontendOnly x Time.ZoneName
+getTimeZoneName : Task FrontendOnly x Time.ZoneName
 getTimeZoneName =
     GetTimeZoneName Succeed
 
 
-setViewport : Quantity Float Pixels -> Quantity Float Pixels -> SimulatedTask FrontendOnly x ()
+setViewport : Quantity Float Pixels -> Quantity Float Pixels -> Task FrontendOnly x ()
 setViewport x y =
     SetViewport x y Succeed
 
 
-getViewport : SimulatedTask FrontendOnly x Browser.Dom.Viewport
+getViewport : Task FrontendOnly x Browser.Dom.Viewport
 getViewport =
     GetViewport Succeed
 
 
-getElement : String -> SimulatedTask FrontendOnly Browser.Dom.Error Browser.Dom.Element
+getElement : String -> Task FrontendOnly Browser.Dom.Error Browser.Dom.Element
 getElement htmlId =
     GetElement
         (\result ->
@@ -114,7 +108,7 @@ getElement htmlId =
 
 {-| Chain together a task and a callback.
 -}
-andThen : (a -> SimulatedTask restriction x b) -> SimulatedTask restriction x a -> SimulatedTask restriction x b
+andThen : (a -> Task restriction x b) -> Task restriction x a -> Task restriction x b
 andThen f task =
     case task of
         Succeed a ->
@@ -157,28 +151,28 @@ andThen f task =
 
 {-| A task that succeeds immediately when run.
 -}
-succeed : a -> SimulatedTask restriction x a
+succeed : a -> Task restriction x a
 succeed =
     Succeed
 
 
 {-| A task that fails immediately when run.
 -}
-fail : x -> SimulatedTask restriction x a
+fail : x -> Task restriction x a
 fail =
     Fail
 
 
 {-| Transform a task.
 -}
-map : (a -> b) -> SimulatedTask restriction x a -> SimulatedTask restriction x b
+map : (a -> b) -> Task restriction x a -> Task restriction x b
 map f =
     andThen (f >> Succeed)
 
 
 {-| Put the results of two tasks together.
 -}
-map2 : (a -> b -> result) -> SimulatedTask restriction x a -> SimulatedTask restriction x b -> SimulatedTask restriction x result
+map2 : (a -> b -> result) -> Task restriction x a -> Task restriction x b -> Task restriction x result
 map2 func taskA taskB =
     taskA
         |> andThen
@@ -190,7 +184,7 @@ map2 func taskA taskB =
 
 {-| Put the results of three tasks together.
 -}
-map3 : (a -> b -> c -> result) -> SimulatedTask restriction x a -> SimulatedTask restriction x b -> SimulatedTask restriction x c -> SimulatedTask restriction x result
+map3 : (a -> b -> c -> result) -> Task restriction x a -> Task restriction x b -> Task restriction x c -> Task restriction x result
 map3 func taskA taskB taskC =
     taskA
         |> andThen
@@ -208,11 +202,11 @@ map3 func taskA taskB taskC =
 -}
 map4 :
     (a -> b -> c -> d -> result)
-    -> SimulatedTask restriction x a
-    -> SimulatedTask restriction x b
-    -> SimulatedTask restriction x c
-    -> SimulatedTask restriction x d
-    -> SimulatedTask restriction x result
+    -> Task restriction x a
+    -> Task restriction x b
+    -> Task restriction x c
+    -> Task restriction x d
+    -> Task restriction x result
 map4 func taskA taskB taskC taskD =
     taskA
         |> andThen
@@ -234,12 +228,12 @@ map4 func taskA taskB taskC taskD =
 -}
 map5 :
     (a -> b -> c -> d -> e -> result)
-    -> SimulatedTask restriction x a
-    -> SimulatedTask restriction x b
-    -> SimulatedTask restriction x c
-    -> SimulatedTask restriction x d
-    -> SimulatedTask restriction x e
-    -> SimulatedTask restriction x result
+    -> Task restriction x a
+    -> Task restriction x b
+    -> Task restriction x c
+    -> Task restriction x d
+    -> Task restriction x e
+    -> Task restriction x result
 map5 func taskA taskB taskC taskD taskE =
     taskA
         |> andThen
@@ -263,7 +257,7 @@ map5 func taskA taskB taskC taskD taskE =
 
 {-| Transform the error value.
 -}
-mapError : (x -> y) -> SimulatedTask restriction x a -> SimulatedTask restriction y a
+mapError : (x -> y) -> Task restriction x a -> Task restriction y a
 mapError f task =
     case task of
         Succeed a ->
@@ -306,7 +300,7 @@ mapError f task =
 
 {-| Recover from a failure in a task.
 -}
-onError : (x -> SimulatedTask restriction y a) -> SimulatedTask restriction x a -> SimulatedTask restriction y a
+onError : (x -> Task restriction y a) -> Task restriction x a -> Task restriction y a
 onError f task =
     case task of
         Succeed a ->

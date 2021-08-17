@@ -6,14 +6,13 @@
     "version": "1.0.0",
     "exposed-modules": [
         "Effect",
-        "HttpEffect",
-        "MockFile",
+        "Effect.Http",
+        "Effect.File",
         "NavigationKey",
-        "SimulatedTask",
+        "Effect.Task",
         "Subscription",
         "TestFramework",
         "TestId"
-
     ],
     "elm-version": "0.19.0 <= v < 0.20.0",
     "dependencies": {

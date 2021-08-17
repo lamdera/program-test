@@ -1,8 +1,7 @@
 module NavigationKey exposing (NavigationKey)
 
-import Browser.Navigation
-import TestInternal
+import Effect.Internal
 
 
 type alias NavigationKey =
-    TestInternal.NavigationKey
+    Effect.Internal.NavigationKey
