@@ -12,6 +12,8 @@ module Effect.Internal exposing
 
 import Browser.Dom
 import Browser.Navigation
+import Bytes exposing (Bytes)
+import Bytes.Encode
 import Duration exposing (Duration)
 import File
 import File.Select
@@ -53,7 +55,6 @@ type Effect restriction toMsg msg
     | NavigationReplaceUrl NavigationKey String
     | NavigationLoad String
     | SelectFile (List String) (File -> msg)
-    | FileToUrl (String -> msg) File
     | Task (Task restriction msg msg)
     | Port String (Json.Encode.Value -> Cmd msg) Json.Encode.Value
     | SendToFrontend ClientId toMsg
@@ -70,6 +71,9 @@ type Task restriction x a
     | GetViewport (Browser.Dom.Viewport -> Task restriction x a)
     | SetViewport (Quantity Float Pixels) (Quantity Float Pixels) (() -> Task restriction x a)
     | GetElement (Result Browser.Dom.Error Browser.Dom.Element -> Task restriction x a) String
+    | FileToString File (String -> Task restriction x a)
+    | FileToBytes File (Bytes -> Task restriction x a)
+    | FileToUrl File (String -> Task restriction x a)
 
 
 type NavigationKey
@@ -79,7 +83,7 @@ type NavigationKey
 
 type File
     = RealFile File.File
-    | MockFile { name : String, content : String }
+    | MockFile { name : String, mimeType : String, content : String, lastModified : Time.Posix }
 
 
 type alias HttpRequest restriction x a =
@@ -134,14 +138,6 @@ toCmd effect =
 
         SelectFile mimeTypes msg ->
             File.Select.file mimeTypes (RealFile >> msg)
-
-        FileToUrl msg file ->
-            case file of
-                RealFile realFile ->
-                    File.toUrl realFile |> Task.perform msg
-
-                MockFile _ ->
-                    Cmd.none
 
         Task simulatedTask ->
             toTask simulatedTask
@@ -215,3 +211,31 @@ toTask simulatedTask =
                 |> Task.map Ok
                 |> Task.onError (Err >> Task.succeed)
                 |> Task.andThen (\result -> toTask (function result))
+
+        FileToString file function ->
+            case file of
+                RealFile file_ ->
+                    File.toString file_ |> Task.andThen (\result -> toTask (function result))
+
+                MockFile { content } ->
+                    Task.succeed content |> Task.andThen (\result -> toTask (function result))
+
+        FileToBytes file function ->
+            case file of
+                RealFile file_ ->
+                    File.toBytes file_ |> Task.andThen (\result -> toTask (function result))
+
+                MockFile { content } ->
+                    Bytes.Encode.string content
+                        |> Bytes.Encode.encode
+                        |> Task.succeed
+                        |> Task.andThen (\result -> toTask (function result))
+
+        FileToUrl file function ->
+            case file of
+                RealFile file_ ->
+                    File.toUrl file_ |> Task.andThen (\result -> toTask (function result))
+
+                MockFile { content } ->
+                    -- This isn't the correct behavior but it should be okay as MockFile should never be used here.
+                    Task.succeed content |> Task.andThen (\result -> toTask (function result))

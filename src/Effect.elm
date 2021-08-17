@@ -4,7 +4,6 @@ module Effect exposing
     , FrontendOnly
     , PortToJs
     , batch
-    , fileToUrl
     , map
     , navigationLoad
     , navigationPushUrl
@@ -70,11 +69,6 @@ selectFile =
     SelectFile
 
 
-fileToUrl : (String -> msg) -> File.File -> Effect FrontendOnly toMsg msg
-fileToUrl =
-    FileToUrl
-
-
 sendToJs : String -> (Json.Encode.Value -> Cmd msg) -> Json.Encode.Value -> Effect FrontendOnly toMsg msg
 sendToJs =
     Port
@@ -116,9 +110,6 @@ map mapToMsg mapMsg frontendEffect =
 
         SelectFile mimeTypes msg ->
             SelectFile mimeTypes (msg >> mapMsg)
-
-        FileToUrl msg file ->
-            FileToUrl (msg >> mapMsg) file
 
         Task simulatedTask ->
             Effect.Task.map mapMsg simulatedTask

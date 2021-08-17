@@ -148,6 +148,15 @@ andThen f task =
         GetElement function string ->
             GetElement (function >> andThen f) string
 
+        FileToString file function ->
+            FileToString file (function >> andThen f)
+
+        FileToBytes file function ->
+            FileToBytes file (function >> andThen f)
+
+        FileToUrl file function ->
+            FileToUrl file (function >> andThen f)
+
 
 {-| A task that succeeds immediately when run.
 -}
@@ -297,6 +306,15 @@ mapError f task =
         GetElement function string ->
             GetElement (function >> mapError f) string
 
+        FileToString file function ->
+            FileToString file (function >> mapError f)
+
+        FileToBytes file function ->
+            FileToBytes file (function >> mapError f)
+
+        FileToUrl file function ->
+            FileToUrl file (function >> mapError f)
+
 
 {-| Recover from a failure in a task.
 -}
@@ -339,3 +357,12 @@ onError f task =
 
         GetElement function string ->
             GetElement (function >> onError f) string
+
+        FileToString file function ->
+            FileToString file (function >> onError f)
+
+        FileToBytes file function ->
+            FileToBytes file (function >> onError f)
+
+        FileToUrl file function ->
+            FileToUrl file (function >> onError f)

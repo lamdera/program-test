@@ -28,6 +28,7 @@ import AssocList as Dict exposing (Dict)
 import Basics.Extra as Basics
 import Browser exposing (UrlRequest(..))
 import Browser.Dom
+import Bytes.Encode
 import Date exposing (Date)
 import Duration exposing (Duration)
 import Effect exposing (Effect, PortToJs)
@@ -994,32 +995,6 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
                 Nothing ->
                     state
 
-        FileToUrl msg file ->
-            case file of
-                MockFile { name, content } ->
-                    case Dict.get clientId state.frontends of
-                        Just frontend ->
-                            let
-                                ( model, effects ) =
-                                    -- TODO: Right now we assume that the file is already formatted as a data url.
-                                    frontendApp.update (msg content) frontend.model
-                            in
-                            { state
-                                | frontends =
-                                    Dict.insert clientId
-                                        { frontend
-                                            | model = model
-                                            , pendingEffects = Effect.batch [ frontend.pendingEffects, effects ]
-                                        }
-                                        state.frontends
-                            }
-
-                        Nothing ->
-                            state
-
-                RealFile _ ->
-                    state
-
         Task task ->
             let
                 ( newState, msg ) =
@@ -1220,9 +1195,6 @@ runBackendEffects frontendApp backendApp effect state =
         SelectFile _ _ ->
             state
 
-        FileToUrl _ _ ->
-            state
-
         Port _ _ _ ->
             state
 
@@ -1302,3 +1274,30 @@ runTask maybeClientId frontendApp state task =
             )
                 |> function
                 |> runTask maybeClientId frontendApp state
+
+        FileToString file function ->
+            case file of
+                RealFile _ ->
+                    function "" |> runTask maybeClientId frontendApp state
+
+                MockFile { content } ->
+                    function content |> runTask maybeClientId frontendApp state
+
+        FileToBytes file function ->
+            case file of
+                RealFile _ ->
+                    function (Bytes.Encode.encode (Bytes.Encode.sequence []))
+                        |> runTask maybeClientId frontendApp state
+
+                MockFile { content } ->
+                    function (Bytes.Encode.encode (Bytes.Encode.string content))
+                        |> runTask maybeClientId frontendApp state
+
+        FileToUrl file function ->
+            case file of
+                RealFile _ ->
+                    function "" |> runTask maybeClientId frontendApp state
+
+                MockFile { content } ->
+                    -- TODO: Don't assume that content is already in a data url format.
+                    function content |> runTask maybeClientId frontendApp state
