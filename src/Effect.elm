@@ -9,13 +9,11 @@ module Effect exposing
     , navigationPushUrl
     , navigationReplaceUrl
     , none
-    , selectFile
     , sendToBackend
     , sendToFrontend
     , sendToJs
     )
 
-import Effect.File as File
 import Effect.Internal exposing (Effect(..), NavigationKey, Subscription(..))
 import Effect.Task
 import Json.Encode
@@ -64,11 +62,6 @@ navigationLoad =
     NavigationLoad
 
 
-selectFile : List String -> (File.File -> msg) -> Effect FrontendOnly toMsg msg
-selectFile =
-    SelectFile
-
-
 sendToJs : String -> (Json.Encode.Value -> Cmd msg) -> Json.Encode.Value -> Effect FrontendOnly toMsg msg
 sendToJs =
     Port
@@ -108,9 +101,6 @@ map mapToMsg mapMsg frontendEffect =
         NavigationLoad url ->
             NavigationLoad url
 
-        SelectFile mimeTypes msg ->
-            SelectFile mimeTypes (msg >> mapMsg)
-
         Task simulatedTask ->
             Effect.Task.map mapMsg simulatedTask
                 |> Effect.Task.mapError mapMsg
@@ -121,3 +111,18 @@ map mapToMsg mapMsg frontendEffect =
 
         SendToFrontend clientId toMsg ->
             SendToFrontend clientId (mapToMsg toMsg)
+
+        FileDownloadUrl record ->
+            FileDownloadUrl record
+
+        FileDownloadString record ->
+            FileDownloadString record
+
+        FileDownloadBytes record ->
+            FileDownloadBytes record
+
+        FileSelectFile strings function ->
+            FileSelectFile strings (function >> mapMsg)
+
+        FileSelectFiles strings function ->
+            FileSelectFiles strings (\file restOfFiles -> function file restOfFiles |> mapMsg)

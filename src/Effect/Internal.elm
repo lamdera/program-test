@@ -16,6 +16,7 @@ import Bytes exposing (Bytes)
 import Bytes.Encode
 import Duration exposing (Duration)
 import File
+import File.Download
 import File.Select
 import Http
 import Json.Decode
@@ -54,10 +55,14 @@ type Effect restriction toMsg msg
     | NavigationPushUrl NavigationKey String
     | NavigationReplaceUrl NavigationKey String
     | NavigationLoad String
-    | SelectFile (List String) (File -> msg)
     | Task (Task restriction msg msg)
     | Port String (Json.Encode.Value -> Cmd msg) Json.Encode.Value
     | SendToFrontend ClientId toMsg
+    | FileDownloadUrl { href : String }
+    | FileDownloadString { name : String, mimeType : String, content : String }
+    | FileDownloadBytes { name : String, mimeType : String, content : Bytes }
+    | FileSelectFile (List String) (File -> msg)
+    | FileSelectFiles (List String) (File -> List File -> msg)
 
 
 type Task restriction x a
@@ -136,9 +141,6 @@ toCmd effect =
         NavigationLoad url ->
             Browser.Navigation.load url
 
-        SelectFile mimeTypes msg ->
-            File.Select.file mimeTypes (RealFile >> msg)
-
         Task simulatedTask ->
             toTask simulatedTask
                 |> Task.attempt
@@ -156,6 +158,21 @@ toCmd effect =
 
         SendToFrontend clientId toFrontend ->
             Lamdera.sendToFrontend (TestId.clientIdToString clientId) toFrontend
+
+        FileDownloadUrl { href } ->
+            File.Download.url href
+
+        FileDownloadString { name, mimeType, content } ->
+            File.Download.string name mimeType content
+
+        FileDownloadBytes { name, mimeType, content } ->
+            File.Download.bytes name mimeType content
+
+        FileSelectFile mimeTypes msg ->
+            File.Select.file mimeTypes (RealFile >> msg)
+
+        FileSelectFiles mimeTypes msg ->
+            File.Select.files mimeTypes (\file restOfFiles -> msg (RealFile file) (List.map RealFile restOfFiles))
 
 
 toTask : Task restriction x b -> Task.Task x b

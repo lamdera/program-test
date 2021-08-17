@@ -46,7 +46,7 @@ to help you implement the function to provide when using [`ProgramTest.withBacke
 -}
 
 import Duration exposing (Duration)
-import Effect.Internal exposing (Effect(..), HttpBody(..), Task(..))
+import Effect.Internal exposing (HttpBody(..), Task(..))
 import Effect.Task exposing (Task)
 import Http
 import Json.Decode exposing (Decoder)
@@ -133,7 +133,7 @@ request r =
         , onRequestComplete = onResult >> Effect.Task.succeed
         , timeout = r.timeout
         }
-        |> Task
+        |> Effect.Internal.Task
 
 
 {-| Create a `Header`.

@@ -970,31 +970,6 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
         None ->
             state
 
-        SelectFile mimeTypes msg ->
-            case state.handleFileRequest { mimeTypes = mimeTypes } of
-                Just file ->
-                    case Dict.get clientId state.frontends of
-                        Just frontend ->
-                            let
-                                ( model, effects ) =
-                                    frontendApp.update (msg file) frontend.model
-                            in
-                            { state
-                                | frontends =
-                                    Dict.insert clientId
-                                        { frontend
-                                            | model = model
-                                            , pendingEffects = Effect.batch [ frontend.pendingEffects, effects ]
-                                        }
-                                        state.frontends
-                            }
-
-                        Nothing ->
-                            state
-
-                Nothing ->
-                    state
-
         Task task ->
             let
                 ( newState, msg ) =
@@ -1077,6 +1052,43 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
 
         SendToFrontend _ _ ->
             state
+
+        FileDownloadUrl _ ->
+            state
+
+        FileDownloadString _ ->
+            state
+
+        FileDownloadBytes _ ->
+            state
+
+        FileSelectFile mimeTypes msg ->
+            case state.handleFileRequest { mimeTypes = mimeTypes } of
+                Just file ->
+                    case Dict.get clientId state.frontends of
+                        Just frontend ->
+                            let
+                                ( model, effects ) =
+                                    frontendApp.update (msg file) frontend.model
+                            in
+                            { state
+                                | frontends =
+                                    Dict.insert clientId
+                                        { frontend
+                                            | model = model
+                                            , pendingEffects = Effect.batch [ frontend.pendingEffects, effects ]
+                                        }
+                                        state.frontends
+                            }
+
+                        Nothing ->
+                            state
+
+                Nothing ->
+                    state
+
+        FileSelectFiles strings function ->
+            Debug.todo ""
 
 
 getPortSubscriptions :
@@ -1192,10 +1204,22 @@ runBackendEffects frontendApp backendApp effect state =
         NavigationLoad _ ->
             state
 
-        SelectFile _ _ ->
+        Port _ _ _ ->
             state
 
-        Port _ _ _ ->
+        FileDownloadUrl _ ->
+            state
+
+        FileDownloadString _ ->
+            state
+
+        FileDownloadBytes _ ->
+            state
+
+        FileSelectFile _ _ ->
+            state
+
+        FileSelectFiles _ _ ->
             state
 
 
