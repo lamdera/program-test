@@ -5,7 +5,6 @@ module Effect.Task exposing
     , getTime
     , getTimeZone
     , getTimeZoneName
-    , getViewport
     , map
     , map2
     , map3
@@ -13,16 +12,12 @@ module Effect.Task exposing
     , map5
     , mapError
     , onError
-    , setViewport
     , succeed
     , wait
     )
 
-import Browser.Dom
 import Duration exposing (Duration)
 import Effect.Internal exposing (Effect(..), HttpBody(..), Task(..))
-import Pixels exposing (Pixels)
-import Quantity exposing (Quantity)
 import Time
 
 
@@ -79,16 +74,6 @@ getTimeZone =
 getTimeZoneName : Task FrontendOnly x Time.ZoneName
 getTimeZoneName =
     GetTimeZoneName Succeed
-
-
-setViewport : Float -> Float -> Task FrontendOnly x ()
-setViewport x y =
-    SetViewport x y Succeed
-
-
-getViewport : Task FrontendOnly x Browser.Dom.Viewport
-getViewport =
-    GetViewport Succeed
 
 
 {-| Chain together a task and a callback.
