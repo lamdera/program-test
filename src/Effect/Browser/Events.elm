@@ -207,7 +207,7 @@ For example, you could track the current width by saying:
 [resize]: https://developer.mozilla.org/en-US/docs/Web/API/GlobalEventHandlers/onresize
 
 -}
-onResize : (Quantity Int Pixels -> Quantity Int Pixels -> msg) -> Subscription FrontendOnly msg
+onResize : (Int -> Int -> msg) -> Subscription FrontendOnly msg
 onResize =
     Effect.Internal.OnResize
 

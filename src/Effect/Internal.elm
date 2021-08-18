@@ -1,5 +1,6 @@
 module Effect.Internal exposing
     ( BackendOnly
+    , BrowserDomError(..)
     , Effect(..)
     , File(..)
     , FrontendOnly
@@ -9,25 +10,16 @@ module Effect.Internal exposing
     , Subscription(..)
     , Task(..)
     , Visibility(..)
-    , toCmd
     )
 
 import Browser.Dom
 import Browser.Navigation
 import Bytes exposing (Bytes)
-import Bytes.Encode
 import Duration exposing (Duration)
 import File
-import File.Download
-import File.Select
 import Http
 import Json.Decode
 import Json.Encode
-import Lamdera
-import Pixels exposing (Pixels)
-import Process
-import Quantity exposing (Quantity)
-import Task
 import TestId exposing (ClientId, SessionId)
 import Time
 
@@ -53,7 +45,7 @@ type Subscription restriction msg
     | OnMouseMove (Json.Decode.Decoder msg)
     | OnMouseDown (Json.Decode.Decoder msg)
     | OnMouseUp (Json.Decode.Decoder msg)
-    | OnResize (Quantity Int Pixels -> Quantity Int Pixels -> msg)
+    | OnResize (Int -> Int -> msg)
     | OnVisibilityChange (Visibility -> msg)
     | SubPort String (Sub msg) (Json.Decode.Value -> msg)
     | OnConnect (SessionId -> ClientId -> msg)
@@ -95,9 +87,13 @@ type Task restriction x a
     | GetTime (Time.Posix -> Task restriction x a)
     | GetTimeZone (Time.Zone -> Task restriction x a)
     | GetTimeZoneName (Time.ZoneName -> Task restriction x a)
+    | Focus String (Result BrowserDomError () -> Task restriction x a)
+    | Blur String (Result BrowserDomError () -> Task restriction x a)
     | GetViewport (Browser.Dom.Viewport -> Task restriction x a)
-    | SetViewport (Quantity Float Pixels) (Quantity Float Pixels) (() -> Task restriction x a)
-    | GetElement (Result Browser.Dom.Error Browser.Dom.Element -> Task restriction x a) String
+    | SetViewport Float Float (() -> Task restriction x a)
+    | GetViewportOf String (Result BrowserDomError Browser.Dom.Viewport -> Task restriction x a)
+    | SetViewportOf String Float Float (Result BrowserDomError () -> Task restriction x a)
+    | GetElement String (Result BrowserDomError Browser.Dom.Element -> Task restriction x a)
     | FileToString File (String -> Task restriction x a)
     | FileToBytes File (Bytes -> Task restriction x a)
     | FileToUrl File (String -> Task restriction x a)
@@ -106,6 +102,10 @@ type Task restriction x a
 type NavigationKey
     = RealNavigationKey Browser.Navigation.Key
     | MockNavigationKey
+
+
+type BrowserDomError
+    = BrowserDomNotFound String
 
 
 type File
@@ -130,176 +130,3 @@ type HttpBody
         , content : String
         }
     | JsonBody Json.Encode.Value
-
-
-toCmd : Effect restriction toMsg msg -> Cmd msg
-toCmd effect =
-    case effect of
-        Batch effects ->
-            List.map toCmd effects |> Cmd.batch
-
-        None ->
-            Cmd.none
-
-        SendToBackend toBackend ->
-            Lamdera.sendToBackend toBackend
-
-        NavigationPushUrl navigationKey string ->
-            case navigationKey of
-                RealNavigationKey key ->
-                    Browser.Navigation.pushUrl key string
-
-                MockNavigationKey ->
-                    Cmd.none
-
-        NavigationReplaceUrl navigationKey string ->
-            case navigationKey of
-                RealNavigationKey key ->
-                    Browser.Navigation.replaceUrl key string
-
-                MockNavigationKey ->
-                    Cmd.none
-
-        NavigationLoad url ->
-            Browser.Navigation.load url
-
-        NavigationBack navigationKey int ->
-            case navigationKey of
-                RealNavigationKey key ->
-                    Browser.Navigation.back key int
-
-                MockNavigationKey ->
-                    Cmd.none
-
-        NavigationForward navigationKey int ->
-            case navigationKey of
-                RealNavigationKey key ->
-                    Browser.Navigation.forward key int
-
-                MockNavigationKey ->
-                    Cmd.none
-
-        NavigationReload ->
-            Browser.Navigation.reload
-
-        NavigationReloadAndSkipCache ->
-            Browser.Navigation.reloadAndSkipCache
-
-        Task simulatedTask ->
-            toTask simulatedTask
-                |> Task.attempt
-                    (\result ->
-                        case result of
-                            Ok ok ->
-                                ok
-
-                            Err err ->
-                                err
-                    )
-
-        Port _ portFunction value ->
-            portFunction value
-
-        SendToFrontend clientId toFrontend ->
-            Lamdera.sendToFrontend (TestId.clientIdToString clientId) toFrontend
-
-        FileDownloadUrl { href } ->
-            File.Download.url href
-
-        FileDownloadString { name, mimeType, content } ->
-            File.Download.string name mimeType content
-
-        FileDownloadBytes { name, mimeType, content } ->
-            File.Download.bytes name mimeType content
-
-        FileSelectFile mimeTypes msg ->
-            File.Select.file mimeTypes (RealFile >> msg)
-
-        FileSelectFiles mimeTypes msg ->
-            File.Select.files mimeTypes (\file restOfFiles -> msg (RealFile file) (List.map RealFile restOfFiles))
-
-        Broadcast toMsg ->
-            Lamdera.broadcast toMsg
-
-
-toTask : Task restriction x b -> Task.Task x b
-toTask simulatedTask =
-    case simulatedTask of
-        Succeed a ->
-            Task.succeed a
-
-        Fail x ->
-            Task.fail x
-
-        HttpTask httpRequest ->
-            Http.task
-                { method = httpRequest.method
-                , headers = List.map (\( key, value ) -> Http.header key value) httpRequest.headers
-                , url = httpRequest.url
-                , body =
-                    case httpRequest.body of
-                        EmptyBody ->
-                            Http.emptyBody
-
-                        StringBody { contentType, content } ->
-                            Http.stringBody contentType content
-
-                        JsonBody value ->
-                            Http.jsonBody value
-                , resolver = Http.stringResolver Ok
-                , timeout = Maybe.map Duration.inMilliseconds httpRequest.timeout
-                }
-                |> Task.andThen (\response -> httpRequest.onRequestComplete response |> toTask)
-
-        SleepTask duration function ->
-            Process.sleep (Duration.inMilliseconds duration)
-                |> Task.andThen (\() -> toTask (function ()))
-
-        GetTime gotTime ->
-            Time.now |> Task.andThen (\time -> toTask (gotTime time))
-
-        GetTimeZone gotTimeZone ->
-            Time.here |> Task.andThen (\time -> toTask (gotTimeZone time))
-
-        GetTimeZoneName gotTimeZoneName ->
-            Time.getZoneName |> Task.andThen (\time -> toTask (gotTimeZoneName time))
-
-        SetViewport x y function ->
-            Browser.Dom.setViewport (Pixels.inPixels x) (Pixels.inPixels y) |> Task.andThen (\() -> toTask (function ()))
-
-        GetViewport function ->
-            Browser.Dom.getViewport |> Task.andThen (\viewport -> toTask (function viewport))
-
-        GetElement function string ->
-            Browser.Dom.getElement string
-                |> Task.map Ok
-                |> Task.onError (Err >> Task.succeed)
-                |> Task.andThen (\result -> toTask (function result))
-
-        FileToString file function ->
-            case file of
-                RealFile file_ ->
-                    File.toString file_ |> Task.andThen (\result -> toTask (function result))
-
-                MockFile { content } ->
-                    Task.succeed content |> Task.andThen (\result -> toTask (function result))
-
-        FileToBytes file function ->
-            case file of
-                RealFile file_ ->
-                    File.toBytes file_ |> Task.andThen (\result -> toTask (function result))
-
-                MockFile { content } ->
-                    Bytes.Encode.string content
-                        |> Bytes.Encode.encode
-                        |> Task.succeed
-                        |> Task.andThen (\result -> toTask (function result))
-
-        FileToUrl file function ->
-            case file of
-                RealFile file_ ->
-                    File.toUrl file_ |> Task.andThen (\result -> toTask (function result))
-
-                MockFile { content } ->
-                    -- This isn't the correct behavior but it should be okay as MockFile should never be used here.
-                    Task.succeed content |> Task.andThen (\result -> toTask (function result))

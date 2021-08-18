@@ -1310,32 +1310,17 @@ runTask maybeClientId frontendApp state task =
         SetViewport _ _ function ->
             function () |> runTask maybeClientId frontendApp state
 
-        GetElement function htmlId ->
-            (case Maybe.andThen (\clientId -> Dict.get clientId state.frontends) maybeClientId of
-                Just frontend ->
-                    frontendApp.view frontend.model
-                        |> .body
-                        |> Html.div []
-                        |> Test.Html.Query.fromHtml
-                        |> Test.Html.Query.has [ Test.Html.Selector.id htmlId ]
-                        |> Test.Runner.getFailureReason
-                        |> (\a ->
-                                if a == Nothing then
-                                    Browser.Dom.NotFound htmlId |> Err
-
-                                else
-                                    { scene = { width = 100, height = 100 }
-                                    , viewport = { x = 0, y = 0, width = 100, height = 100 }
-                                    , element = { x = 0, y = 0, width = 100, height = 100 }
-                                    }
-                                        |> Ok
-                           )
-
-                Nothing ->
-                    Browser.Dom.NotFound htmlId |> Err
-            )
-                |> function
-                |> runTask maybeClientId frontendApp state
+        GetElement htmlId function ->
+            getDomTask
+                frontendApp
+                maybeClientId
+                state
+                htmlId
+                function
+                { scene = { width = 100, height = 100 }
+                , viewport = { x = 0, y = 0, width = 100, height = 100 }
+                , element = { x = 0, y = 0, width = 100, height = 100 }
+                }
 
         FileToString file function ->
             case file of
@@ -1363,3 +1348,47 @@ runTask maybeClientId frontendApp state task =
                 MockFile { content } ->
                     -- TODO: Don't assume that content is already in a data url format.
                     function content |> runTask maybeClientId frontendApp state
+
+        Focus htmlId function ->
+            getDomTask frontendApp maybeClientId state htmlId function ()
+
+        Blur htmlId function ->
+            getDomTask frontendApp maybeClientId state htmlId function ()
+
+        GetViewportOf htmlId function ->
+            getDomTask
+                frontendApp
+                maybeClientId
+                state
+                htmlId
+                function
+                { scene = { width = 100, height = 100 }
+                , viewport = { x = 0, y = 0, width = 100, height = 100 }
+                }
+
+        SetViewportOf htmlId _ _ function ->
+            getDomTask frontendApp maybeClientId state htmlId function ()
+
+
+getDomTask frontendApp maybeClientId state htmlId function value =
+    (case Maybe.andThen (\clientId -> Dict.get clientId state.frontends) maybeClientId of
+        Just frontend ->
+            frontendApp.view frontend.model
+                |> .body
+                |> Html.div []
+                |> Test.Html.Query.fromHtml
+                |> Test.Html.Query.has [ Test.Html.Selector.id htmlId ]
+                |> Test.Runner.getFailureReason
+                |> (\a ->
+                        if a == Nothing then
+                            Effect.Internal.BrowserDomNotFound htmlId |> Err
+
+                        else
+                            Ok value
+                   )
+
+        Nothing ->
+            Effect.Internal.BrowserDomNotFound htmlId |> Err
+    )
+        |> function
+        |> runTask maybeClientId frontendApp state

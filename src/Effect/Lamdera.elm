@@ -7,13 +7,21 @@ module Effect.Lamdera exposing (frontend, backend, sendToBackend, sendToFrontend
 -}
 
 import Browser
+import Browser.Dom
 import Browser.Events
 import Browser.Navigation
+import Bytes.Encode
 import Duration
 import Effect.Browser.Events
-import Effect.Internal
+import Effect.Internal exposing (File(..), HttpBody(..), NavigationKey(..))
+import File
+import File.Download
+import File.Select
+import Http
 import Lamdera
 import Pixels
+import Process
+import Task
 import TestId
 import Time
 import Url
@@ -59,10 +67,10 @@ frontend userApp =
     { init =
         \url navigationKey ->
             userApp.init url (Effect.Internal.RealNavigationKey navigationKey)
-                |> Tuple.mapSecond Effect.Internal.toCmd
+                |> Tuple.mapSecond toCmd
     , view = userApp.view
-    , update = \msg model -> userApp.update msg model |> Tuple.mapSecond Effect.Internal.toCmd
-    , updateFromBackend = \msg model -> userApp.updateFromBackend msg model |> Tuple.mapSecond Effect.Internal.toCmd
+    , update = \msg model -> userApp.update msg model |> Tuple.mapSecond toCmd
+    , updateFromBackend = \msg model -> userApp.updateFromBackend msg model |> Tuple.mapSecond toCmd
     , subscriptions = userApp.subscriptions >> toSub
     , onUrlRequest = userApp.onUrlRequest
     , onUrlChange = userApp.onUrlChange
@@ -84,8 +92,8 @@ backend :
         , subscriptions : backendModel -> Sub backendMsg
         }
 backend userApp =
-    { init = userApp.init |> Tuple.mapSecond Effect.Internal.toCmd
-    , update = \msg model -> userApp.update msg model |> Tuple.mapSecond Effect.Internal.toCmd
+    { init = userApp.init |> Tuple.mapSecond toCmd
+    , update = \msg model -> userApp.update msg model |> Tuple.mapSecond toCmd
     , updateFromFrontend =
         \sessionId clientId msg model ->
             userApp.updateFromFrontend
@@ -93,7 +101,7 @@ backend userApp =
                 (TestId.clientIdFromString clientId)
                 msg
                 model
-                |> Tuple.mapSecond Effect.Internal.toCmd
+                |> Tuple.mapSecond toCmd
     , subscriptions = userApp.subscriptions >> toSub
     }
 
@@ -167,6 +175,208 @@ type alias Key =
     Effect.Internal.NavigationKey
 
 
+toCmd : Effect restriction toMsg msg -> Cmd msg
+toCmd effect =
+    case effect of
+        Effect.Internal.Batch effects ->
+            List.map toCmd effects |> Cmd.batch
+
+        Effect.Internal.None ->
+            Cmd.none
+
+        Effect.Internal.SendToBackend toBackend ->
+            Lamdera.sendToBackend toBackend
+
+        Effect.Internal.NavigationPushUrl navigationKey string ->
+            case navigationKey of
+                RealNavigationKey key ->
+                    Browser.Navigation.pushUrl key string
+
+                MockNavigationKey ->
+                    Cmd.none
+
+        Effect.Internal.NavigationReplaceUrl navigationKey string ->
+            case navigationKey of
+                RealNavigationKey key ->
+                    Browser.Navigation.replaceUrl key string
+
+                MockNavigationKey ->
+                    Cmd.none
+
+        Effect.Internal.NavigationLoad url ->
+            Browser.Navigation.load url
+
+        Effect.Internal.NavigationBack navigationKey int ->
+            case navigationKey of
+                RealNavigationKey key ->
+                    Browser.Navigation.back key int
+
+                MockNavigationKey ->
+                    Cmd.none
+
+        Effect.Internal.NavigationForward navigationKey int ->
+            case navigationKey of
+                RealNavigationKey key ->
+                    Browser.Navigation.forward key int
+
+                MockNavigationKey ->
+                    Cmd.none
+
+        Effect.Internal.NavigationReload ->
+            Browser.Navigation.reload
+
+        Effect.Internal.NavigationReloadAndSkipCache ->
+            Browser.Navigation.reloadAndSkipCache
+
+        Effect.Internal.Task simulatedTask ->
+            toTask simulatedTask
+                |> Task.attempt
+                    (\result ->
+                        case result of
+                            Ok ok ->
+                                ok
+
+                            Err err ->
+                                err
+                    )
+
+        Effect.Internal.Port _ portFunction value ->
+            portFunction value
+
+        Effect.Internal.SendToFrontend clientId toFrontend ->
+            Lamdera.sendToFrontend (TestId.clientIdToString clientId) toFrontend
+
+        Effect.Internal.FileDownloadUrl { href } ->
+            File.Download.url href
+
+        Effect.Internal.FileDownloadString { name, mimeType, content } ->
+            File.Download.string name mimeType content
+
+        Effect.Internal.FileDownloadBytes { name, mimeType, content } ->
+            File.Download.bytes name mimeType content
+
+        Effect.Internal.FileSelectFile mimeTypes msg ->
+            File.Select.file mimeTypes (RealFile >> msg)
+
+        Effect.Internal.FileSelectFiles mimeTypes msg ->
+            File.Select.files mimeTypes (\file restOfFiles -> msg (RealFile file) (List.map RealFile restOfFiles))
+
+        Effect.Internal.Broadcast toMsg ->
+            Lamdera.broadcast toMsg
+
+
+toTask : Effect.Internal.Task restriction x b -> Task.Task x b
+toTask simulatedTask =
+    case simulatedTask of
+        Effect.Internal.Succeed a ->
+            Task.succeed a
+
+        Effect.Internal.Fail x ->
+            Task.fail x
+
+        Effect.Internal.HttpTask httpRequest ->
+            Http.task
+                { method = httpRequest.method
+                , headers = List.map (\( key, value ) -> Http.header key value) httpRequest.headers
+                , url = httpRequest.url
+                , body =
+                    case httpRequest.body of
+                        EmptyBody ->
+                            Http.emptyBody
+
+                        StringBody { contentType, content } ->
+                            Http.stringBody contentType content
+
+                        JsonBody value ->
+                            Http.jsonBody value
+                , resolver = Http.stringResolver Ok
+                , timeout = Maybe.map Duration.inMilliseconds httpRequest.timeout
+                }
+                |> Task.andThen (\response -> httpRequest.onRequestComplete response |> toTask)
+
+        Effect.Internal.SleepTask duration function ->
+            Process.sleep (Duration.inMilliseconds duration)
+                |> Task.andThen (\() -> toTask (function ()))
+
+        Effect.Internal.GetTime gotTime ->
+            Time.now |> Task.andThen (\time -> toTask (gotTime time))
+
+        Effect.Internal.GetTimeZone gotTimeZone ->
+            Time.here |> Task.andThen (\time -> toTask (gotTimeZone time))
+
+        Effect.Internal.GetTimeZoneName gotTimeZoneName ->
+            Time.getZoneName |> Task.andThen (\time -> toTask (gotTimeZoneName time))
+
+        Effect.Internal.SetViewport x y function ->
+            Browser.Dom.setViewport x y |> Task.andThen (\() -> toTask (function ()))
+
+        Effect.Internal.GetViewport function ->
+            Browser.Dom.getViewport |> Task.andThen (\viewport -> toTask (function viewport))
+
+        Effect.Internal.GetElement string function ->
+            Browser.Dom.getElement string
+                |> Task.map Ok
+                |> Task.onError
+                    (\(Browser.Dom.NotFound id) -> Effect.Internal.BrowserDomNotFound id |> Err |> Task.succeed)
+                |> Task.andThen (\result -> toTask (function result))
+
+        Effect.Internal.Focus string msg ->
+            Browser.Dom.focus string
+                |> Task.map Ok
+                |> Task.onError
+                    (\(Browser.Dom.NotFound id) -> Effect.Internal.BrowserDomNotFound id |> Err |> Task.succeed)
+                |> Task.andThen (\result -> toTask (msg result))
+
+        Effect.Internal.Blur string msg ->
+            Browser.Dom.blur string
+                |> Task.map Ok
+                |> Task.onError
+                    (\(Browser.Dom.NotFound id) -> Effect.Internal.BrowserDomNotFound id |> Err |> Task.succeed)
+                |> Task.andThen (\result -> toTask (msg result))
+
+        Effect.Internal.GetViewportOf string msg ->
+            Browser.Dom.getViewportOf string
+                |> Task.map Ok
+                |> Task.onError
+                    (\(Browser.Dom.NotFound id) -> Effect.Internal.BrowserDomNotFound id |> Err |> Task.succeed)
+                |> Task.andThen (\result -> toTask (msg result))
+
+        Effect.Internal.SetViewportOf string x y msg ->
+            Browser.Dom.setViewportOf string x y
+                |> Task.map Ok
+                |> Task.onError
+                    (\(Browser.Dom.NotFound id) -> Effect.Internal.BrowserDomNotFound id |> Err |> Task.succeed)
+                |> Task.andThen (\result -> toTask (msg result))
+
+        Effect.Internal.FileToString file function ->
+            case file of
+                RealFile file_ ->
+                    File.toString file_ |> Task.andThen (\result -> toTask (function result))
+
+                MockFile { content } ->
+                    Task.succeed content |> Task.andThen (\result -> toTask (function result))
+
+        Effect.Internal.FileToBytes file function ->
+            case file of
+                RealFile file_ ->
+                    File.toBytes file_ |> Task.andThen (\result -> toTask (function result))
+
+                MockFile { content } ->
+                    Bytes.Encode.string content
+                        |> Bytes.Encode.encode
+                        |> Task.succeed
+                        |> Task.andThen (\result -> toTask (function result))
+
+        Effect.Internal.FileToUrl file function ->
+            case file of
+                RealFile file_ ->
+                    File.toUrl file_ |> Task.andThen (\result -> toTask (function result))
+
+                MockFile { content } ->
+                    -- This isn't the correct behavior but it should be okay as MockFile should never be used here.
+                    Task.succeed content |> Task.andThen (\result -> toTask (function result))
+
+
 toSub : Subscription restriction msg -> Sub msg
 toSub sub =
     case sub of
@@ -218,7 +428,7 @@ toSub sub =
                 )
 
         Effect.Internal.OnResize msg ->
-            Browser.Events.onResize (\w h -> msg (Pixels.pixels w) (Pixels.pixels h))
+            Browser.Events.onResize msg
 
         Effect.Internal.SubPort _ portFunction _ ->
             portFunction

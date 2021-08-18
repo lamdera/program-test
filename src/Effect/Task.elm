@@ -2,7 +2,6 @@ module Effect.Task exposing
     ( Task
     , andThen
     , fail
-    , getElement
     , getTime
     , getTimeZone
     , getTimeZoneName
@@ -82,7 +81,7 @@ getTimeZoneName =
     GetTimeZoneName Succeed
 
 
-setViewport : Quantity Float Pixels -> Quantity Float Pixels -> Task FrontendOnly x ()
+setViewport : Float -> Float -> Task FrontendOnly x ()
 setViewport x y =
     SetViewport x y Succeed
 
@@ -90,20 +89,6 @@ setViewport x y =
 getViewport : Task FrontendOnly x Browser.Dom.Viewport
 getViewport =
     GetViewport Succeed
-
-
-getElement : String -> Task FrontendOnly Browser.Dom.Error Browser.Dom.Element
-getElement htmlId =
-    GetElement
-        (\result ->
-            case result of
-                Ok ok ->
-                    Succeed ok
-
-                Err err ->
-                    Fail err
-        )
-        htmlId
 
 
 {-| Chain together a task and a callback.
@@ -145,8 +130,20 @@ andThen f task =
         GetViewport function ->
             GetViewport (function >> andThen f)
 
-        GetElement function string ->
-            GetElement (function >> andThen f) string
+        GetElement string function ->
+            GetElement string (function >> andThen f)
+
+        Focus string function ->
+            Focus string (function >> andThen f)
+
+        Blur string function ->
+            Blur string (function >> andThen f)
+
+        GetViewportOf string function ->
+            GetViewportOf string (function >> andThen f)
+
+        SetViewportOf string x y function ->
+            SetViewportOf string x y (function >> andThen f)
 
         FileToString file function ->
             FileToString file (function >> andThen f)
@@ -303,8 +300,20 @@ mapError f task =
         GetViewport function ->
             GetViewport (function >> mapError f)
 
-        GetElement function string ->
-            GetElement (function >> mapError f) string
+        GetElement string function ->
+            GetElement string (function >> mapError f)
+
+        Focus string function ->
+            Focus string (function >> mapError f)
+
+        Blur string function ->
+            Blur string (function >> mapError f)
+
+        GetViewportOf string function ->
+            GetViewportOf string (function >> mapError f)
+
+        SetViewportOf string x y function ->
+            SetViewportOf string x y (function >> mapError f)
 
         FileToString file function ->
             FileToString file (function >> mapError f)
@@ -355,8 +364,20 @@ onError f task =
         GetViewport function ->
             GetViewport (function >> onError f)
 
-        GetElement function string ->
-            GetElement (function >> onError f) string
+        GetElement string function ->
+            GetElement string (function >> onError f)
+
+        Focus string function ->
+            Focus string (function >> onError f)
+
+        Blur string function ->
+            Blur string (function >> onError f)
+
+        GetViewportOf string function ->
+            GetViewportOf string (function >> onError f)
+
+        SetViewportOf string x y function ->
+            SetViewportOf string x y (function >> onError f)
 
         FileToString file function ->
             FileToString file (function >> onError f)

@@ -35,7 +35,7 @@ timeEvery =
     Effect.Internal.TimeEvery
 
 
-onResize : (Quantity Int Pixels -> Quantity Int Pixels -> msg) -> Subscription FrontendOnly msg
+onResize : (Int -> Int -> msg) -> Subscription FrontendOnly msg
 onResize =
     Effect.Internal.OnResize
 
