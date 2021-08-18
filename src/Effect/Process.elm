@@ -1,4 +1,4 @@
-module Process exposing
+module Effect.Process exposing
     ( sleep
     , Task
     )

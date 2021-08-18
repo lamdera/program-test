@@ -17,6 +17,7 @@
         "Effect.Lamdera",
         "Effect.Task",
         "Effect.Time",
+        "Effect.Process",
         "Subscription",
         "TestFramework",
         "TestId"
