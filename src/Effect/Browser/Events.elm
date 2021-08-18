@@ -40,8 +40,6 @@ If there is something else you need, use [ports] to do it in JavaScript!
 import Duration exposing (Duration)
 import Effect.Internal
 import Json.Decode as Decode
-import Pixels exposing (Pixels)
-import Quantity exposing (Quantity)
 import Time
 
 

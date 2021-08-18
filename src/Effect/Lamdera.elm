@@ -298,13 +298,13 @@ toTask simulatedTask =
             Process.sleep (Duration.inMilliseconds duration)
                 |> Task.andThen (\() -> toTask (function ()))
 
-        Effect.Internal.GetTime gotTime ->
+        Effect.Internal.TimeNow gotTime ->
             Time.now |> Task.andThen (\time -> toTask (gotTime time))
 
-        Effect.Internal.GetTimeZone gotTimeZone ->
+        Effect.Internal.TimeHere gotTimeZone ->
             Time.here |> Task.andThen (\time -> toTask (gotTimeZone time))
 
-        Effect.Internal.GetTimeZoneName gotTimeZoneName ->
+        Effect.Internal.TimeGetZoneName gotTimeZoneName ->
             Time.getZoneName |> Task.andThen (\time -> toTask (gotTimeZoneName time))
 
         Effect.Internal.SetViewport x y function ->

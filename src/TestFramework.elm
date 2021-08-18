@@ -1294,13 +1294,13 @@ runTask maybeClientId frontendApp state task =
             -- TODO: Implement actual delays in tasks
             runTask maybeClientId frontendApp state (function ())
 
-        GetTime gotTime ->
+        TimeNow gotTime ->
             gotTime (Duration.addTo startTime state.elapsedTime) |> runTask maybeClientId frontendApp state
 
-        GetTimeZone gotTimeZone ->
+        TimeHere gotTimeZone ->
             gotTimeZone Time.utc |> runTask maybeClientId frontendApp state
 
-        GetTimeZoneName getTimeZoneName ->
+        TimeGetZoneName getTimeZoneName ->
             getTimeZoneName (Time.Offset 0) |> runTask maybeClientId frontendApp state
 
         GetViewport function ->

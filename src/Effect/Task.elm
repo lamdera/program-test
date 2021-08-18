@@ -2,9 +2,6 @@ module Effect.Task exposing
     ( Task
     , andThen
     , fail
-    , getTime
-    , getTimeZone
-    , getTimeZoneName
     , map
     , map2
     , map3
@@ -18,7 +15,6 @@ module Effect.Task exposing
 
 import Duration exposing (Duration)
 import Effect.Internal exposing (Effect(..), HttpBody(..), Task(..))
-import Time
 
 
 type alias FrontendOnly =
@@ -56,24 +52,9 @@ attempt f task =
         |> Task
 
 
-getTime : Task restriction x Time.Posix
-getTime =
-    GetTime Succeed
-
-
 wait : Duration -> Task restriction x ()
 wait duration =
     SleepTask duration Succeed
-
-
-getTimeZone : Task FrontendOnly x Time.Zone
-getTimeZone =
-    GetTimeZone Succeed
-
-
-getTimeZoneName : Task FrontendOnly x Time.ZoneName
-getTimeZoneName =
-    GetTimeZoneName Succeed
 
 
 {-| Chain together a task and a callback.
@@ -100,14 +81,14 @@ andThen f task =
         SleepTask delay onResult ->
             SleepTask delay (onResult >> andThen f)
 
-        GetTime gotTime ->
-            GetTime (gotTime >> andThen f)
+        TimeNow gotTime ->
+            TimeNow (gotTime >> andThen f)
 
-        GetTimeZone gotTimeZone ->
-            GetTimeZone (gotTimeZone >> andThen f)
+        TimeHere gotTimeZone ->
+            TimeHere (gotTimeZone >> andThen f)
 
-        GetTimeZoneName gotTimeZoneName ->
-            GetTimeZoneName (gotTimeZoneName >> andThen f)
+        TimeGetZoneName gotTimeZoneName ->
+            TimeGetZoneName (gotTimeZoneName >> andThen f)
 
         SetViewport x y function ->
             SetViewport x y (function >> andThen f)
@@ -270,14 +251,14 @@ mapError f task =
         SleepTask delay onResult ->
             SleepTask delay (onResult >> mapError f)
 
-        GetTime gotTime ->
-            GetTime (gotTime >> mapError f)
+        TimeNow gotTime ->
+            TimeNow (gotTime >> mapError f)
 
-        GetTimeZone gotTimeZone ->
-            GetTimeZone (gotTimeZone >> mapError f)
+        TimeHere gotTimeZone ->
+            TimeHere (gotTimeZone >> mapError f)
 
-        GetTimeZoneName gotTimeZoneName ->
-            GetTimeZoneName (gotTimeZoneName >> mapError f)
+        TimeGetZoneName gotTimeZoneName ->
+            TimeGetZoneName (gotTimeZoneName >> mapError f)
 
         SetViewport x y function ->
             SetViewport x y (function >> mapError f)
@@ -334,14 +315,14 @@ onError f task =
         SleepTask delay onResult ->
             SleepTask delay (onResult >> onError f)
 
-        GetTime gotTime ->
-            GetTime (gotTime >> onError f)
+        TimeNow gotTime ->
+            TimeNow (gotTime >> onError f)
 
-        GetTimeZone gotTimeZone ->
-            GetTimeZone (gotTimeZone >> onError f)
+        TimeHere gotTimeZone ->
+            TimeHere (gotTimeZone >> onError f)
 
-        GetTimeZoneName gotTimeZoneName ->
-            GetTimeZoneName (gotTimeZoneName >> onError f)
+        TimeGetZoneName gotTimeZoneName ->
+            TimeGetZoneName (gotTimeZoneName >> onError f)
 
         SetViewport x y function ->
             SetViewport x y (function >> onError f)

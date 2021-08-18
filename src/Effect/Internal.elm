@@ -84,9 +84,9 @@ type Task restriction x a
     | Fail x
     | HttpTask (HttpRequest restriction x a)
     | SleepTask Duration (() -> Task restriction x a)
-    | GetTime (Time.Posix -> Task restriction x a)
-    | GetTimeZone (Time.Zone -> Task restriction x a)
-    | GetTimeZoneName (Time.ZoneName -> Task restriction x a)
+    | TimeNow (Time.Posix -> Task restriction x a)
+    | TimeHere (Time.Zone -> Task restriction x a)
+    | TimeGetZoneName (Time.ZoneName -> Task restriction x a)
     | Focus String (Result BrowserDomError () -> Task restriction x a)
     | Blur String (Result BrowserDomError () -> Task restriction x a)
     | GetViewport (Browser.Dom.Viewport -> Task restriction x a)
