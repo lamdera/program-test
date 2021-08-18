@@ -46,7 +46,7 @@ type Subscription restriction msg
     | SubNone
     | TimeEvery Duration (Time.Posix -> msg)
     | OnResize (Quantity Int Pixels -> Quantity Int Pixels -> msg)
-    | SubPort String ((Json.Decode.Value -> msg) -> Sub msg) (Json.Decode.Value -> msg)
+    | SubPort String (Sub msg) (Json.Decode.Value -> msg)
     | OnConnect (SessionId -> ClientId -> msg)
     | OnDisconnect (SessionId -> ClientId -> msg)
 
@@ -280,8 +280,8 @@ toSub sub =
         OnResize msg ->
             Browser.Events.onResize (\w h -> msg (Pixels.pixels w) (Pixels.pixels h))
 
-        SubPort _ portFunction msg ->
-            portFunction msg
+        SubPort _ portFunction _ ->
+            portFunction
 
         OnConnect msg ->
             Lamdera.onConnect

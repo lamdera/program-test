@@ -1,4 +1,4 @@
-module Subscription exposing (Subscription, batch, fromJs, none, onResize, timeEvery)
+module Subscription exposing (Subscription, batch, fromJs, map, none, onResize, timeEvery)
 
 import Duration exposing (Duration)
 import Effect.Internal
@@ -41,27 +41,30 @@ onResize =
 
 
 fromJs : String -> ((Json.Decode.Value -> msg) -> Sub msg) -> (Json.Decode.Value -> msg) -> Subscription FrontendOnly msg
-fromJs =
-    Effect.Internal.SubPort
+fromJs portName portFunction msg =
+    Effect.Internal.SubPort portName (portFunction msg) msg
 
 
+map : (a -> b) -> Subscription restriction a -> Subscription restriction b
+map mapFunc subscription =
+    case subscription of
+        Effect.Internal.SubBatch subscriptions ->
+            List.map (map mapFunc) subscriptions |> Effect.Internal.SubBatch
 
---map : (a -> b) -> FrontendSub a -> FrontendSub b
---map mapFunc subscription =
---    case subscription of
---        Batch subscriptions ->
---            List.map (map mapFunc) subscriptions |> Batch
---
---        TimeEvery duration msg ->
---            TimeEvery duration (msg >> mapFunc)
---
---        OnResize msg ->
---            OnResize (\w h -> msg w h |> mapFunc)
---
---        Port portName portFunction msg ->
---            let
---                portFunction_ : (Json.Decode.Value -> b) -> Sub b
---                portFunction_ msg_ =
---                    portFunction msg_ |> Sub.map mapFunc
---            in
---            Port portName portFunction_ (msg >> mapFunc)
+        Effect.Internal.TimeEvery duration msg ->
+            Effect.Internal.TimeEvery duration (msg >> mapFunc)
+
+        Effect.Internal.OnResize msg ->
+            Effect.Internal.OnResize (\w h -> msg w h |> mapFunc)
+
+        Effect.Internal.SubPort portName sub msg ->
+            Effect.Internal.SubPort portName (Sub.map mapFunc sub) (msg >> mapFunc)
+
+        Effect.Internal.SubNone ->
+            Effect.Internal.SubNone
+
+        Effect.Internal.OnConnect msg ->
+            Effect.Internal.OnConnect (\sessionId clientId -> msg sessionId clientId |> mapFunc)
+
+        Effect.Internal.OnDisconnect msg ->
+            Effect.Internal.OnDisconnect (\sessionId clientId -> msg sessionId clientId |> mapFunc)
