@@ -54,6 +54,36 @@ map mapFunc subscription =
         Effect.Internal.TimeEvery duration msg ->
             Effect.Internal.TimeEvery duration (msg >> mapFunc)
 
+        Effect.Internal.OnAnimationFrame msg ->
+            Effect.Internal.OnAnimationFrame (msg >> mapFunc)
+
+        Effect.Internal.OnAnimationFrameDelta msg ->
+            Effect.Internal.OnAnimationFrameDelta (msg >> mapFunc)
+
+        Effect.Internal.OnKeyPress decoder ->
+            Effect.Internal.OnKeyPress (Json.Decode.map mapFunc decoder)
+
+        Effect.Internal.OnKeyDown decoder ->
+            Effect.Internal.OnKeyPress (Json.Decode.map mapFunc decoder)
+
+        Effect.Internal.OnKeyUp decoder ->
+            Effect.Internal.OnKeyUp (Json.Decode.map mapFunc decoder)
+
+        Effect.Internal.OnClick decoder ->
+            Effect.Internal.OnClick (Json.Decode.map mapFunc decoder)
+
+        Effect.Internal.OnMouseMove decoder ->
+            Effect.Internal.OnMouseMove (Json.Decode.map mapFunc decoder)
+
+        Effect.Internal.OnMouseDown decoder ->
+            Effect.Internal.OnMouseDown (Json.Decode.map mapFunc decoder)
+
+        Effect.Internal.OnMouseUp decoder ->
+            Effect.Internal.OnMouseUp (Json.Decode.map mapFunc decoder)
+
+        Effect.Internal.OnVisibilityChange msg ->
+            Effect.Internal.OnVisibilityChange (msg >> mapFunc)
+
         Effect.Internal.OnResize msg ->
             Effect.Internal.OnResize (\w h -> msg w h |> mapFunc)
 

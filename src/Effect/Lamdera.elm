@@ -7,9 +7,15 @@ module Effect.Lamdera exposing (frontend, backend, sendToBackend, sendToFrontend
 -}
 
 import Browser
+import Browser.Events
 import Browser.Navigation
+import Duration
+import Effect.Browser.Events
 import Effect.Internal
+import Lamdera
+import Pixels
 import TestId
+import Time
 import Url
 
 
@@ -57,7 +63,7 @@ frontend userApp =
     , view = userApp.view
     , update = \msg model -> userApp.update msg model |> Tuple.mapSecond Effect.Internal.toCmd
     , updateFromBackend = \msg model -> userApp.updateFromBackend msg model |> Tuple.mapSecond Effect.Internal.toCmd
-    , subscriptions = userApp.subscriptions >> Effect.Internal.toSub
+    , subscriptions = userApp.subscriptions >> toSub
     , onUrlRequest = userApp.onUrlRequest
     , onUrlChange = userApp.onUrlChange
     }
@@ -88,7 +94,7 @@ backend userApp =
                 msg
                 model
                 |> Tuple.mapSecond Effect.Internal.toCmd
-    , subscriptions = userApp.subscriptions >> Effect.Internal.toSub
+    , subscriptions = userApp.subscriptions >> toSub
     }
 
 
@@ -159,3 +165,68 @@ type alias UrlRequest =
 -}
 type alias Key =
     Effect.Internal.NavigationKey
+
+
+toSub : Subscription restriction msg -> Sub msg
+toSub sub =
+    case sub of
+        Effect.Internal.SubBatch subs ->
+            List.map toSub subs |> Sub.batch
+
+        Effect.Internal.SubNone ->
+            Sub.none
+
+        Effect.Internal.TimeEvery duration msg ->
+            Time.every (Duration.inMilliseconds duration) msg
+
+        Effect.Internal.OnAnimationFrame msg ->
+            Browser.Events.onAnimationFrame msg
+
+        Effect.Internal.OnAnimationFrameDelta msg ->
+            Browser.Events.onAnimationFrameDelta (Duration.milliseconds >> msg)
+
+        Effect.Internal.OnKeyPress decoder ->
+            Browser.Events.onKeyPress decoder
+
+        Effect.Internal.OnKeyDown decoder ->
+            Browser.Events.onKeyDown decoder
+
+        Effect.Internal.OnKeyUp decoder ->
+            Browser.Events.onKeyUp decoder
+
+        Effect.Internal.OnClick decoder ->
+            Browser.Events.onClick decoder
+
+        Effect.Internal.OnMouseMove decoder ->
+            Browser.Events.onMouseMove decoder
+
+        Effect.Internal.OnMouseDown decoder ->
+            Browser.Events.onMouseDown decoder
+
+        Effect.Internal.OnMouseUp decoder ->
+            Browser.Events.onMouseUp decoder
+
+        Effect.Internal.OnVisibilityChange msg ->
+            Browser.Events.onVisibilityChange
+                (\visibility ->
+                    case visibility of
+                        Browser.Events.Visible ->
+                            msg Effect.Internal.Visible
+
+                        Browser.Events.Hidden ->
+                            msg Effect.Internal.Hidden
+                )
+
+        Effect.Internal.OnResize msg ->
+            Browser.Events.onResize (\w h -> msg (Pixels.pixels w) (Pixels.pixels h))
+
+        Effect.Internal.SubPort _ portFunction _ ->
+            portFunction
+
+        Effect.Internal.OnConnect msg ->
+            Lamdera.onConnect
+                (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))
+
+        Effect.Internal.OnDisconnect msg ->
+            Lamdera.onDisconnect
+                (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))

@@ -116,6 +116,6 @@ reliably detect `Cancel` clicks across browsers. More about that in the
 section on [limitations](#limitations) below.
 
 -}
-files : List String -> (File -> List File -> msg) -> Cmd msg
+files : List String -> (File -> List File -> msg) -> Effect FrontendOnly toMsg msg
 files =
     Effect.Internal.FileSelectFiles

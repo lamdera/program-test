@@ -359,6 +359,9 @@ getTimers currentTime backendSub =
         Effect.Internal.TimeEvery duration msg ->
             Dict.singleton duration { msg = msg, startTime = currentTime }
 
+        Effect.Internal.OnAnimationFrame msg ->
+            Dict.singleton (Duration.seconds (1 / 60)) { msg = msg, startTime = currentTime }
+
         _ ->
             Dict.empty
 

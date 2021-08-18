@@ -8,12 +8,11 @@ module Effect.Internal exposing
     , NavigationKey(..)
     , Subscription(..)
     , Task(..)
+    , Visibility(..)
     , toCmd
-    , toSub
     )
 
 import Browser.Dom
-import Browser.Events
 import Browser.Navigation
 import Bytes exposing (Bytes)
 import Bytes.Encode
@@ -45,10 +44,25 @@ type Subscription restriction msg
     = SubBatch (List (Subscription restriction msg))
     | SubNone
     | TimeEvery Duration (Time.Posix -> msg)
+    | OnAnimationFrame (Time.Posix -> msg)
+    | OnAnimationFrameDelta (Duration -> msg)
+    | OnKeyPress (Json.Decode.Decoder msg)
+    | OnKeyDown (Json.Decode.Decoder msg)
+    | OnKeyUp (Json.Decode.Decoder msg)
+    | OnClick (Json.Decode.Decoder msg)
+    | OnMouseMove (Json.Decode.Decoder msg)
+    | OnMouseDown (Json.Decode.Decoder msg)
+    | OnMouseUp (Json.Decode.Decoder msg)
     | OnResize (Quantity Int Pixels -> Quantity Int Pixels -> msg)
+    | OnVisibilityChange (Visibility -> msg)
     | SubPort String (Sub msg) (Json.Decode.Value -> msg)
     | OnConnect (SessionId -> ClientId -> msg)
     | OnDisconnect (SessionId -> ClientId -> msg)
+
+
+type Visibility
+    = Visible
+    | Hidden
 
 
 type Effect restriction toMsg msg
@@ -289,30 +303,3 @@ toTask simulatedTask =
                 MockFile { content } ->
                     -- This isn't the correct behavior but it should be okay as MockFile should never be used here.
                     Task.succeed content |> Task.andThen (\result -> toTask (function result))
-
-
-toSub : Subscription restriction msg -> Sub msg
-toSub sub =
-    case sub of
-        SubBatch subs ->
-            List.map toSub subs |> Sub.batch
-
-        SubNone ->
-            Sub.none
-
-        TimeEvery duration msg ->
-            Time.every (Duration.inMilliseconds duration) msg
-
-        OnResize msg ->
-            Browser.Events.onResize (\w h -> msg (Pixels.pixels w) (Pixels.pixels h))
-
-        SubPort _ portFunction _ ->
-            portFunction
-
-        OnConnect msg ->
-            Lamdera.onConnect
-                (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))
-
-        OnDisconnect msg ->
-            Lamdera.onDisconnect
-                (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))
