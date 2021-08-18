@@ -5,9 +5,6 @@ module Effect exposing
     , PortToJs
     , batch
     , map
-    , navigationLoad
-    , navigationPushUrl
-    , navigationReplaceUrl
     , none
     , sendToJs
     )
@@ -37,21 +34,6 @@ batch =
 none : Effect restriction toMsg msg
 none =
     None
-
-
-navigationPushUrl : NavigationKey -> String -> Effect restriction toMsg msg
-navigationPushUrl =
-    NavigationPushUrl
-
-
-navigationReplaceUrl : NavigationKey -> String -> Effect restriction toMsg msg
-navigationReplaceUrl =
-    NavigationReplaceUrl
-
-
-navigationLoad : String -> Effect restriction toMsg msg
-navigationLoad =
-    NavigationLoad
 
 
 sendToJs : String -> (Json.Encode.Value -> Cmd msg) -> Json.Encode.Value -> Effect FrontendOnly toMsg msg
@@ -87,6 +69,18 @@ map mapToMsg mapMsg frontendEffect =
 
         NavigationLoad url ->
             NavigationLoad url
+
+        NavigationBack navigationKey int ->
+            NavigationBack navigationKey int
+
+        NavigationForward navigationKey int ->
+            NavigationForward navigationKey int
+
+        NavigationReload ->
+            NavigationReload
+
+        NavigationReloadAndSkipCache ->
+            NavigationReloadAndSkipCache
 
         Task simulatedTask ->
             Effect.Task.map mapMsg simulatedTask

@@ -57,7 +57,11 @@ type Effect restriction toMsg msg
     | SendToBackend toMsg
     | NavigationPushUrl NavigationKey String
     | NavigationReplaceUrl NavigationKey String
+    | NavigationBack NavigationKey Int
+    | NavigationForward NavigationKey Int
     | NavigationLoad String
+    | NavigationReload
+    | NavigationReloadAndSkipCache
     | Task (Task restriction msg msg)
     | Port String (Json.Encode.Value -> Cmd msg) Json.Encode.Value
     | SendToFrontend ClientId toMsg
@@ -144,6 +148,28 @@ toCmd effect =
 
         NavigationLoad url ->
             Browser.Navigation.load url
+
+        NavigationBack navigationKey int ->
+            case navigationKey of
+                RealNavigationKey key ->
+                    Browser.Navigation.back key int
+
+                MockNavigationKey ->
+                    Cmd.none
+
+        NavigationForward navigationKey int ->
+            case navigationKey of
+                RealNavigationKey key ->
+                    Browser.Navigation.forward key int
+
+                MockNavigationKey ->
+                    Cmd.none
+
+        NavigationReload ->
+            Browser.Navigation.reload
+
+        NavigationReloadAndSkipCache ->
+            Browser.Navigation.reloadAndSkipCache
 
         Task simulatedTask ->
             toTask simulatedTask

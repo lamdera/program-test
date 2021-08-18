@@ -967,6 +967,18 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
         NavigationLoad urlText ->
             handleUrlChange frontendApp urlText clientId state
 
+        NavigationBack navigationKey int ->
+            Debug.todo ""
+
+        NavigationForward navigationKey int ->
+            Debug.todo ""
+
+        NavigationReload ->
+            Debug.todo ""
+
+        NavigationReloadAndSkipCache ->
+            Debug.todo ""
+
         None ->
             state
 
@@ -1205,6 +1217,18 @@ runBackendEffects frontendApp backendApp effect state =
             state
 
         NavigationLoad _ ->
+            state
+
+        NavigationBack _ _ ->
+            state
+
+        NavigationForward _ _ ->
+            state
+
+        NavigationReload ->
+            state
+
+        NavigationReloadAndSkipCache ->
             state
 
         Port _ _ _ ->
