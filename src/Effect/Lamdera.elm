@@ -16,6 +16,7 @@ import Browser.Navigation
 import Bytes.Encode
 import Duration
 import Effect.Internal exposing (File(..), HttpBody(..), NavigationKey(..))
+import Effect.Time
 import File
 import File.Download
 import File.Select
@@ -46,14 +47,16 @@ type alias Subscription restriction msg =
 {-| Create a Lamdera frontend application
 -}
 frontend :
-    { init : Url.Url -> Key -> ( model, Command FrontendOnly toBackend frontendMsg )
-    , view : model -> Browser.Document frontendMsg
-    , update : frontendMsg -> model -> ( model, Command FrontendOnly toBackend frontendMsg )
-    , updateFromBackend : toFrontend -> model -> ( model, Command FrontendOnly toBackend frontendMsg )
-    , subscriptions : model -> Subscription FrontendOnly frontendMsg
-    , onUrlRequest : Browser.UrlRequest -> frontendMsg
-    , onUrlChange : Url -> frontendMsg
-    }
+    (toBackend -> Cmd frontendMsg)
+    ->
+        { init : Url.Url -> Key -> ( model, Command FrontendOnly toBackend frontendMsg )
+        , view : model -> Browser.Document frontendMsg
+        , update : frontendMsg -> model -> ( model, Command FrontendOnly toBackend frontendMsg )
+        , updateFromBackend : toFrontend -> model -> ( model, Command FrontendOnly toBackend frontendMsg )
+        , subscriptions : model -> Subscription FrontendOnly frontendMsg
+        , onUrlRequest : Browser.UrlRequest -> frontendMsg
+        , onUrlChange : Url -> frontendMsg
+        }
     ->
         { init : Url -> Browser.Navigation.Key -> ( model, Cmd frontendMsg )
         , view : model -> Browser.Document frontendMsg
@@ -63,14 +66,20 @@ frontend :
         , onUrlRequest : Browser.UrlRequest -> frontendMsg
         , onUrlChange : Url.Url -> frontendMsg
         }
-frontend userApp =
+frontend toBackend userApp =
     { init =
         \url navigationKey ->
             userApp.init url (Effect.Internal.RealNavigationKey navigationKey)
-                |> Tuple.mapSecond toCmd
+                |> Tuple.mapSecond (toCmd (\_ -> Cmd.none) (\_ _ -> Cmd.none) toBackend)
     , view = userApp.view
-    , update = \msg model -> userApp.update msg model |> Tuple.mapSecond toCmd
-    , updateFromBackend = \msg model -> userApp.updateFromBackend msg model |> Tuple.mapSecond toCmd
+    , update =
+        \msg model ->
+            userApp.update msg model
+                |> Tuple.mapSecond (toCmd (\_ -> Cmd.none) (\_ _ -> Cmd.none) toBackend)
+    , updateFromBackend =
+        \msg model ->
+            userApp.updateFromBackend msg model
+                |> Tuple.mapSecond (toCmd (\_ -> Cmd.none) (\_ _ -> Cmd.none) toBackend)
     , subscriptions = userApp.subscriptions >> toSub
     , onUrlRequest = userApp.onUrlRequest
     , onUrlChange = userApp.onUrlChange
@@ -80,20 +89,23 @@ frontend userApp =
 {-| Create a Lamdera backend application
 -}
 backend :
-    { init : ( backendModel, Command BackendOnly toFrontend backendMsg )
-    , update : backendMsg -> backendModel -> ( backendModel, Command BackendOnly toFrontend backendMsg )
-    , updateFromFrontend : SessionId -> ClientId -> toBackend -> backendModel -> ( backendModel, Command BackendOnly toFrontend backendMsg )
-    , subscriptions : backendModel -> Subscription BackendOnly backendMsg
-    }
+    (toFrontend -> Cmd backendMsg)
+    -> (String -> toFrontend -> Cmd backendMsg)
+    ->
+        { init : ( backendModel, Command BackendOnly toFrontend backendMsg )
+        , update : backendMsg -> backendModel -> ( backendModel, Command BackendOnly toFrontend backendMsg )
+        , updateFromFrontend : SessionId -> ClientId -> toBackend -> backendModel -> ( backendModel, Command BackendOnly toFrontend backendMsg )
+        , subscriptions : backendModel -> Subscription BackendOnly backendMsg
+        }
     ->
         { init : ( backendModel, Cmd backendMsg )
         , update : backendMsg -> backendModel -> ( backendModel, Cmd backendMsg )
         , updateFromFrontend : String -> String -> toBackend -> backendModel -> ( backendModel, Cmd backendMsg )
         , subscriptions : backendModel -> Sub backendMsg
         }
-backend userApp =
-    { init = userApp.init |> Tuple.mapSecond toCmd
-    , update = \msg model -> userApp.update msg model |> Tuple.mapSecond toCmd
+backend broadcastCmd toFrontend userApp =
+    { init = userApp.init |> Tuple.mapSecond (toCmd broadcastCmd toFrontend (\_ -> Cmd.none))
+    , update = \msg model -> userApp.update msg model |> Tuple.mapSecond (toCmd broadcastCmd toFrontend (\_ -> Cmd.none))
     , updateFromFrontend =
         \sessionId clientId msg model ->
             userApp.updateFromFrontend
@@ -101,7 +113,7 @@ backend userApp =
                 (clientIdFromString clientId)
                 msg
                 model
-                |> Tuple.mapSecond toCmd
+                |> Tuple.mapSecond (toCmd broadcastCmd toFrontend (\_ -> Cmd.none))
     , subscriptions = userApp.subscriptions >> toSub
     }
 
@@ -199,17 +211,17 @@ type alias Key =
     Effect.Internal.NavigationKey
 
 
-toCmd : Command restriction toMsg msg -> Cmd msg
-toCmd effect =
+toCmd : (toMsg -> Cmd msg) -> (String -> toMsg -> Cmd msg) -> (toMsg -> Cmd msg) -> Command restriction toMsg msg -> Cmd msg
+toCmd broadcastCmd toFrontendCmd toBackendCmd effect =
     case effect of
         Effect.Internal.Batch effects ->
-            List.map toCmd effects |> Cmd.batch
+            List.map (toCmd broadcastCmd toFrontendCmd toBackendCmd) effects |> Cmd.batch
 
         Effect.Internal.None ->
             Cmd.none
 
         Effect.Internal.SendToBackend toBackend ->
-            Lamdera.sendToBackend toBackend
+            toBackendCmd toBackend
 
         Effect.Internal.NavigationPushUrl navigationKey string ->
             case navigationKey of
@@ -268,7 +280,7 @@ toCmd effect =
             portFunction value
 
         Effect.Internal.SendToFrontend clientId toFrontend ->
-            Lamdera.sendToFrontend (clientIdToString clientId) toFrontend
+            toFrontendCmd (clientIdToString clientId) toFrontend
 
         Effect.Internal.FileDownloadUrl { href } ->
             File.Download.url href
@@ -286,7 +298,7 @@ toCmd effect =
             File.Select.files mimeTypes (\file restOfFiles -> msg (RealFile file) (List.map RealFile restOfFiles))
 
         Effect.Internal.Broadcast toMsg ->
-            Lamdera.broadcast toMsg
+            broadcastCmd toMsg
 
 
 toTask : Effect.Internal.Task restriction x b -> Task.Task x b
@@ -326,7 +338,7 @@ toTask simulatedTask =
             Time.now |> Task.andThen (\time -> toTask (gotTime time))
 
         Effect.Internal.TimeHere gotTimeZone ->
-            Time.here |> Task.andThen (\time -> toTask (gotTimeZone time))
+            Time.here |> Task.andThen (\timeZone -> toTask (gotTimeZone timeZone))
 
         Effect.Internal.TimeGetZoneName gotTimeZoneName ->
             Time.getZoneName |> Task.andThen (\time -> toTask (gotTimeZoneName time))

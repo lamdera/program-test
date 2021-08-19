@@ -29,17 +29,17 @@ import Basics.Extra as Basics
 import Browser exposing (UrlRequest(..))
 import Browser.Dom
 import Bytes.Encode
-import Date exposing (Date)
 import Duration exposing (Duration)
 import Effect.Command exposing (Command, PortToJs)
 import Effect.File as File
-import Effect.Http as Http exposing (HttpBody)
+import Effect.Http exposing (HttpBody)
 import Effect.Internal exposing (Command(..), File(..), NavigationKey(..), Task(..))
 import Effect.Lamdera exposing (ClientId, SessionId)
 import Effect.Subscription exposing (Subscription)
 import Expect exposing (Expectation)
 import Html exposing (Html)
 import Html.Attributes
+import Http
 import Json.Decode
 import Json.Encode
 import List.Nonempty exposing (Nonempty)
@@ -70,7 +70,7 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
     , timers : Dict Duration { msg : Time.Posix -> backendMsg, startTime : Time.Posix }
     , testErrors : List String
     , httpRequests : List HttpRequest
-    , handleHttpRequest : { currentRequest : HttpRequest, httpRequests : List HttpRequest } -> Http.Response String
+    , handleHttpRequest : { currentRequest : HttpRequest, httpRequests : List HttpRequest } -> Effect.Http.Response String
     , handlePortToJs :
         { currentRequest : PortToJs, portRequests : List PortToJs }
         -> Maybe ( String, Json.Decode.Value )
@@ -300,12 +300,12 @@ type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg bac
 testApp :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
-    -> ({ currentRequest : HttpRequest, httpRequests : List HttpRequest } -> Http.Response String)
+    -> ({ currentRequest : HttpRequest, httpRequests : List HttpRequest } -> Effect.Http.Response String)
     ->
         ({ currentRequest : PortToJs, portRequests : List PortToJs }
          -> Maybe ( String, Json.Decode.Value )
         )
-    -> ({ mimeTypes : List String } -> Maybe File.File)
+    -> ({ mimeTypes : List String } -> Maybe { name : String, mimeType : String, content : String, lastModified : Time.Posix })
     -> Url
     -> TestApp toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 testApp frontendApp backendApp handleHttpRequest handlePortToJs handleFileRequest domain =
@@ -327,7 +327,7 @@ testApp frontendApp backendApp handleHttpRequest handlePortToJs handleFileReques
             , handleHttpRequest = handleHttpRequest
             , handlePortToJs = handlePortToJs
             , portRequests = []
-            , handleFileRequest = handleFileRequest
+            , handleFileRequest = handleFileRequest >> Maybe.map MockFile
             , domain = domain
             }
     , simulateTime = simulateTime frontendApp backendApp
@@ -1227,6 +1227,23 @@ runTask maybeClientId frontendApp state task =
                     }
             in
             state.handleHttpRequest { currentRequest = request, httpRequests = state.httpRequests }
+                |> (\response ->
+                        case response of
+                            Effect.Http.BadUrl_ url ->
+                                Http.BadUrl_ url
+
+                            Effect.Http.Timeout_ ->
+                                Http.Timeout_
+
+                            Effect.Http.NetworkError_ ->
+                                Http.NetworkError_
+
+                            Effect.Http.BadStatus_ metadata body ->
+                                Http.BadStatus_ metadata body
+
+                            Effect.Http.GoodStatus_ metadata body ->
+                                Http.GoodStatus_ metadata body
+                   )
                 |> httpRequest.onRequestComplete
                 |> runTask maybeClientId frontendApp { state | httpRequests = request :: state.httpRequests }
 

@@ -3,7 +3,7 @@ module Effect.Time exposing
     , Zone, utc, here
     , toYear, toMonth, toDay, toWeekday, toHour, toMinute, toSecond, toMillis
     , Weekday, Month
-    , customZone, getZoneName, ZoneName
+    , customZone, getZoneName, ZoneName(..)
     , FrontendOnly, Subscription, Task
     )
 
@@ -177,8 +177,8 @@ here =
 
 -}
 toYear : Zone -> Posix -> Int
-toYear =
-    Time.toYear
+toYear zone time =
+    Time.toYear zone time
 
 
 {-| What month is it?!
@@ -207,8 +207,8 @@ toMonth =
 
 -}
 toDay : Zone -> Posix -> Int
-toDay =
-    Time.toDay
+toDay zone time =
+    Time.toDay zone time
 
 
 {-| What day of the week is it?
@@ -226,6 +226,102 @@ toWeekday =
     Time.toWeekday
 
 
+toAdjustedMinutes : Int -> List Era -> Posix -> Int
+toAdjustedMinutes defaultOffset eras time =
+    toAdjustedMinutesHelp defaultOffset (flooredDiv (posixToMillis time) 60000) eras
+
+
+{-| Currently the public API only needs:
+
+  - `start` is the beginning of this `Era` in "minutes since the Unix Epoch"
+  - `offset` is the UTC offset of this `Era` in minutes
+
+But eventually, it will make sense to have `abbr : String` for `PST` vs `PDT`
+
+-}
+type alias Era =
+    { start : Int
+    , offset : Int
+    }
+
+
+toAdjustedMinutesHelp : Int -> Int -> List Era -> Int
+toAdjustedMinutesHelp defaultOffset posixMinutes eras =
+    case eras of
+        [] ->
+            posixMinutes + defaultOffset
+
+        era :: olderEras ->
+            if era.start < posixMinutes then
+                posixMinutes + era.offset
+
+            else
+                toAdjustedMinutesHelp defaultOffset posixMinutes olderEras
+
+
+toCivil : Int -> { year : Int, month : Int, day : Int }
+toCivil minutes =
+    let
+        rawDay =
+            flooredDiv minutes (60 * 24) + 719468
+
+        era =
+            (if rawDay >= 0 then
+                rawDay
+
+             else
+                rawDay - 146096
+            )
+                // 146097
+
+        dayOfEra =
+            rawDay - era * 146097
+
+        -- [0, 146096]
+        yearOfEra =
+            (dayOfEra - dayOfEra // 1460 + dayOfEra // 36524 - dayOfEra // 146096) // 365
+
+        -- [0, 399]
+        year =
+            yearOfEra + era * 400
+
+        dayOfYear =
+            dayOfEra - (365 * yearOfEra + yearOfEra // 4 - yearOfEra // 100)
+
+        -- [0, 365]
+        mp =
+            (5 * dayOfYear + 2) // 153
+
+        -- [0, 11]
+        month =
+            mp
+                + (if mp < 10 then
+                    3
+
+                   else
+                    -9
+                  )
+
+        -- [1, 12]
+    in
+    { year =
+        year
+            + (if month <= 2 then
+                1
+
+               else
+                0
+              )
+    , month = month
+    , day = dayOfYear - (153 * mp + 2) // 5 + 1 -- [1, 31]
+    }
+
+
+flooredDiv : Int -> Float -> Int
+flooredDiv numerator denominator =
+    floor (toFloat numerator / denominator)
+
+
 {-| What hour is it? (From 0 to 23)
 
     import Time exposing (toHour, utc, millisToPosix)
@@ -237,8 +333,8 @@ toWeekday =
 
 -}
 toHour : Zone -> Posix -> Int
-toHour =
-    Time.toHour
+toHour zone time =
+    Time.toHour zone time
 
 
 {-| What minute is it? (From 0 to 59)
@@ -252,8 +348,8 @@ by 30 or 45 minutes!
 
 -}
 toMinute : Zone -> Posix -> Int
-toMinute =
-    Time.toMinute
+toMinute zone time =
+    Time.toMinute zone time
 
 
 {-| What second is it?
@@ -432,7 +528,17 @@ IANA data you loaded yourself.
 -}
 getZoneName : Task FrontendOnly x ZoneName
 getZoneName =
-    Effect.Internal.TimeGetZoneName Effect.Internal.Succeed
+    Effect.Internal.TimeGetZoneName
+        (\zone ->
+            (case zone of
+                Time.Name name ->
+                    Name name
+
+                Time.Offset offset ->
+                    Offset offset
+            )
+                |> Effect.Internal.Succeed
+        )
 
 
 {-| **Intended for package authors.**
@@ -454,5 +560,6 @@ So if the real info is not available, it will tell you the current UTC offset
 in minutes, just like what `here` uses to make zones like `customZone -60 []`.
 
 -}
-type alias ZoneName =
-    Time.ZoneName
+type ZoneName
+    = Name String
+    | Offset Int

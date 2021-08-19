@@ -1,8 +1,8 @@
 module Effect.Http exposing
     ( Header, header
     , emptyBody, stringBody, jsonBody
-    , Expect(..), expectString, expectJson, expectWhatever, Error
-    , expectStringResponse, Response
+    , Expect(..), expectString, expectJson, expectWhatever, Error(..)
+    , expectStringResponse, Response(..)
     , task, Resolver, stringResolver
     , Command, HttpBody
     )
@@ -45,6 +45,7 @@ to help you implement the function to provide when using [`ProgramTest.withBacke
 
 -}
 
+import Dict exposing (Dict)
 import Duration exposing (Duration)
 import Effect.Internal exposing (HttpBody(..), Task(..))
 import Effect.Task exposing (Task)
@@ -130,10 +131,29 @@ request r =
         , url = r.url
         , headers = r.headers
         , body = r.body
-        , onRequestComplete = onResult >> Effect.Task.succeed
+        , onRequestComplete = mapResponse >> onResult >> Effect.Task.succeed
         , timeout = r.timeout
         }
         |> Effect.Internal.Task
+
+
+mapResponse : Http.Response body -> Response body
+mapResponse response =
+    case response of
+        Http.BadUrl_ url ->
+            BadUrl_ url
+
+        Http.Timeout_ ->
+            Timeout_
+
+        Http.NetworkError_ ->
+            NetworkError_
+
+        Http.BadStatus_ metadata body ->
+            BadStatus_ metadata body
+
+        Http.GoodStatus_ metadata body ->
+            GoodStatus_ metadata body
 
 
 {-| Create a `Header`.
@@ -171,29 +191,29 @@ stringBody contentType content =
 {-| Logic for interpreting a response body.
 -}
 type Expect msg
-    = Expect (Http.Response String -> msg)
+    = Expect (Response String -> msg)
 
 
 {-| Expect the response body to be a `String`.
 -}
-expectString : (Result Http.Error String -> msg) -> Expect msg
+expectString : (Result Error String -> msg) -> Expect msg
 expectString onResult =
     Expect <|
         \response ->
             case response of
-                Http.BadUrl_ s ->
-                    onResult (Err <| Http.BadUrl s)
+                BadUrl_ s ->
+                    onResult (Err <| BadUrl s)
 
-                Http.Timeout_ ->
-                    onResult (Err Http.Timeout)
+                Timeout_ ->
+                    onResult (Err Timeout)
 
-                Http.NetworkError_ ->
-                    onResult (Err Http.NetworkError)
+                NetworkError_ ->
+                    onResult (Err NetworkError)
 
-                Http.BadStatus_ metadata body ->
-                    onResult (Err <| Http.BadStatus metadata.statusCode)
+                BadStatus_ metadata body ->
+                    onResult (Err <| BadStatus metadata.statusCode)
 
-                Http.GoodStatus_ _ body ->
+                GoodStatus_ _ body ->
                     onResult (Ok body)
 
 
@@ -206,27 +226,27 @@ expectStringResponse toMsg onResponse =
 
 {-| Expect the response body to be JSON.
 -}
-expectJson : (Result Http.Error a -> msg) -> Decoder a -> Expect msg
+expectJson : (Result Error a -> msg) -> Decoder a -> Expect msg
 expectJson onResult decoder =
     Expect <|
         \response ->
             case response of
-                Http.BadUrl_ s ->
-                    onResult (Err <| Http.BadUrl s)
+                BadUrl_ s ->
+                    onResult (Err <| BadUrl s)
 
-                Http.Timeout_ ->
-                    onResult (Err Http.Timeout)
+                Timeout_ ->
+                    onResult (Err Timeout)
 
-                Http.NetworkError_ ->
-                    onResult (Err Http.NetworkError)
+                NetworkError_ ->
+                    onResult (Err NetworkError)
 
-                Http.BadStatus_ metadata _ ->
-                    onResult (Err <| Http.BadStatus metadata.statusCode)
+                BadStatus_ metadata _ ->
+                    onResult (Err <| BadStatus metadata.statusCode)
 
-                Http.GoodStatus_ _ body ->
+                GoodStatus_ _ body ->
                     case Json.Decode.decodeString decoder body of
                         Err jsonError ->
-                            onResult (Err <| Http.BadBody <| Json.Decode.errorToString jsonError)
+                            onResult (Err <| BadBody <| Json.Decode.errorToString jsonError)
 
                         Ok value ->
                             onResult (Ok value)
@@ -239,30 +259,85 @@ expectWhatever onResult =
     Expect <|
         \response ->
             case response of
-                Http.BadUrl_ s ->
-                    onResult (Err <| Http.BadUrl s)
+                BadUrl_ s ->
+                    onResult (Err <| BadUrl s)
 
-                Http.Timeout_ ->
-                    onResult (Err Http.Timeout)
+                Timeout_ ->
+                    onResult (Err Timeout)
 
-                Http.NetworkError_ ->
-                    onResult (Err Http.NetworkError)
+                NetworkError_ ->
+                    onResult (Err NetworkError)
 
-                Http.BadStatus_ metadata _ ->
-                    onResult (Err <| Http.BadStatus metadata.statusCode)
+                BadStatus_ metadata _ ->
+                    onResult (Err <| BadStatus metadata.statusCode)
 
-                Http.GoodStatus_ _ _ ->
+                GoodStatus_ _ _ ->
                     onResult (Ok ())
 
 
-{-| -}
-type alias Error =
-    Http.Error
+{-| A `Response` can come back a couple different ways:
+
+  - `BadUrl_` means you did not provide a valid URL.
+  - `Timeout_` means it took too long to get a response.
+  - `NetworkError_` means the user turned off their wifi, went in a cave, etc.
+  - `BadResponse_` means you got a response back, but the status code indicates failure.
+  - `GoodResponse_` means you got a response back with a nice status code!
+
+The type of the `body` depends on whether you use
+[`expectStringResponse`](#expectStringResponse)
+or [`expectBytesResponse`](#expectBytesResponse).
+
+-}
+type Response body
+    = BadUrl_ String
+    | Timeout_
+    | NetworkError_
+    | BadStatus_ Metadata body
+    | GoodStatus_ Metadata body
 
 
-{-| -}
-type alias Response body =
-    Http.Response body
+{-| Extra information about the response:
+
+  - `url` of the server that actually responded (so you can detect redirects)
+  - `statusCode` like `200` or `404`
+  - `statusText` describing what the `statusCode` means a little
+  - `headers` like `Content-Length` and `Expires`
+
+**Note:** It is possible for a response to have the same header multiple times.
+In that case, all the values end up in a single entry in the `headers`
+dictionary. The values are separated by commas, following the rules outlined
+[here](https://stackoverflow.com/questions/4371328/are-duplicate-http-response-headers-acceptable).
+
+-}
+type alias Metadata =
+    { url : String
+    , statusCode : Int
+    , statusText : String
+    , headers : Dict String String
+    }
+
+
+{-| A `Request` can fail in a couple ways:
+
+  - `BadUrl` means you did not provide a valid URL.
+  - `Timeout` means it took too long to get a response.
+  - `NetworkError` means the user turned off their wifi, went in a cave, etc.
+  - `BadStatus` means you got a response back, but the status code indicates failure.
+  - `BadBody` means you got a response back with a nice status code, but the body
+    of the response was something unexpected. The `String` in this case is a
+    debugging message that explains what went wrong with your JSON decoder or
+    whatever.
+
+**Note:** You can use [`expectStringResponse`](#expectStringResponse) and
+[`expectBytesResponse`](#expectBytesResponse) to get more flexibility on this.
+
+-}
+type Error
+    = BadUrl String
+    | Timeout
+    | NetworkError
+    | BadStatus Int
+    | BadBody String
 
 
 {-| Just like [`request`](#request), but it creates a `Task`.
@@ -285,7 +360,7 @@ task r =
         , onRequestComplete =
             case r.resolver of
                 StringResolver f ->
-                    f
+                    mapResponse >> f
         , timeout = r.timeout
         }
 
