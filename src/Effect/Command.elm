@@ -1,7 +1,7 @@
-module Effect exposing
+module Effect.Command exposing
     ( none, batch
     , map
-    , BackendOnly, Effect, FrontendOnly, PortToJs, sendToJs
+    , BackendOnly, Command, FrontendOnly, PortToJs, sendToJs
     )
 
 {-|
@@ -27,7 +27,7 @@ module Effect exposing
 
 -}
 
-import Effect.Internal exposing (Effect(..), NavigationKey, Subscription(..))
+import Effect.Internal exposing (Command(..), NavigationKey, Subscription(..))
 import Effect.Task
 import Json.Encode
 
@@ -54,8 +54,8 @@ Tutorial](https://guide.elm-lang.org/architecture/) and see how they
 fit into a real application!
 
 -}
-type alias Effect restriction toMsg msg =
-    Effect.Internal.Effect restriction toMsg msg
+type alias Command restriction toMsg msg =
+    Effect.Internal.Command restriction toMsg msg
 
 
 {-| When you need the runtime system to perform a couple commands, you
@@ -67,20 +67,20 @@ no ordering guarantees about the results.
 all do the same thing.
 
 -}
-batch : List (Effect restriction toMsg msg) -> Effect restriction toMsg msg
+batch : List (Command restriction toMsg msg) -> Command restriction toMsg msg
 batch =
     Batch
 
 
 {-| Tell the runtime that there are no commands.
 -}
-none : Effect restriction toMsg msg
+none : Command restriction toMsg msg
 none =
     None
 
 
 {-| -}
-sendToJs : String -> (Json.Encode.Value -> Cmd msg) -> Json.Encode.Value -> Effect FrontendOnly toMsg msg
+sendToJs : String -> (Json.Encode.Value -> Cmd msg) -> Json.Encode.Value -> Command FrontendOnly toMsg msg
 sendToJs =
     Port
 
@@ -101,8 +101,8 @@ section on [structure] in the guide before reaching for this!
 map :
     (toBackendA -> toBackendB)
     -> (frontendMsgA -> frontendMsgB)
-    -> Effect restriction toBackendA frontendMsgA
-    -> Effect restriction toBackendB frontendMsgB
+    -> Command restriction toBackendA frontendMsgA
+    -> Command restriction toBackendB frontendMsgB
 map mapToMsg mapMsg frontendEffect =
     case frontendEffect of
         Batch frontendEffects ->

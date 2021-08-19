@@ -4,7 +4,7 @@ module Effect.Http exposing
     , Expect(..), expectString, expectJson, expectWhatever, Error
     , expectStringResponse, Response
     , task, Resolver, stringResolver
-    , Effect, HttpBody
+    , Command, HttpBody
     )
 
 {-| This module parallels [elm/http's `Http` module](https://package.elm-lang.org/packages/elm/http/2.0.0/Http).
@@ -53,8 +53,8 @@ import Json.Decode exposing (Decoder)
 import Json.Encode
 
 
-type alias Effect restriction toMsg msg =
-    Effect.Internal.Effect restriction toMsg msg
+type alias Command restriction toMsg msg =
+    Effect.Internal.Command restriction toMsg msg
 
 
 {-| An HTTP header for configuring requests.
@@ -75,7 +75,7 @@ get :
     { url : String
     , expect : Expect msg
     }
-    -> Effect restriction toFrontend msg
+    -> Command restriction toFrontend msg
 get r =
     request
         { method = "GET"
@@ -95,7 +95,7 @@ post :
     , body : HttpBody
     , expect : Expect msg
     }
-    -> Effect restriction toFrontend msg
+    -> Command restriction toFrontend msg
 post r =
     request
         { method = "POST"
@@ -119,7 +119,7 @@ request :
     , timeout : Maybe Duration
     , tracker : Maybe String
     }
-    -> Effect restriction toFrontend msg
+    -> Command restriction toFrontend msg
 request r =
     let
         (Expect onResult) =

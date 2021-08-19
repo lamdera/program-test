@@ -1,12 +1,14 @@
 module Effect.Internal exposing
     ( BackendOnly
     , BrowserDomError(..)
-    , Effect(..)
+    , ClientId(..)
+    , Command(..)
     , File(..)
     , FrontendOnly
     , HttpBody(..)
     , HttpRequest
     , NavigationKey(..)
+    , SessionId(..)
     , Subscription(..)
     , Task(..)
     , Visibility(..)
@@ -20,8 +22,15 @@ import File
 import Http
 import Json.Decode
 import Json.Encode
-import TestId exposing (ClientId, SessionId)
 import Time
+
+
+type SessionId
+    = SessionId String
+
+
+type ClientId
+    = ClientId String
 
 
 type FrontendOnly
@@ -57,8 +66,8 @@ type Visibility
     | Hidden
 
 
-type Effect restriction toMsg msg
-    = Batch (List (Effect restriction toMsg msg))
+type Command restriction toMsg msg
+    = Batch (List (Command restriction toMsg msg))
     | None
     | SendToBackend toMsg
     | NavigationPushUrl NavigationKey String

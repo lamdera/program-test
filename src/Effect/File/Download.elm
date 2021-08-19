@@ -1,6 +1,6 @@
 module Effect.File.Download exposing
     ( string, bytes, url
-    , Effect, FrontendOnly
+    , Command, FrontendOnly
     )
 
 {-| Commands for downloading files.
@@ -22,8 +22,8 @@ import Bytes exposing (Bytes)
 import Effect.Internal
 
 
-type alias Effect restriction toMsg msg =
-    Effect.Internal.Effect restriction toMsg msg
+type alias Command restriction toMsg msg =
+    Effect.Internal.Command restriction toMsg msg
 
 
 type alias FrontendOnly =
@@ -71,7 +71,7 @@ send the URL out a `port` and do something even more custom in JavaScript!
 [cd]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition
 
 -}
-url : String -> Effect FrontendOnly toMsg msg
+url : String -> Command FrontendOnly toMsg msg
 url href =
     Effect.Internal.FileDownloadUrl { href = href }
 
@@ -89,7 +89,7 @@ So the arguments are file name, MIME type, and then the file content. In this
 case is is markdown, but it could be any string information.
 
 -}
-string : String -> String -> String -> Effect FrontendOnly toMsg msg
+string : String -> String -> String -> Command FrontendOnly toMsg msg
 string name mime content =
     Effect.Internal.FileDownloadString { name = name, mimeType = mime, content = content }
 
@@ -113,6 +113,6 @@ create `.zip` files, `.jpg` files, or whatever else you might need!
 [bytes]: /packages/elm/bytes/latest
 
 -}
-bytes : String -> String -> Bytes -> Effect FrontendOnly toMsg msg
+bytes : String -> String -> Bytes -> Command FrontendOnly toMsg msg
 bytes name mime content =
     Effect.Internal.FileDownloadBytes { name = name, mimeType = mime, content = content }

@@ -1,4 +1,4 @@
-module Subscription exposing
+module Effect.Subscription exposing
     ( none, batch
     , map
     , Subscription, fromJs
@@ -27,12 +27,8 @@ module Subscription exposing
 
 -}
 
-import Duration exposing (Duration)
 import Effect.Internal
 import Json.Decode
-import Pixels exposing (Pixels)
-import Quantity exposing (Quantity)
-import Time
 
 
 type alias FrontendOnly =

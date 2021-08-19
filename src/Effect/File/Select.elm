@@ -1,6 +1,6 @@
 module Effect.File.Select exposing
     ( file, files
-    , Effect, FrontendOnly
+    , Command, FrontendOnly
     )
 
 {-| Ask the user to select some files.
@@ -42,8 +42,8 @@ import Json.Decode as Decode
 import Time
 
 
-type alias Effect restriction toMsg msg =
-    Effect.Internal.Effect restriction toMsg msg
+type alias Command restriction toMsg msg =
+    Effect.Internal.Command restriction toMsg msg
 
 
 type alias FrontendOnly =
@@ -79,7 +79,7 @@ reliably detect `Cancel` clicks across browsers. More about that in the
 section on [limitations](#limitations) below.
 
 -}
-file : List String -> (File -> msg) -> Effect FrontendOnly toMsg msg
+file : List String -> (File -> msg) -> Command FrontendOnly toMsg msg
 file =
     Effect.Internal.FileSelectFile
 
@@ -116,6 +116,6 @@ reliably detect `Cancel` clicks across browsers. More about that in the
 section on [limitations](#limitations) below.
 
 -}
-files : List String -> (File -> List File -> msg) -> Effect FrontendOnly toMsg msg
+files : List String -> (File -> List File -> msg) -> Command FrontendOnly toMsg msg
 files =
     Effect.Internal.FileSelectFiles

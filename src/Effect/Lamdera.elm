@@ -1,4 +1,7 @@
-module Effect.Lamdera exposing (frontend, backend, sendToBackend, sendToFrontend, broadcast, onConnect, onDisconnect, ClientId, SessionId, Url, Document, Key, UrlRequest)
+module Effect.Lamdera exposing
+    ( frontend, backend, sendToBackend, sendToFrontend, broadcast, onConnect, onDisconnect, ClientId, SessionId, Url, Document, Key, UrlRequest
+    , clientIdFromString, clientIdToString, sessionIdFromString, sessionIdToString
+    )
 
 {-| backend
 
@@ -12,23 +15,20 @@ import Browser.Events
 import Browser.Navigation
 import Bytes.Encode
 import Duration
-import Effect.Browser.Events
 import Effect.Internal exposing (File(..), HttpBody(..), NavigationKey(..))
 import File
 import File.Download
 import File.Select
 import Http
 import Lamdera
-import Pixels
 import Process
 import Task
-import TestId
 import Time
 import Url
 
 
-type alias Effect restriction toMsg msg =
-    Effect.Internal.Effect restriction toMsg msg
+type alias Command restriction toMsg msg =
+    Effect.Internal.Command restriction toMsg msg
 
 
 type alias FrontendOnly =
@@ -46,10 +46,10 @@ type alias Subscription restriction msg =
 {-| Create a Lamdera frontend application
 -}
 frontend :
-    { init : Url.Url -> Key -> ( model, Effect FrontendOnly toBackend frontendMsg )
+    { init : Url.Url -> Key -> ( model, Command FrontendOnly toBackend frontendMsg )
     , view : model -> Browser.Document frontendMsg
-    , update : frontendMsg -> model -> ( model, Effect FrontendOnly toBackend frontendMsg )
-    , updateFromBackend : toFrontend -> model -> ( model, Effect FrontendOnly toBackend frontendMsg )
+    , update : frontendMsg -> model -> ( model, Command FrontendOnly toBackend frontendMsg )
+    , updateFromBackend : toFrontend -> model -> ( model, Command FrontendOnly toBackend frontendMsg )
     , subscriptions : model -> Subscription FrontendOnly frontendMsg
     , onUrlRequest : Browser.UrlRequest -> frontendMsg
     , onUrlChange : Url -> frontendMsg
@@ -80,9 +80,9 @@ frontend userApp =
 {-| Create a Lamdera backend application
 -}
 backend :
-    { init : ( backendModel, Effect BackendOnly toFrontend backendMsg )
-    , update : backendMsg -> backendModel -> ( backendModel, Effect BackendOnly toFrontend backendMsg )
-    , updateFromFrontend : SessionId -> ClientId -> toBackend -> backendModel -> ( backendModel, Effect BackendOnly toFrontend backendMsg )
+    { init : ( backendModel, Command BackendOnly toFrontend backendMsg )
+    , update : backendMsg -> backendModel -> ( backendModel, Command BackendOnly toFrontend backendMsg )
+    , updateFromFrontend : SessionId -> ClientId -> toBackend -> backendModel -> ( backendModel, Command BackendOnly toFrontend backendMsg )
     , subscriptions : backendModel -> Subscription BackendOnly backendMsg
     }
     ->
@@ -97,8 +97,8 @@ backend userApp =
     , updateFromFrontend =
         \sessionId clientId msg model ->
             userApp.updateFromFrontend
-                (TestId.sessionIdFromString sessionId)
-                (TestId.clientIdFromString clientId)
+                (sessionIdFromString sessionId)
+                (clientIdFromString clientId)
                 msg
                 model
                 |> Tuple.mapSecond toCmd
@@ -108,21 +108,21 @@ backend userApp =
 
 {-| Send a toBackend msg to the Backend
 -}
-sendToBackend : toBackend -> Effect FrontendOnly toBackend frontendMsg
+sendToBackend : toBackend -> Command FrontendOnly toBackend frontendMsg
 sendToBackend =
     Effect.Internal.SendToBackend
 
 
 {-| Send a toFrontend msg to the Frontend
 -}
-sendToFrontend : ClientId -> toFrontend -> Effect BackendOnly toFrontend backendMsg
+sendToFrontend : ClientId -> toFrontend -> Command BackendOnly toFrontend backendMsg
 sendToFrontend =
     Effect.Internal.SendToFrontend
 
 
 {-| Send a toFrontend msg to all currently connected clients
 -}
-broadcast : toFrontend -> Effect BackendOnly toFrontend backendMsg
+broadcast : toFrontend -> Command BackendOnly toFrontend backendMsg
 broadcast =
     Effect.Internal.Broadcast
 
@@ -143,12 +143,36 @@ onDisconnect =
 
 {-| -}
 type alias ClientId =
-    TestId.ClientId
+    Effect.Internal.ClientId
 
 
 {-| -}
 type alias SessionId =
-    TestId.SessionId
+    Effect.Internal.SessionId
+
+
+{-| -}
+sessionIdFromString : String -> SessionId
+sessionIdFromString =
+    Effect.Internal.SessionId
+
+
+{-| -}
+sessionIdToString : SessionId -> String
+sessionIdToString (Effect.Internal.SessionId sessionId) =
+    sessionId
+
+
+{-| -}
+clientIdFromString : String -> ClientId
+clientIdFromString =
+    Effect.Internal.ClientId
+
+
+{-| -}
+clientIdToString : ClientId -> String
+clientIdToString (Effect.Internal.ClientId clientId) =
+    clientId
 
 
 {-| Alias of elm/url:Url.Url
@@ -175,7 +199,7 @@ type alias Key =
     Effect.Internal.NavigationKey
 
 
-toCmd : Effect restriction toMsg msg -> Cmd msg
+toCmd : Command restriction toMsg msg -> Cmd msg
 toCmd effect =
     case effect of
         Effect.Internal.Batch effects ->
@@ -244,7 +268,7 @@ toCmd effect =
             portFunction value
 
         Effect.Internal.SendToFrontend clientId toFrontend ->
-            Lamdera.sendToFrontend (TestId.clientIdToString clientId) toFrontend
+            Lamdera.sendToFrontend (clientIdToString clientId) toFrontend
 
         Effect.Internal.FileDownloadUrl { href } ->
             File.Download.url href
@@ -435,8 +459,8 @@ toSub sub =
 
         Effect.Internal.OnConnect msg ->
             Lamdera.onConnect
-                (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))
+                (\sessionId clientId -> msg (sessionIdFromString sessionId) (clientIdFromString clientId))
 
         Effect.Internal.OnDisconnect msg ->
             Lamdera.onDisconnect
-                (\sessionId clientId -> msg (TestId.sessionIdFromString sessionId) (TestId.clientIdFromString clientId))
+                (\sessionId clientId -> msg (sessionIdFromString sessionId) (clientIdFromString clientId))

@@ -30,7 +30,7 @@ HTTP requests or writing to a database.
 
 -}
 
-import Effect.Internal exposing (Effect(..), HttpBody(..), Task(..))
+import Effect.Internal exposing (Command(..), HttpBody(..), Task(..))
 
 
 type alias FrontendOnly =
@@ -41,8 +41,8 @@ type alias BackendOnly =
     Effect.Internal.BackendOnly
 
 
-type alias Effect restriction toMsg msg =
-    Effect.Internal.Effect restriction toMsg msg
+type alias Command restriction toMsg msg =
+    Effect.Internal.Command restriction toMsg msg
 
 
 {-| Here are some common tasks:
@@ -97,7 +97,7 @@ delicious lasagna and give it to my `update` function as a `Msg` value."
 [guide]: https://guide.elm-lang.org/
 
 -}
-perform : (a -> msg) -> Task restriction Never a -> Effect restriction toMsg msg
+perform : (a -> msg) -> Task restriction Never a -> Command restriction toMsg msg
 perform f task =
     task
         |> map f
@@ -133,7 +133,7 @@ feeling for how commands fit into The Elm Architecture.
 [guide]: https://guide.elm-lang.org/
 
 -}
-attempt : (Result x a -> msg) -> Task restriction x a -> Effect restriction toMsg msg
+attempt : (Result x a -> msg) -> Task restriction x a -> Command restriction toMsg msg
 attempt f task =
     task
         |> map (Ok >> f)

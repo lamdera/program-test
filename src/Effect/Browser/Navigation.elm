@@ -1,7 +1,7 @@
 module Effect.Browser.Navigation exposing
     ( Key, pushUrl, replaceUrl, back, forward
     , load, reload, reloadAndSkipCache
-    , Effect, FrontendOnly
+    , Command, FrontendOnly
     )
 
 {-| This module helps you manage the browser’s URL yourself. This is the
@@ -68,8 +68,8 @@ type alias Key =
     Effect.Internal.NavigationKey
 
 
-type alias Effect restriction toMsg msg =
-    Effect.Internal.Effect restriction toMsg msg
+type alias Command restriction toMsg msg =
+    Effect.Internal.Command restriction toMsg msg
 
 
 type alias FrontendOnly =
@@ -94,7 +94,7 @@ scenario will clear out any future pages. It is like going back in time and
 making a different choice.
 
 -}
-pushUrl : Key -> String -> Effect FrontendOnly toMsg msg
+pushUrl : Key -> String -> Command FrontendOnly toMsg msg
 pushUrl =
     Effect.Internal.NavigationPushUrl
 
@@ -114,7 +114,7 @@ that the limit is 100 calls per 30 second interval in Safari in 2016. It also
 suggests techniques for people changing the URL based on scroll position.
 
 -}
-replaceUrl : Key -> String -> Effect FrontendOnly toMsg msg
+replaceUrl : Key -> String -> Command FrontendOnly toMsg msg
 replaceUrl =
     Effect.Internal.NavigationReplaceUrl
 
@@ -128,7 +128,7 @@ if you go back farther than the history you own, you will just go back to some
 other website!
 
 -}
-back : Key -> Int -> Effect FrontendOnly toMsg msg
+back : Key -> Int -> Command FrontendOnly toMsg msg
 back =
     Effect.Internal.NavigationBack
 
@@ -143,7 +143,7 @@ if you go forward farther than the history you own, the user will end up on
 whatever website they visited next!
 
 -}
-forward : Key -> Int -> Effect FrontendOnly toMsg msg
+forward : Key -> Int -> Command FrontendOnly toMsg msg
 forward =
     Effect.Internal.NavigationForward
 
@@ -168,7 +168,7 @@ handy!
 [rel]: /packages/elm/url/latest/Url#relative
 
 -}
-load : String -> Effect FrontendOnly toMsg msg
+load : String -> Command FrontendOnly toMsg msg
 load =
     Effect.Internal.NavigationLoad
 
@@ -178,7 +178,7 @@ This may grab resources from the browser cache, so use
 [`reloadAndSkipCache`](#reloadAndSkipCache)
 if you want to be sure that you are not loading any cached resources.
 -}
-reload : Effect FrontendOnly toMsg msg
+reload : Command FrontendOnly toMsg msg
 reload =
     Effect.Internal.NavigationReload
 
@@ -186,6 +186,6 @@ reload =
 {-| Reload the current page without using the browser cache. **This always
 results in a page load!** It is more common to want [`reload`](#reload).
 -}
-reloadAndSkipCache : Effect FrontendOnly toMsg msg
+reloadAndSkipCache : Command FrontendOnly toMsg msg
 reloadAndSkipCache =
     Effect.Internal.NavigationReloadAndSkipCache
