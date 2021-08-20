@@ -15,7 +15,9 @@ import Browser.Events
 import Browser.Navigation
 import Bytes.Encode
 import Duration
+import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
 import Effect.Internal exposing (File(..), HttpBody(..), NavigationKey(..))
+import Effect.Subscription exposing (Subscription)
 import Effect.Time
 import File
 import File.Download
@@ -26,22 +28,6 @@ import Process
 import Task
 import Time
 import Url
-
-
-type alias Command restriction toMsg msg =
-    Effect.Internal.Command restriction toMsg msg
-
-
-type alias FrontendOnly =
-    Effect.Internal.FrontendOnly
-
-
-type alias BackendOnly =
-    Effect.Internal.BackendOnly
-
-
-type alias Subscription restriction msg =
-    Effect.Internal.Subscription restriction msg
 
 
 {-| Create a Lamdera frontend application
