@@ -1,7 +1,5 @@
 module Effect.Test exposing
     ( BackendApp
-    , BackendOnly
-    , FrontendOnly
     , HttpRequest
     , Instructions
     , State
@@ -29,7 +27,7 @@ import Browser exposing (UrlRequest(..))
 import Browser.Dom
 import Bytes.Encode
 import Duration exposing (Duration)
-import Effect.Command exposing (Command, PortToJs)
+import Effect.Command exposing (BackendOnly, Command, FrontendOnly, PortToJs)
 import Effect.File as File
 import Effect.Http exposing (HttpBody)
 import Effect.Internal exposing (Command(..), File(..), NavigationKey(..), Task(..))
@@ -49,14 +47,6 @@ import Test.Html.Selector
 import Test.Runner
 import Time
 import Url exposing (Url)
-
-
-type alias FrontendOnly =
-    Effect.Internal.FrontendOnly
-
-
-type alias BackendOnly =
-    Effect.Internal.BackendOnly
 
 
 type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
