@@ -15,7 +15,6 @@ module Effect.Test exposing
     , disconnectFrontend
     , fastForward
     , flatten
-    , keyDownEvent
     , reconnectFrontend
     , runEffects
     , sendToBackend
@@ -290,6 +289,7 @@ type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg bac
         -> (( Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, ClientId ) -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , keyDownEvent : ClientId -> String -> Int -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , clickButton : ClientId -> String -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , inputText : ClientId -> String -> String -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , clickLink : ClientId -> String -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -332,6 +332,7 @@ testApp frontendApp backendApp handleHttpRequest handlePortToJs handleFileReques
             }
     , simulateTime = simulateTime frontendApp backendApp
     , connectFrontend = connectFrontend frontendApp backendApp
+    , keyDownEvent = keyDownEvent frontendApp
     , clickButton = clickButton frontendApp
     , inputText = inputText frontendApp
     , clickLink = clickLink frontendApp
@@ -485,14 +486,10 @@ clickLink :
     -> String
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickLink frontendApp clientId linkUrl =
+clickLink frontendApp clientId href =
     NextStep
-        ("Click link " ++ linkUrl)
+        ("Click link " ++ href)
         (\state ->
-            let
-                href =
-                    normalizeUrl state.domain linkUrl
-            in
             case Dict.get clientId state.frontends of
                 Just frontend ->
                     case
@@ -505,7 +502,7 @@ clickLink frontendApp clientId linkUrl =
                             |> Test.Runner.getFailureReason
                     of
                         Nothing ->
-                            case Url.fromString href of
+                            case Url.fromString (normalizeUrl state.domain href) of
                                 Just url ->
                                     let
                                         ( newModel, effects ) =
