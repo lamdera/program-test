@@ -1,5 +1,6 @@
 module Effect.Http exposing
-    ( Header, header
+    ( get, post, request
+    , Header, header
     , emptyBody, stringBody, jsonBody
     , Expect(..), expectString, expectJson, expectWhatever, Error(..)
     , expectStringResponse, Response(..)
