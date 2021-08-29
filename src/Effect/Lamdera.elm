@@ -1,11 +1,8 @@
-module Effect.Lamdera exposing
-    ( frontend, backend, sendToBackend, sendToFrontend, broadcast, onConnect, onDisconnect, ClientId, SessionId, Url, Document, Key, UrlRequest
-    , clientIdFromString, clientIdToString, sessionIdFromString, sessionIdToString
-    )
+module Effect.Lamdera exposing (frontend, backend, sendToBackend, sendToFrontend, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString, Url, Document, Key, UrlRequest)
 
 {-| backend
 
-@docs frontend, backend, sendToBackend, sendToFrontend, broadcast, onConnect, onDisconnect, clientConnected_, clientDisconnected_, ClientId, SessionId, Url, Document, Key, UrlRequest
+@docs frontend, backend, sendToBackend, sendToFrontend, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString, Url, Document, Key, UrlRequest
 
 -}
 

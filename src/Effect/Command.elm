@@ -1,7 +1,6 @@
 module Effect.Command exposing
-    ( none, batch
+    ( Command, none, batch, sendToJs, FrontendOnly, BackendOnly
     , map
-    , BackendOnly, Command, FrontendOnly, PortToJs, sendToJs
     )
 
 {-|
@@ -18,7 +17,7 @@ module Effect.Command exposing
 
 # Commands
 
-@docs Cmd, none, batch
+@docs Command, none, batch, sendToJs, FrontendOnly, BackendOnly
 
 
 # Fancy Stuff
@@ -31,10 +30,30 @@ import Effect.Internal exposing (Command(..), NavigationKey, Subscription(..))
 import Json.Encode
 
 
+{-| `Command`s and `Subscription`s with this type variable indicate that they can only be used on the frontend.
+
+    import Command exposing (Command, FrontendOnly)
+    import Effect.File.Select
+
+    download : Command FrontendOnly toMsg msg
+    download =
+        Effect.File.Select "/my-file.txt"
+
+-}
 type alias FrontendOnly =
     Effect.Internal.FrontendOnly
 
 
+{-| `Command`s and `Subscription`s with this type variable indicate that they can only be used on the backend.
+
+    import Command exposing (BackendOnly, Command)
+    import Effect.Lamdera exposing (ClientId)
+
+    sendData : ClientId -> Command BackendOnly toMsg msg
+    sendData clientId =
+        Effect.Lamdera.sendToFrontend clientId data
+
+-}
 type alias BackendOnly =
     Effect.Internal.BackendOnly
 
@@ -78,14 +97,20 @@ none =
     None
 
 
-{-| -}
+{-| This function sends data to JS land. Below is an example of how to use it.
+
+    import Command
+    import Json.Encode
+
+    port copyToClipboardPort : Cmd Json.Encode.Value -> msg
+
+    copyToClipboard value =
+        Command.sendToJs "copyToClipboardPort" copyToClipboardPort value
+
+-}
 sendToJs : String -> (Json.Encode.Value -> Cmd msg) -> Json.Encode.Value -> Command FrontendOnly toMsg msg
 sendToJs =
     Port
-
-
-type alias PortToJs =
-    { portName : String, value : Json.Encode.Value }
 
 
 {-| Transform the messages produced by a command.

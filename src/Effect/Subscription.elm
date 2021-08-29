@@ -1,7 +1,6 @@
 module Effect.Subscription exposing
-    ( none, batch
+    ( Subscription, none, batch, fromJs
     , map
-    , Subscription, fromJs
     )
 
 {-|
@@ -18,7 +17,7 @@ module Effect.Subscription exposing
 
 # Subscriptions
 
-@docs Sub, none, batch
+@docs Subscription, none, batch, fromJs
 
 
 # Fancy Stuff
@@ -72,7 +71,19 @@ none =
     Effect.Internal.SubNone
 
 
-{-| -}
+{-| This function listens for data from JS land. Below is an example of how to use it.
+
+    import Subscription exposing (Subscription)
+    import Command exposing (FrontendOnly)
+    import Json.Decode
+
+    port scrollEventPort : (Json.Decode.value -> msg) -> Sub msg
+
+    copyToClipboard : (Json.Decode.value -> msg) -> Subscription FrontendOnly msg
+    copyToClipboard msg =
+        Subscription.fromJs "scrollEventPort" scrollEventPort msg
+
+-}
 fromJs : String -> ((Json.Decode.Value -> msg) -> Sub msg) -> (Json.Decode.Value -> msg) -> Subscription FrontendOnly msg
 fromJs portName portFunction msg =
     Effect.Internal.SubPort portName (portFunction msg) msg

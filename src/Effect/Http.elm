@@ -1,11 +1,10 @@
 module Effect.Http exposing
     ( get, post, request
     , Header, header
-    , emptyBody, stringBody, jsonBody
+    , Body, emptyBody, stringBody, jsonBody
     , Expect(..), expectString, expectJson, expectWhatever, Error(..)
     , expectStringResponse, Response(..)
     , task, Resolver, stringResolver
-    , HttpBody
     )
 
 {-| This module parallels [elm/http's `Http` module](https://package.elm-lang.org/packages/elm/http/2.0.0/Http).
@@ -64,7 +63,7 @@ type alias Header =
 
 {-| Represents the body of a `Request`.
 -}
-type alias HttpBody =
+type alias Body =
     Effect.Internal.HttpBody
 
 
@@ -91,7 +90,7 @@ get r =
 -}
 post :
     { url : String
-    , body : HttpBody
+    , body : Body
     , expect : Expect msg
     }
     -> Command restriction toFrontend msg
@@ -113,7 +112,7 @@ request :
     { method : String
     , headers : List Header
     , url : String
-    , body : HttpBody
+    , body : Body
     , expect : Expect msg
     , timeout : Maybe Duration
     , tracker : Maybe String
@@ -163,7 +162,7 @@ header =
 
 {-| Create an empty body for your `Request`.
 -}
-emptyBody : HttpBody
+emptyBody : Body
 emptyBody =
     EmptyBody
 
@@ -171,14 +170,14 @@ emptyBody =
 {-| Put some JSON value in the body of your `Request`. This will automatically
 add the `Content-Type: application/json` header.
 -}
-jsonBody : Json.Encode.Value -> HttpBody
+jsonBody : Json.Encode.Value -> Body
 jsonBody value =
     JsonBody value
 
 
 {-| Put some string in the body of your `Request`.
 -}
-stringBody : String -> String -> HttpBody
+stringBody : String -> String -> Body
 stringBody contentType content =
     StringBody
         { contentType = contentType
@@ -344,7 +343,7 @@ task :
     { method : String
     , headers : List Header
     , url : String
-    , body : HttpBody
+    , body : Body
     , resolver : Resolver restriction x a
     , timeout : Maybe Duration
     }

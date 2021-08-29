@@ -1,25 +1,22 @@
 module Effect.Test exposing
-    ( BackendApp
-    , HttpRequest
-    , Instructions
-    , State
-    , TestApp
-    , andThen
-    , checkBackend
-    , checkFrontend
-    , checkState
-    , connectFrontend
-    , continueWith
-    , disconnectFrontend
-    , fastForward
-    , flatten
-    , reconnectFrontend
-    , runEffects
-    , sendToBackend
-    , startTime
-    , testApp
-    , toExpectation
+    ( testApp, TestApp, FrontendApp, BackendApp, HttpRequest, PortToJs
+    , connectFrontend, disconnectFrontend, reconnectFrontend, clickButton, inputText, keyDownEvent, clickLink, sendToBackend, fastForward, simulateTime, andThen, continueWith, Instructions, State, startTime
+    , checkState, checkFrontend, checkBackend, toExpectation
     )
+
+{-| Setting up the simulation
+
+@docs testApp, TestApp, FrontendApp, BackendApp, HttpRequest, PortToJs
+
+Control the simulation
+
+@docs connectFrontend, disconnectFrontend, reconnectFrontend, clickButton, inputText, keyDownEvent, clickLink, sendToBackend, fastForward, simulateTime, andThen, continueWith, Instructions, State, startTime
+
+Test the simulation
+
+@docs checkState, checkFrontend, checkBackend, toExpectation
+
+-}
 
 import AssocList as Dict exposing (Dict)
 import Basics.Extra as Basics
@@ -27,9 +24,9 @@ import Browser exposing (UrlRequest(..))
 import Browser.Dom
 import Bytes.Encode
 import Duration exposing (Duration)
-import Effect.Command exposing (BackendOnly, Command, FrontendOnly, PortToJs)
+import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
 import Effect.File as File
-import Effect.Http exposing (HttpBody)
+import Effect.Http exposing (Body)
 import Effect.Internal exposing (Command(..), File(..), NavigationKey(..), Task(..))
 import Effect.Lamdera exposing (ClientId, SessionId)
 import Effect.Subscription exposing (Subscription)
@@ -49,6 +46,7 @@ import Time
 import Url exposing (Url)
 
 
+{-| -}
 type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
     { backend : backendModel
     , pendingEffects : Command BackendOnly toFrontend backendMsg
@@ -69,20 +67,28 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
     }
 
 
+{-| -}
+type alias PortToJs =
+    { portName : String, value : Json.Encode.Value }
+
+
+{-| -}
 type alias HttpRequest =
     { method : String
     , url : String
-    , body : HttpBody
+    , body : Body
     , headers : List ( String, String )
     }
 
 
+{-| -}
 type Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     = NextStep String (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     | AndThen (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     | Start (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 
 
+{-| -}
 checkState :
     (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Result String ())
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -100,6 +106,7 @@ checkState checkFunc =
         )
 
 
+{-| -}
 checkBackend :
     (backendModel -> Result String ())
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -117,6 +124,7 @@ checkBackend checkFunc =
         )
 
 
+{-| -}
 checkFrontend : ClientId -> (frontendModel -> Result String ()) -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 checkFrontend clientId checkFunc =
     NextStep
@@ -178,6 +186,7 @@ checkView frontendApp clientId query =
         )
 
 
+{-| -}
 toExpectation : Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Expectation
 toExpectation inProgress =
     let
@@ -246,11 +255,13 @@ type alias FrontendState toBackend frontendMsg frontendModel toFrontend =
     }
 
 
+{-| -}
 startTime : Time.Posix
 startTime =
     Time.millisToPosix 0
 
 
+{-| -}
 type alias FrontendApp toBackend frontendMsg frontendModel toFrontend =
     { init : Url -> NavigationKey -> ( frontendModel, Command FrontendOnly toBackend frontendMsg )
     , onUrlRequest : UrlRequest -> frontendMsg
@@ -262,6 +273,7 @@ type alias FrontendApp toBackend frontendMsg frontendModel toFrontend =
     }
 
 
+{-| -}
 type alias BackendApp toBackend toFrontend backendMsg backendModel =
     { init : ( backendModel, Command BackendOnly toFrontend backendMsg )
     , update : backendMsg -> backendModel -> ( backendModel, Command BackendOnly toFrontend backendMsg )
@@ -270,6 +282,7 @@ type alias BackendApp toBackend toFrontend backendMsg backendModel =
     }
 
 
+{-| -}
 type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
     { init : Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , simulateTime : Duration -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -287,6 +300,7 @@ type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg bac
     }
 
 
+{-| -}
 testApp :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
@@ -383,6 +397,7 @@ getClientConnectSubs backendSub =
             []
 
 
+{-| -}
 connectFrontend :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
@@ -440,6 +455,7 @@ connectFrontend frontendApp backendApp sessionId url andThenFunc =
         )
 
 
+{-| -}
 keyDownEvent : FrontendApp toBackend frontendMsg frontendModel toFrontend -> ClientId -> String -> Int -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 keyDownEvent frontendApp clientId htmlId keyCode state =
     userEvent
@@ -451,11 +467,13 @@ keyDownEvent frontendApp clientId htmlId keyCode state =
         state
 
 
+{-| -}
 clickButton : FrontendApp toBackend frontendMsg frontendModel toFrontend -> ClientId -> String -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 clickButton frontendApp clientId htmlId state =
     userEvent frontendApp "Click button" clientId htmlId Test.Html.Event.click state
 
 
+{-| -}
 inputText : FrontendApp toBackend frontendMsg frontendModel toFrontend -> ClientId -> String -> String -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 inputText frontendApp clientId htmlId text state =
     userEvent frontendApp ("Input text \"" ++ text ++ "\"") clientId htmlId (Test.Html.Event.input text) state
@@ -478,6 +496,7 @@ normalizeUrl domainUrl path =
         path
 
 
+{-| -}
 clickLink :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> ClientId
@@ -599,6 +618,7 @@ formatHtmlError description =
             description
 
 
+{-| -}
 disconnectFrontend :
     BackendApp toBackend toFrontend backendMsg backendModel
     -> ClientId
@@ -625,6 +645,7 @@ disconnectFrontend backendApp clientId state =
             ( state, Nothing )
 
 
+{-| -}
 reconnectFrontend :
     BackendApp toBackend toFrontend backendMsg backendModel
     -> FrontendState toBackend frontendMsg frontendModel toFrontend
@@ -654,6 +675,9 @@ reconnectFrontend backendApp frontendState state =
     )
 
 
+{-| Normally you won't send data directly to the backend and instead use `connectFrontend` followed by things like `clickButton` or `inputText` to cause the frontend to send data to the backend.
+If you do need to send data directly, then you can use this though.
+-}
 sendToBackend : SessionId -> ClientId -> toBackend -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 sendToBackend sessionId clientId toBackend =
     NextStep "Send to backend"
@@ -731,6 +755,7 @@ simulateStep frontendApp backendApp state =
         |> runEffects frontendApp backendApp
 
 
+{-| -}
 simulateTime :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
@@ -757,6 +782,7 @@ simulateTimeHelper frontendApp backendApp duration state =
         simulateTimeHelper frontendApp backendApp (duration |> Quantity.minus animationFrame) (simulateStep frontendApp backendApp state)
 
 
+{-| -}
 fastForward :
     Duration
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -767,6 +793,7 @@ fastForward duration =
         (\state -> { state | elapsedTime = Quantity.plus state.elapsedTime duration })
 
 
+{-| -}
 andThen :
     (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -775,6 +802,7 @@ andThen =
     AndThen
 
 
+{-| -}
 continueWith : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 continueWith state =
     Start state
