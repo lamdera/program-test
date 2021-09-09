@@ -25,7 +25,7 @@ module Effect.File exposing
 
 import Bytes exposing (Bytes)
 import Effect.Command exposing (FrontendOnly)
-import Effect.Internal exposing (File(..), Task(..))
+import Effect.Internal exposing (File, Task(..))
 import File
 import Json.Decode as Decode
 import Time
@@ -38,8 +38,19 @@ import Time
 {-| Represents an uploaded file. From there you can read the content, check
 the metadata, send it over [`elm/http`](/packages/elm/http/latest), etc.
 -}
-type alias File =
-    Effect.Internal.File
+type File
+    = RealFile File.File
+    | MockFile { name : String, mimeType : String, content : String, lastModified : Time.Posix }
+
+
+toInternalFile : File -> Effect.Internal.File
+toInternalFile file =
+    case file of
+        RealFile realFile ->
+            Effect.Internal.RealFile realFile
+
+        MockFile mockFile ->
+            Effect.Internal.MockFile mockFile
 
 
 {-| Decode `File` values. For example, if you want to create a drag-and-drop
@@ -59,7 +70,7 @@ to process the content. Or you can send the file along to someone else with the
 -}
 decoder : Decode.Decoder File
 decoder =
-    File.decoder |> Decode.map Effect.Internal.RealFile
+    File.decoder |> Decode.map RealFile
 
 
 
@@ -87,7 +98,7 @@ point having their content in memory!)
 -}
 toString : File -> Task FrontendOnly x String
 toString file =
-    FileToString file Succeed
+    FileToString (toInternalFile file) Succeed
 
 
 {-| Extract the content of a `File` as `Bytes`. So if you have an `archive.zip`
@@ -110,7 +121,7 @@ work with the bytes and turn them into whatever you want.
 -}
 toBytes : File -> Task FrontendOnly x Bytes
 toBytes file =
-    FileToBytes file Succeed
+    FileToBytes (toInternalFile file) Succeed
 
 
 {-| The `File.toUrl` function will convert files into URLs like this:
@@ -131,7 +142,7 @@ sure their old table looks great!
 -}
 toUrl : File -> Task FrontendOnly x String
 toUrl file =
-    FileToUrl file Succeed
+    FileToUrl (toInternalFile file) Succeed
 
 
 

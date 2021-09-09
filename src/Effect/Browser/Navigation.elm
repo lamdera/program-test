@@ -43,6 +43,7 @@ want!
 
 -}
 
+import Browser.Navigation
 import Effect.Command exposing (Command, FrontendOnly)
 import Effect.Internal
 
@@ -64,8 +65,19 @@ kinds of programs, unsuspecting programmers would be sure to run into some
 [bugs]: https://github.com/elm/browser/blob/1.0.2/notes/navigation-in-elements.md
 
 -}
-type alias Key =
-    Effect.Internal.NavigationKey
+type Key
+    = RealNavigationKey Browser.Navigation.Key
+    | MockNavigationKey
+
+
+toInternalKey : Key -> Effect.Internal.NavigationKey
+toInternalKey key =
+    case key of
+        RealNavigationKey key_ ->
+            Effect.Internal.RealNavigationKey key_
+
+        MockNavigationKey ->
+            Effect.Internal.MockNavigationKey
 
 
 {-| Change the URL, but do not trigger a page load.
@@ -87,8 +99,8 @@ making a different choice.
 
 -}
 pushUrl : Key -> String -> Command FrontendOnly toMsg msg
-pushUrl =
-    Effect.Internal.NavigationPushUrl
+pushUrl key url =
+    Effect.Internal.NavigationPushUrl (toInternalKey key) url
 
 
 {-| Change the URL, but do not trigger a page load.
@@ -107,8 +119,8 @@ suggests techniques for people changing the URL based on scroll position.
 
 -}
 replaceUrl : Key -> String -> Command FrontendOnly toMsg msg
-replaceUrl =
-    Effect.Internal.NavigationReplaceUrl
+replaceUrl key url =
+    Effect.Internal.NavigationReplaceUrl (toInternalKey key) url
 
 
 {-| Go back some number of pages. So `back 1` goes back one page, and `back 2`
@@ -121,8 +133,8 @@ other website!
 
 -}
 back : Key -> Int -> Command FrontendOnly toMsg msg
-back =
-    Effect.Internal.NavigationBack
+back key steps =
+    Effect.Internal.NavigationBack (toInternalKey key) steps
 
 
 {-| Go forward some number of pages. So `forward 1` goes forward one page, and
@@ -136,8 +148,8 @@ whatever website they visited next!
 
 -}
 forward : Key -> Int -> Command FrontendOnly toMsg msg
-forward =
-    Effect.Internal.NavigationForward
+forward key steps =
+    Effect.Internal.NavigationForward (toInternalKey key) steps
 
 
 

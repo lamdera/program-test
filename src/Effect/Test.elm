@@ -27,7 +27,7 @@ import Duration exposing (Duration)
 import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
 import Effect.File as File
 import Effect.Http exposing (Body)
-import Effect.Internal exposing (Command(..), File(..), NavigationKey(..), Task(..))
+import Effect.Internal exposing (Command(..), File, NavigationKey(..), Task(..))
 import Effect.Lamdera exposing (ClientId, SessionId)
 import Effect.Subscription exposing (Subscription)
 import Expect exposing (Expectation)
@@ -62,7 +62,7 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
         { currentRequest : PortToJs, portRequests : List PortToJs }
         -> Maybe ( String, Json.Decode.Value )
     , portRequests : List PortToJs
-    , handleFileRequest : { mimeTypes : List String } -> Maybe File.File
+    , handleFileRequest : { mimeTypes : List String } -> Maybe Effect.Internal.File
     , domain : Url
     }
 
@@ -317,23 +317,26 @@ testApp frontendApp backendApp handleHttpRequest handlePortToJs handleFileReques
         let
             ( backend, effects ) =
                 backendApp.init
+
+            state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+            state =
+                { backend = backend
+                , pendingEffects = effects
+                , frontends = Dict.empty
+                , counter = 0
+                , elapsedTime = Quantity.zero
+                , toBackend = []
+                , timers = getTimers startTime (backendApp.subscriptions backend)
+                , testErrors = []
+                , httpRequests = []
+                , handleHttpRequest = handleHttpRequest
+                , handlePortToJs = handlePortToJs
+                , portRequests = []
+                , handleFileRequest = handleFileRequest >> Maybe.map Effect.Internal.MockFile
+                , domain = domain
+                }
         in
-        Start
-            { backend = backend
-            , pendingEffects = effects
-            , frontends = Dict.empty
-            , counter = 0
-            , elapsedTime = Quantity.zero
-            , toBackend = []
-            , timers = getTimers startTime (backendApp.subscriptions backend)
-            , testErrors = []
-            , httpRequests = []
-            , handleHttpRequest = handleHttpRequest
-            , handlePortToJs = handlePortToJs
-            , portRequests = []
-            , handleFileRequest = handleFileRequest >> Maybe.map MockFile
-            , domain = domain
-            }
+        Start state
     , simulateTime = simulateTime frontendApp backendApp
     , connectFrontend = connectFrontend frontendApp backendApp
     , keyDownEvent = keyDownEvent frontendApp
@@ -933,17 +936,21 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
         NavigationLoad urlText ->
             handleUrlChange frontendApp urlText clientId state
 
-        NavigationBack navigationKey int ->
-            Debug.todo ""
+        NavigationBack _ int ->
+            -- TODO
+            state
 
-        NavigationForward navigationKey int ->
-            Debug.todo ""
+        NavigationForward _ int ->
+            -- TODO
+            state
 
         NavigationReload ->
-            Debug.todo ""
+            -- TODO
+            state
 
         NavigationReloadAndSkipCache ->
-            Debug.todo ""
+            -- TODO
+            state
 
         None ->
             state
@@ -1066,7 +1073,8 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
                     state
 
         FileSelectFiles strings function ->
-            Debug.todo ""
+            -- TODO
+            state
 
         Broadcast _ ->
             state
@@ -1304,28 +1312,28 @@ runTask maybeClientId frontendApp state task =
 
         FileToString file function ->
             case file of
-                RealFile _ ->
+                Effect.Internal.RealFile _ ->
                     function "" |> runTask maybeClientId frontendApp state
 
-                MockFile { content } ->
+                Effect.Internal.MockFile { content } ->
                     function content |> runTask maybeClientId frontendApp state
 
         FileToBytes file function ->
             case file of
-                RealFile _ ->
+                Effect.Internal.RealFile _ ->
                     function (Bytes.Encode.encode (Bytes.Encode.sequence []))
                         |> runTask maybeClientId frontendApp state
 
-                MockFile { content } ->
+                Effect.Internal.MockFile { content } ->
                     function (Bytes.Encode.encode (Bytes.Encode.string content))
                         |> runTask maybeClientId frontendApp state
 
         FileToUrl file function ->
             case file of
-                RealFile _ ->
+                Effect.Internal.RealFile _ ->
                     function "" |> runTask maybeClientId frontendApp state
 
-                MockFile { content } ->
+                Effect.Internal.MockFile { content } ->
                     -- TODO: Don't assume that content is already in a data url format.
                     function content |> runTask maybeClientId frontendApp state
 

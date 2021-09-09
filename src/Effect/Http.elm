@@ -2,7 +2,7 @@ module Effect.Http exposing
     ( get, post, request
     , Header, header
     , Body, emptyBody, stringBody, jsonBody
-    , Expect(..), expectString, expectJson, expectWhatever, Error(..)
+    , Expect, expectString, expectJson, expectWhatever, Error(..)
     , expectStringResponse, Response(..)
     , task, Resolver, stringResolver
     )
