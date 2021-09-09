@@ -34,7 +34,8 @@ before exposing a `Task` API for things.
 -}
 
 import Effect.Command exposing (Command, FrontendOnly)
-import Effect.Internal exposing (File)
+import Effect.File exposing (File)
+import Effect.Internal
 
 
 
@@ -67,8 +68,8 @@ section on [limitations](#limitations) below.
 
 -}
 file : List String -> (File -> msg) -> Command FrontendOnly toMsg msg
-file =
-    Effect.Internal.FileSelectFile
+file mimeTypes onSelect =
+    Effect.Internal.FileSelectFile mimeTypes (Effect.File.fromInternalFile >> onSelect)
 
 
 
@@ -104,5 +105,7 @@ section on [limitations](#limitations) below.
 
 -}
 files : List String -> (File -> List File -> msg) -> Command FrontendOnly toMsg msg
-files =
+files mimeTypes onSelect =
     Effect.Internal.FileSelectFiles
+        mimeTypes
+        (\file_ files_ -> onSelect (Effect.File.fromInternalFile file_) (List.map Effect.File.fromInternalFile files_))

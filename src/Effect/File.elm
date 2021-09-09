@@ -1,7 +1,7 @@
 module Effect.File exposing
     ( File, decoder
     , toString, toBytes, toUrl
-    , name, mime, size, lastModified
+    , name, mime, size, lastModified, fromInternalFile
     )
 
 {-|
@@ -19,7 +19,7 @@ module Effect.File exposing
 
 # Read Metadata
 
-@docs name, mime, size, lastModified
+@docs name, mime, size, lastModified, fromInternalFile
 
 -}
 
@@ -51,6 +51,18 @@ toInternalFile file =
 
         MockFile mockFile ->
             Effect.Internal.MockFile mockFile
+
+
+{-| Please ignore
+-}
+fromInternalFile : Effect.Internal.File -> File
+fromInternalFile file =
+    case file of
+        Effect.Internal.RealFile realFile ->
+            RealFile realFile
+
+        Effect.Internal.MockFile mockFile ->
+            MockFile mockFile
 
 
 {-| Decode `File` values. For example, if you want to create a drag-and-drop
