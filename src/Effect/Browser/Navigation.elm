@@ -1,6 +1,6 @@
 module Effect.Browser.Navigation exposing
     ( Key, pushUrl, replaceUrl, back, forward
-    , load, reload, reloadAndSkipCache
+    , load, reload, reloadAndSkipCache, fromInternalKey
     )
 
 {-| This module helps you manage the browser’s URL yourself. This is the
@@ -39,7 +39,7 @@ want!
 
 # Navigate to other Pages
 
-@docs load, reload, reloadAndSkipCache
+@docs load, reload, reloadAndSkipCache, fromInternalKey
 
 -}
 
@@ -78,6 +78,18 @@ toInternalKey key =
 
         MockNavigationKey ->
             Effect.Internal.MockNavigationKey
+
+
+{-| Please ignore
+-}
+fromInternalKey : Effect.Internal.NavigationKey -> Key
+fromInternalKey key =
+    case key of
+        Effect.Internal.RealNavigationKey key_ ->
+            RealNavigationKey key_
+
+        Effect.Internal.MockNavigationKey ->
+            MockNavigationKey
 
 
 {-| Change the URL, but do not trigger a page load.

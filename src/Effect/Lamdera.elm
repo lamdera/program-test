@@ -12,6 +12,7 @@ import Browser.Events
 import Browser.Navigation
 import Bytes.Encode
 import Duration
+import Effect.Browser.Navigation
 import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
 import Effect.Internal exposing (File(..), HttpBody(..), NavigationKey(..))
 import Effect.Subscription exposing (Subscription)
@@ -52,7 +53,7 @@ frontend :
 frontend toBackend userApp =
     { init =
         \url navigationKey ->
-            userApp.init url (Effect.Internal.RealNavigationKey navigationKey)
+            userApp.init url (Effect.Internal.RealNavigationKey navigationKey |> Effect.Browser.Navigation.fromInternalKey)
                 |> Tuple.mapSecond (toCmd (\_ -> Cmd.none) (\_ _ -> Cmd.none) toBackend)
     , view = userApp.view
     , update =
@@ -197,7 +198,7 @@ type alias UrlRequest =
 {-| Alias of elm/browser:Browser.Navigation.Key
 -}
 type alias Key =
-    Effect.Internal.NavigationKey
+    Effect.Browser.Navigation.Key
 
 
 toCmd : (toMsg -> Cmd msg) -> (String -> toMsg -> Cmd msg) -> (toMsg -> Cmd msg) -> Command restriction toMsg msg -> Cmd msg
