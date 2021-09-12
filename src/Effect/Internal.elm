@@ -6,6 +6,7 @@ module Effect.Internal exposing
     , File(..)
     , FrontendOnly
     , HttpBody(..)
+    , HttpPart(..)
     , HttpRequest
     , NavigationKey(..)
     , SessionId(..)
@@ -132,6 +133,7 @@ type alias HttpRequest restriction x a =
     , headers : List ( String, String )
     , onRequestComplete : Http.Response String -> Task restriction x a
     , timeout : Maybe Duration
+    , isRisky : Bool
     }
 
 
@@ -142,6 +144,14 @@ type HttpBody
         , content : String
         }
     | JsonBody Json.Encode.Value
+    | MultipartBody (List HttpPart)
+    | BytesBody Bytes
+
+
+type HttpPart
+    = StringPart String
+    | FilePart File
+    | BytesPart Bytes
 
 
 taskMap : (a -> b) -> Task restriction x a -> Task restriction x b
@@ -166,6 +176,7 @@ andThen f task =
                 , headers = request.headers
                 , onRequestComplete = request.onRequestComplete >> andThen f
                 , timeout = request.timeout
+                , isRisky = request.isRisky
                 }
 
         SleepTask delay onResult ->
@@ -228,6 +239,7 @@ taskMapError f task =
                 , headers = request.headers
                 , onRequestComplete = request.onRequestComplete >> taskMapError f
                 , timeout = request.timeout
+                , isRisky = request.isRisky
                 }
 
         SleepTask delay onResult ->

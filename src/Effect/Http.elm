@@ -1,17 +1,17 @@
 module Effect.Http exposing
     ( get, post, request
     , Header, header
-    , Body, emptyBody, stringBody, jsonBody
+    , Body, emptyBody, stringBody, jsonBody, fileBody, bytesBody
+    , multipartBody, Part, stringPart, filePart, bytesPart
     , Expect, expectString, expectJson, expectWhatever, Error(..)
-    , expectStringResponse, Response(..)
+    , track, Progress(..), fractionSent, fractionReceived
+    , cancel
+    , riskyRequest
+    , expectStringResponse, Response(..), Metadata
     , task, Resolver, stringResolver
     )
 
-{-| This module parallels [elm/http's `Http` module](https://package.elm-lang.org/packages/elm/http/2.0.0/Http).
-_Pull requests are welcome to add any functions that are missing._
-
-The functions here produce `BackendEffect`s instead of `Cmd`s, which are meant to be used
-to help you implement the function to provide when using [`ProgramTest.withBackendEffects`](ProgramTest#withBackendEffects).
+{-| Send HTTP requests.
 
 
 # Requests
@@ -26,29 +26,52 @@ to help you implement the function to provide when using [`ProgramTest.withBacke
 
 # Body
 
-@docs Body, emptyBody, stringBody, jsonBody
+@docs Body, emptyBody, stringBody, jsonBody, fileBody, bytesBody
+
+
+# Body Parts
+
+@docs multipartBody, Part, stringPart, filePart, bytesPart
 
 
 # Expect
 
-@docs Expect, expectString, expectJson, expectWhatever, Error
+@docs Expect, expectString, expectJson, expectBytes, expectWhatever, Error
+
+
+# Progress
+
+@docs track, Progress, fractionSent, fractionReceived
+
+
+# Cancel
+
+@docs cancel
+
+
+# Risky Requests
+
+@docs riskyRequest
 
 
 # Elaborate Expectations
 
-@docs expectStringResponse, Response
+@docs expectStringResponse, expectBytesResponse, Response, Metadata
 
 
 # Tasks
 
-@docs task, Resolver, stringResolver
+@docs task, Resolver, stringResolver, bytesResolver, riskyTask
 
 -}
 
+import Bytes exposing (Bytes)
 import Dict exposing (Dict)
 import Duration exposing (Duration)
 import Effect.Command exposing (Command)
+import Effect.File exposing (File)
 import Effect.Internal exposing (HttpBody(..), Task(..))
+import Effect.Subscription exposing (Subscription)
 import Effect.Task exposing (Task)
 import Http
 import Json.Decode exposing (Decoder)
@@ -130,6 +153,7 @@ request r =
         , body = r.body
         , onRequestComplete = mapResponse >> onResult >> Effect.Task.succeed
         , timeout = r.timeout
+        , isRisky = False
         }
         |> Effect.Internal.Task
 
@@ -183,6 +207,339 @@ stringBody contentType content =
         { contentType = contentType
         , content = content
         }
+
+
+{-| Put some `Bytes` in the body of your `Request`. This allows you to use
+[`elm/bytes`](/packages/elm/bytes/latest) to have full control over the binary
+representation of the data you are sending. For example, you could create an
+`archive.zip` file and send it along like this:
+
+    import Bytes exposing (Bytes)
+
+    zipBody : Bytes -> Body
+    zipBody bytes =
+        bytesBody "application/zip" bytes
+
+The first argument is a [MIME type](https://en.wikipedia.org/wiki/Media_type)
+of the body. In other scenarios you may want to use MIME types like `image/png`
+or `image/jpeg` instead.
+
+**Note:** Use [`track`](#track) to track upload progress.
+
+-}
+bytesBody : String -> Bytes -> Body
+bytesBody =
+    Elm.Kernel.Http.pair
+
+
+{-| Use a file as the body of your `Request`. When someone uploads an image
+into the browser with [`elm/file`](/packages/elm/file/latest) you can forward
+it to a server.
+
+This will automatically set the `Content-Type` to the MIME type of the file.
+
+**Note:** Use [`track`](#track) to track upload progress.
+
+-}
+fileBody : File -> Body
+fileBody =
+    Elm.Kernel.Http.pair ""
+
+
+
+-- PARTS
+
+
+{-| When someone clicks submit on the `<form>`, browsers send a special HTTP
+request with all the form data. Something like this:
+
+    POST /test.html HTTP/1.1
+    Host: example.org
+    Content-Type: multipart/form-data;boundary="7MA4YWxkTrZu0gW"
+
+    --7MA4YWxkTrZu0gW
+    Content-Disposition: form-data; name="title"
+
+    Trip to London
+    --7MA4YWxkTrZu0gW
+    Content-Disposition: form-data; name="album[]"; filename="parliment.jpg"
+
+    ...RAW...IMAGE...BITS...
+    --7MA4YWxkTrZu0gW--
+
+This was the only way to send files for a long time, so many servers expect
+data in this format. **The `multipartBody` function lets you create these
+requests.** For example, to upload a photo album all at once, you could create
+a body like this:
+
+    multipartBody
+        [ stringPart "title" "Trip to London"
+        , filePart "album[]" file1
+        , filePart "album[]" file2
+        , filePart "album[]" file3
+        ]
+
+All of the body parts need to have a name. Names can be repeated. Adding the
+`[]` on repeated names is a convention from PHP. It seems weird, but I see it
+enough to mention it. You do not have to do it that way, especially if your
+server uses some other convention!
+
+The `Content-Type: multipart/form-data` header is automatically set when
+creating a body this way.
+
+**Note:** Use [`track`](#track) to track upload progress.
+
+-}
+multipartBody : List Part -> Body
+multipartBody parts =
+    Elm.Kernel.Http.pair "" (Elm.Kernel.Http.toFormData parts)
+
+
+{-| One part of a `multipartBody`.
+-}
+type Part
+    = StringPart String
+    | FilePart File
+    | BytesPart Bytes
+
+
+{-| A part that contains `String` data.
+
+    multipartBody
+        [ stringPart "title" "Tom"
+        , filePart "photo" tomPng
+        ]
+
+-}
+stringPart : String -> String -> Part
+stringPart =
+    Elm.Kernel.Http.pair
+
+
+{-| A part that contains a file. You can use
+[`elm/file`](/packages/elm/file/latest) to get files loaded into the
+browser. From there, you can send it along to a server like this:
+
+    multipartBody
+        [ stringPart "product" "Ikea Bekant"
+        , stringPart "description" "Great desk for home office."
+        , filePart "image[]" file1
+        , filePart "image[]" file2
+        , filePart "image[]" file3
+        ]
+
+-}
+filePart : String -> File -> Part
+filePart =
+    Elm.Kernel.Http.pair
+
+
+{-| A part that contains bytes, allowing you to use
+[`elm/bytes`](/packages/elm/bytes/latest) to encode data exactly in the format
+you need.
+
+    multipartBody
+        [ stringPart "title" "Tom"
+        , bytesPart "photo" "image/png" bytes
+        ]
+
+**Note:** You must provide a MIME type so that the receiver has clues about
+how to interpret the bytes.
+
+-}
+bytesPart : String -> String -> Bytes -> Part
+bytesPart key mime bytes =
+    Elm.Kernel.Http.pair key (Elm.Kernel.Http.bytesToBlob mime bytes)
+
+
+
+-- CANCEL
+
+
+{-| Try to cancel an ongoing request based on a `tracker`.
+-}
+cancel : String -> Command restriction toMsg msg
+cancel tracker =
+    command (Cancel tracker)
+
+
+
+-- PROGRESS
+
+
+{-| Track the progress of a request. Create a [`request`](#request) where
+`tracker = Just "form.pdf"` and you can track it with a subscription like
+`track "form.pdf" GotProgress`.
+-}
+track : String -> (Progress -> msg) -> Subscription restriction msg
+track tracker toMsg =
+    subscription (MySub tracker toMsg)
+
+
+{-| There are two phases to HTTP requests. First you **send** a bunch of data,
+then you **receive** a bunch of data. For example, say you use `fileBody` to
+upload a file of 262144 bytes. From there, progress will go like this:
+
+    Sending { sent = 0, size = 262144 } -- 0.0
+
+    Sending { sent = 65536, size = 262144 } -- 0.25
+
+    Sending { sent = 131072, size = 262144 } -- 0.5
+
+    Sending { sent = 196608, size = 262144 } -- 0.75
+
+    Sending { sent = 262144, size = 262144 } -- 1.0
+
+    Receiving { received = 0, size = Just 16 } -- 0.0
+
+    Receiving { received = 16, size = Just 16 } -- 1.0
+
+With file uploads, the **send** phase is expensive. That is what we saw in our
+example. But with file downloads, the **receive** phase is expensive.
+
+Use [`fractionSent`](#fractionSent) and [`fractionReceived`](#fractionReceived)
+to turn this progress information into specific fractions!
+
+**Note:** The `size` of the response is based on the [`Content-Length`][cl]
+header, and in rare and annoying cases, a server may not include that header.
+That is why the `size` is a `Maybe Int` in `Receiving`.
+
+[cl]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Length
+
+-}
+type Progress
+    = Sending { sent : Int, size : Int }
+    | Receiving { received : Int, size : Maybe Int }
+
+
+{-| Turn `Sending` progress into a useful fraction.
+
+    fractionSent { sent =   0, size = 1024 } == 0.0
+    fractionSent { sent = 256, size = 1024 } == 0.25
+    fractionSent { sent = 512, size = 1024 } == 0.5
+
+    -- fractionSent { sent = 0, size = 0 } == 1.0
+
+The result is always between `0.0` and `1.0`, ensuring that any progress bar
+animations never go out of bounds.
+
+And notice that `size` can be zero. That means you are sending a request with
+an empty body. Very common! When `size` is zero, the result is always `1.0`.
+
+**Note:** If you create your own function to compute this fraction, watch out
+for divide-by-zero errors!
+
+-}
+fractionSent : { sent : Int, size : Int } -> Float
+fractionSent p =
+    if p.size == 0 then
+        1
+
+    else
+        clamp 0 1 (toFloat p.sent / toFloat p.size)
+
+
+{-| Turn `Receiving` progress into a useful fraction for progress bars.
+
+    fractionReceived { received =   0, size = Just 1024 } == 0.0
+    fractionReceived { received = 256, size = Just 1024 } == 0.25
+    fractionReceived { received = 512, size = Just 1024 } == 0.5
+
+    -- fractionReceived { received =   0, size = Nothing } == 0.0
+    -- fractionReceived { received = 256, size = Nothing } == 0.0
+    -- fractionReceived { received = 512, size = Nothing } == 0.0
+
+The `size` here is based on the [`Content-Length`][cl] header which may be
+missing in some cases. A server may be misconfigured or it may be streaming
+data and not actually know the final size. Whatever the case, this function
+will always give `0.0` when the final size is unknown.
+
+Furthermore, the `Content-Length` header may be incorrect! The implementation
+clamps the fraction between `0.0` and `1.0`, so you will just get `1.0` if
+you ever receive more bytes than promised.
+
+**Note:** If you are streaming something, you can write a custom version of
+this function that just tracks bytes received. Maybe you show that 22kb or 83kb
+have been downloaded, without a specific fraction. If you do this, be wary of
+divide-by-zero errors because `size` can always be zero!
+
+[cl]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Length
+
+-}
+fractionReceived : { received : Int, size : Maybe Int } -> Float
+fractionReceived p =
+    case p.size of
+        Nothing ->
+            0
+
+        Just n ->
+            if n == 0 then
+                1
+
+            else
+                clamp 0 1 (toFloat p.received / toFloat n)
+
+
+
+-- CUSTOM REQUESTS
+
+
+{-| Create a request with a risky security policy. Things like:
+
+  - Allow responses from other domains to set cookies.
+  - Include cookies in requests to other domains.
+
+This is called [`withCredentials`][wc] in JavaScript, and it allows a couple
+other risky things as well. It can be useful if `www.example.com` needs to
+talk to `uploads.example.com`, but it should be used very carefully!
+
+For example, every HTTP request includes a `Host` header revealing the domain,
+so any request to `facebook.com` reveals the website that sent it. From there,
+cookies can be used to correlate browsing habits with specific users. “Oh, it
+looks like they visited `example.com`. Maybe they want ads about examples!”
+This is why you can get shoe ads for months without saying anything about it
+on any social networks. **This risk exists even for people who do not have an
+account.** Servers can set a new cookie to uniquely identify the browser and
+build a profile around that. Same kind of tricks for logged out users.
+
+**Context:** A significantly worse version of this can happen when trying to
+add integrations with Google, Facebook, Pinterest, Twitter, etc. “Add our share
+button. It is super easy. Just add this `<script>` tag!” But the goal here is
+to get _arbitrary_ access to the executing context. Now they can track clicks,
+read page content, use time zones to approximate location, etc. As of this
+writing, suggesting that developers just embed `<script>` tags is the default
+for Google Analytics, Facebook Like Buttons, Twitter Follow Buttons, Pinterest
+Save Buttons, and Instagram Embeds.
+
+[ah]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Authorization
+[wc]: https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest/withCredentials
+
+-}
+riskyRequest :
+    { method : String
+    , headers : List Header
+    , url : String
+    , body : Body
+    , expect : Expect msg
+    , timeout : Maybe Duration
+    , tracker : Maybe String
+    }
+    -> Command restriction toMsg msg
+riskyRequest r =
+    let
+        (Expect onResult) =
+            r.expect
+    in
+    HttpTask
+        { method = r.method
+        , url = r.url
+        , headers = r.headers
+        , body = r.body
+        , onRequestComplete = mapResponse >> onResult >> Effect.Task.succeed
+        , timeout = r.timeout
+        , isRisky = True
+        }
+        |> Effect.Internal.Task
 
 
 {-| Logic for interpreting a response body.
@@ -359,6 +716,7 @@ task r =
                 StringResolver f ->
                     mapResponse >> f
         , timeout = r.timeout
+        , isRisky = False
         }
 
 
