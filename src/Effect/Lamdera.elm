@@ -14,9 +14,9 @@ import Bytes.Encode
 import Duration
 import Effect.Browser.Navigation
 import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
-import Effect.Internal exposing (File(..), HttpBody(..), NavigationKey(..))
+import Effect.Http
+import Effect.Internal exposing (File(..), NavigationKey(..))
 import Effect.Subscription exposing (Subscription)
-import Effect.Time
 import File
 import File.Download
 import File.Select
@@ -290,6 +290,9 @@ toCmd broadcastCmd toFrontendCmd toBackendCmd effect =
         Effect.Internal.Broadcast toMsg ->
             broadcastCmd toMsg
 
+        Effect.Internal.HttpCancel string ->
+            Http.cancel string
+
 
 toTask : Effect.Internal.Task restriction x b -> Task.Task x b
 toTask simulatedTask =
@@ -307,14 +310,46 @@ toTask simulatedTask =
                 , url = httpRequest.url
                 , body =
                     case httpRequest.body of
-                        EmptyBody ->
+                        Effect.Internal.EmptyBody ->
                             Http.emptyBody
 
-                        StringBody { contentType, content } ->
+                        Effect.Internal.StringBody { contentType, content } ->
                             Http.stringBody contentType content
 
-                        JsonBody value ->
+                        Effect.Internal.JsonBody value ->
                             Http.jsonBody value
+
+                        Effect.Internal.MultipartBody httpParts ->
+                            List.map
+                                (\part ->
+                                    case part of
+                                        Effect.Internal.StringPart a b ->
+                                            Http.stringPart a b
+
+                                        Effect.Internal.FilePart a b ->
+                                            case b of
+                                                Effect.Internal.RealFile file ->
+                                                    Http.filePart a file
+
+                                                Effect.Internal.MockFile _ ->
+                                                    Http.stringPart "" ""
+
+                                        Effect.Internal.BytesPart key mimeType content ->
+                                            Http.bytesPart key mimeType content
+                                )
+                                httpParts
+                                |> Http.multipartBody
+
+                        Effect.Internal.BytesBody a b ->
+                            Http.bytesBody a b
+
+                        Effect.Internal.FileBody file ->
+                            case file of
+                                Effect.Internal.RealFile realFile ->
+                                    Http.fileBody realFile
+
+                                MockFile _ ->
+                                    Http.emptyBody
                 , resolver = Http.stringResolver Ok
                 , timeout = Maybe.map Duration.inMilliseconds httpRequest.timeout
                 }
@@ -470,3 +505,6 @@ toSub sub =
                 (\sessionId clientId ->
                     msg (Effect.Internal.SessionId sessionId) (Effect.Internal.ClientId clientId)
                 )
+
+        Effect.Internal.HttpTrack string function ->
+            Http.track string function

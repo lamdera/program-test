@@ -151,3 +151,6 @@ map mapFunc subscription =
 
         Effect.Internal.OnDisconnect msg ->
             Effect.Internal.OnDisconnect (\sessionId clientId -> msg sessionId clientId |> mapFunc)
+
+        Effect.Internal.HttpTrack string msg ->
+            Effect.Internal.HttpTrack string (msg >> mapFunc)

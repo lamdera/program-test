@@ -63,6 +63,7 @@ type Subscription restriction msg
     | SubPort String (Sub msg) (Json.Decode.Value -> msg)
     | OnConnect (SessionId -> ClientId -> msg)
     | OnDisconnect (SessionId -> ClientId -> msg)
+    | HttpTrack String (Http.Progress -> msg)
 
 
 type Visibility
@@ -90,6 +91,7 @@ type Command restriction toMsg msg
     | FileDownloadBytes { name : String, mimeType : String, content : Bytes }
     | FileSelectFile (List String) (File -> msg)
     | FileSelectFiles (List String) (File -> List File -> msg)
+    | HttpCancel String
 
 
 type Task restriction x a
@@ -145,13 +147,14 @@ type HttpBody
         }
     | JsonBody Json.Encode.Value
     | MultipartBody (List HttpPart)
-    | BytesBody Bytes
+    | BytesBody String Bytes
+    | FileBody File
 
 
 type HttpPart
-    = StringPart String
-    | FilePart File
-    | BytesPart Bytes
+    = StringPart String String
+    | FilePart String File
+    | BytesPart String String Bytes
 
 
 taskMap : (a -> b) -> Task restriction x a -> Task restriction x b

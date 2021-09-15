@@ -187,3 +187,6 @@ map mapToMsg mapMsg frontendEffect =
 
         Broadcast toMsg ->
             Broadcast (mapToMsg toMsg)
+
+        HttpCancel string ->
+            HttpCancel string

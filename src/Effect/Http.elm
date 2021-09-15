@@ -229,7 +229,7 @@ or `image/jpeg` instead.
 -}
 bytesBody : String -> Bytes -> Body
 bytesBody =
-    Elm.Kernel.Http.pair
+    BytesBody
 
 
 {-| Use a file as the body of your `Request`. When someone uploads an image
@@ -242,8 +242,8 @@ This will automatically set the `Content-Type` to the MIME type of the file.
 
 -}
 fileBody : File -> Body
-fileBody =
-    Elm.Kernel.Http.pair ""
+fileBody file =
+    FileBody (Effect.File.toInternalFile file)
 
 
 
@@ -291,16 +291,14 @@ creating a body this way.
 
 -}
 multipartBody : List Part -> Body
-multipartBody parts =
-    Elm.Kernel.Http.pair "" (Elm.Kernel.Http.toFormData parts)
+multipartBody =
+    MultipartBody
 
 
 {-| One part of a `multipartBody`.
 -}
-type Part
-    = StringPart String
-    | FilePart File
-    | BytesPart Bytes
+type alias Part =
+    Effect.Internal.HttpPart
 
 
 {-| A part that contains `String` data.
@@ -313,7 +311,7 @@ type Part
 -}
 stringPart : String -> String -> Part
 stringPart =
-    Elm.Kernel.Http.pair
+    Effect.Internal.StringPart
 
 
 {-| A part that contains a file. You can use
@@ -330,8 +328,8 @@ browser. From there, you can send it along to a server like this:
 
 -}
 filePart : String -> File -> Part
-filePart =
-    Elm.Kernel.Http.pair
+filePart key file =
+    Effect.Internal.FilePart key (Effect.File.toInternalFile file)
 
 
 {-| A part that contains bytes, allowing you to use
@@ -348,8 +346,8 @@ how to interpret the bytes.
 
 -}
 bytesPart : String -> String -> Bytes -> Part
-bytesPart key mime bytes =
-    Elm.Kernel.Http.pair key (Elm.Kernel.Http.bytesToBlob mime bytes)
+bytesPart =
+    Effect.Internal.BytesPart
 
 
 
@@ -359,8 +357,8 @@ bytesPart key mime bytes =
 {-| Try to cancel an ongoing request based on a `tracker`.
 -}
 cancel : String -> Command restriction toMsg msg
-cancel tracker =
-    command (Cancel tracker)
+cancel =
+    Effect.Internal.HttpCancel
 
 
 
@@ -373,7 +371,7 @@ cancel tracker =
 -}
 track : String -> (Progress -> msg) -> Subscription restriction msg
 track tracker toMsg =
-    subscription (MySub tracker toMsg)
+    Effect.Internal.HttpTrack tracker (progressFromInternal >> toMsg)
 
 
 {-| There are two phases to HTTP requests. First you **send** a bunch of data,
@@ -410,6 +408,16 @@ That is why the `size` is a `Maybe Int` in `Receiving`.
 type Progress
     = Sending { sent : Int, size : Int }
     | Receiving { received : Int, size : Maybe Int }
+
+
+progressFromInternal : Http.Progress -> Progress
+progressFromInternal progress =
+    case progress of
+        Http.Sending a ->
+            Sending a
+
+        Http.Receiving a ->
+            Receiving a
 
 
 {-| Turn `Sending` progress into a useful fraction.
