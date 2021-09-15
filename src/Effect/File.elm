@@ -1,7 +1,7 @@
 module Effect.File exposing
     ( File, decoder
     , toString, toBytes, toUrl
-    , name, mime, size, lastModified, fromInternalFile
+    , name, mime, size, lastModified, toInternalFile, fromInternalFile
     )
 
 {-|
@@ -19,7 +19,7 @@ module Effect.File exposing
 
 # Read Metadata
 
-@docs name, mime, size, lastModified, fromInternalFile
+@docs name, mime, size, lastModified, toInternalFile, fromInternalFile
 
 -}
 
@@ -43,6 +43,8 @@ type File
     | MockFile { name : String, mimeType : String, content : String, lastModified : Time.Posix }
 
 
+{-| Please ignore
+-}
 toInternalFile : File -> Effect.Internal.File
 toInternalFile file =
     case file of

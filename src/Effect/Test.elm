@@ -2,6 +2,7 @@ module Effect.Test exposing
     ( testApp, TestApp, FrontendApp, BackendApp, HttpRequest, PortToJs
     , connectFrontend, disconnectFrontend, reconnectFrontend, clickButton, inputText, keyDownEvent, clickLink, sendToBackend, fastForward, simulateTime, andThen, continueWith, Instructions, State, startTime
     , checkState, checkFrontend, checkBackend, toExpectation
+    , HttpBody(..), HttpPart(..)
     )
 
 {-| Setting up the simulation
@@ -22,6 +23,7 @@ import AssocList as Dict exposing (Dict)
 import Basics.Extra as Basics
 import Browser exposing (UrlRequest(..))
 import Browser.Dom
+import Bytes exposing (Bytes)
 import Bytes.Encode
 import Duration exposing (Duration)
 import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
@@ -76,9 +78,60 @@ type alias PortToJs =
 type alias HttpRequest =
     { method : String
     , url : String
-    , body : Body
+    , body : HttpBody
     , headers : List ( String, String )
     }
+
+
+httpBodyFromInternal body =
+    case body of
+        Effect.Internal.EmptyBody ->
+            EmptyBody
+
+        Effect.Internal.StringBody record ->
+            StringBody record
+
+        Effect.Internal.JsonBody value ->
+            JsonBody value
+
+        Effect.Internal.MultipartBody httpParts ->
+            List.map httpPartFromInternal httpParts |> MultipartBody
+
+        Effect.Internal.BytesBody string bytes ->
+            BytesBody string bytes
+
+        Effect.Internal.FileBody file ->
+            FileBody file
+
+
+type HttpBody
+    = EmptyBody
+    | StringBody
+        { contentType : String
+        , content : String
+        }
+    | JsonBody Json.Encode.Value
+    | MultipartBody (List HttpPart)
+    | BytesBody String Bytes
+    | FileBody File
+
+
+httpPartFromInternal part =
+    case part of
+        Effect.Internal.StringPart a b ->
+            StringPart a b
+
+        Effect.Internal.FilePart string file ->
+            FilePart string file
+
+        Effect.Internal.BytesPart key mimeType bytes ->
+            BytesPart { key = key, mimeType = mimeType, content = bytes }
+
+
+type HttpPart
+    = StringPart String String
+    | FilePart String File
+    | BytesPart { key : String, mimeType : String, content : Bytes }
 
 
 {-| -}
@@ -1079,6 +1132,10 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
         Broadcast _ ->
             state
 
+        HttpCancel string ->
+            -- TODO
+            state
+
 
 getPortSubscriptions :
     Subscription FrontendOnly frontendMsg
@@ -1231,6 +1288,10 @@ runBackendEffects frontendApp backendApp effect state =
                         state.frontends
             }
 
+        HttpCancel string ->
+            -- TODO
+            state
+
 
 runTask :
     Maybe ClientId
@@ -1253,7 +1314,7 @@ runTask maybeClientId frontendApp state task =
                 request =
                     { method = httpRequest.method
                     , url = httpRequest.url
-                    , body = httpRequest.body
+                    , body = httpBodyFromInternal httpRequest.body
                     , headers = httpRequest.headers
                     }
             in

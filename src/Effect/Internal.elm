@@ -6,6 +6,7 @@ module Effect.Internal exposing
     , File(..)
     , FrontendOnly
     , HttpBody(..)
+    , HttpPart(..)
     , HttpRequest
     , NavigationKey(..)
     , SessionId(..)
@@ -62,6 +63,7 @@ type Subscription restriction msg
     | SubPort String (Sub msg) (Json.Decode.Value -> msg)
     | OnConnect (SessionId -> ClientId -> msg)
     | OnDisconnect (SessionId -> ClientId -> msg)
+    | HttpTrack String (Http.Progress -> msg)
 
 
 type Visibility
@@ -89,6 +91,7 @@ type Command restriction toMsg msg
     | FileDownloadBytes { name : String, mimeType : String, content : Bytes }
     | FileSelectFile (List String) (File -> msg)
     | FileSelectFiles (List String) (File -> List File -> msg)
+    | HttpCancel String
 
 
 type Task restriction x a
@@ -132,6 +135,7 @@ type alias HttpRequest restriction x a =
     , headers : List ( String, String )
     , onRequestComplete : Http.Response String -> Task restriction x a
     , timeout : Maybe Duration
+    , isRisky : Bool
     }
 
 
@@ -142,6 +146,15 @@ type HttpBody
         , content : String
         }
     | JsonBody Json.Encode.Value
+    | MultipartBody (List HttpPart)
+    | BytesBody String Bytes
+    | FileBody File
+
+
+type HttpPart
+    = StringPart String String
+    | FilePart String File
+    | BytesPart String String Bytes
 
 
 taskMap : (a -> b) -> Task restriction x a -> Task restriction x b
@@ -166,6 +179,7 @@ andThen f task =
                 , headers = request.headers
                 , onRequestComplete = request.onRequestComplete >> andThen f
                 , timeout = request.timeout
+                , isRisky = request.isRisky
                 }
 
         SleepTask delay onResult ->
@@ -228,6 +242,7 @@ taskMapError f task =
                 , headers = request.headers
                 , onRequestComplete = request.onRequestComplete >> taskMapError f
                 , timeout = request.timeout
+                , isRisky = request.isRisky
                 }
 
         SleepTask delay onResult ->

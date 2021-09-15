@@ -371,6 +371,7 @@ onError f task =
                 , headers = request.headers
                 , onRequestComplete = request.onRequestComplete >> onError f
                 , timeout = request.timeout
+                , isRisky = request.isRisky
                 }
 
         SleepTask delay onResult ->
