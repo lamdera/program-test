@@ -1,8 +1,7 @@
 module Effect.Test exposing
     ( testApp, TestApp, FrontendApp, BackendApp, HttpRequest, PortToJs
-    , connectFrontend, disconnectFrontend, reconnectFrontend, clickButton, inputText, keyDownEvent, clickLink, sendToBackend, fastForward, simulateTime, andThen, continueWith, Instructions, State, startTime
+    , connectFrontend, disconnectFrontend, reconnectFrontend, clickButton, inputText, keyDownEvent, clickLink, sendToBackend, fastForward, simulateTime, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
     , checkState, checkFrontend, checkBackend, toExpectation
-    , HttpBody(..), HttpPart(..)
     )
 
 {-| Setting up the simulation
@@ -11,7 +10,7 @@ module Effect.Test exposing
 
 Control the simulation
 
-@docs connectFrontend, disconnectFrontend, reconnectFrontend, clickButton, inputText, keyDownEvent, clickLink, sendToBackend, fastForward, simulateTime, andThen, continueWith, Instructions, State, startTime
+@docs connectFrontend, disconnectFrontend, reconnectFrontend, clickButton, inputText, keyDownEvent, clickLink, sendToBackend, fastForward, simulateTime, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
 
 Test the simulation
 
@@ -24,6 +23,7 @@ import Basics.Extra as Basics
 import Browser exposing (UrlRequest(..))
 import Browser.Dom
 import Bytes exposing (Bytes)
+import Bytes.Decode
 import Bytes.Encode
 import Duration exposing (Duration)
 import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
@@ -59,7 +59,9 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
     , timers : Dict Duration { msg : Time.Posix -> backendMsg, startTime : Time.Posix }
     , testErrors : List String
     , httpRequests : List HttpRequest
-    , handleHttpRequest : { currentRequest : HttpRequest, httpRequests : List HttpRequest } -> Effect.Http.Response String
+    , handleHttpRequest :
+        { currentRequest : HttpRequest, httpRequests : List HttpRequest }
+        -> Effect.Http.Response Bytes
     , handlePortToJs :
         { currentRequest : PortToJs, portRequests : List PortToJs }
         -> Maybe ( String, Json.Decode.Value )
@@ -104,6 +106,7 @@ httpBodyFromInternal body =
             FileBody file
 
 
+{-| -}
 type HttpBody
     = EmptyBody
     | StringBody
@@ -128,6 +131,7 @@ httpPartFromInternal part =
             BytesPart { key = key, mimeType = mimeType, content = bytes }
 
 
+{-| -}
 type HttpPart
     = StringPart String String
     | FilePart String File
@@ -357,7 +361,7 @@ type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg bac
 testApp :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
-    -> ({ currentRequest : HttpRequest, httpRequests : List HttpRequest } -> Effect.Http.Response String)
+    -> ({ currentRequest : HttpRequest, httpRequests : List HttpRequest } -> Effect.Http.Response Bytes)
     ->
         ({ currentRequest : PortToJs, portRequests : List PortToJs }
          -> Maybe ( String, Json.Decode.Value )
@@ -1307,7 +1311,43 @@ runTask maybeClientId frontendApp state task =
         Fail value ->
             ( state, value )
 
-        HttpTask httpRequest ->
+        HttpStringTask httpRequest ->
+            -- TODO: Implement actual delays to http requests
+            let
+                request : HttpRequest
+                request =
+                    { method = httpRequest.method
+                    , url = httpRequest.url
+                    , body = httpBodyFromInternal httpRequest.body
+                    , headers = httpRequest.headers
+                    }
+            in
+            state.handleHttpRequest { currentRequest = request, httpRequests = state.httpRequests }
+                |> (\response ->
+                        case response of
+                            Effect.Http.BadUrl_ url ->
+                                Http.BadUrl_ url
+
+                            Effect.Http.Timeout_ ->
+                                Http.Timeout_
+
+                            Effect.Http.NetworkError_ ->
+                                Http.NetworkError_
+
+                            Effect.Http.BadStatus_ metadata body ->
+                                Bytes.Decode.decode (Bytes.Decode.string (Bytes.width body)) body
+                                    |> Maybe.withDefault "String decoding failed"
+                                    |> Http.BadStatus_ metadata
+
+                            Effect.Http.GoodStatus_ metadata body ->
+                                Bytes.Decode.decode (Bytes.Decode.string (Bytes.width body)) body
+                                    |> Maybe.withDefault "String decoding failed"
+                                    |> Http.GoodStatus_ metadata
+                   )
+                |> httpRequest.onRequestComplete
+                |> runTask maybeClientId frontendApp { state | httpRequests = request :: state.httpRequests }
+
+        HttpBytesTask httpRequest ->
             -- TODO: Implement actual delays to http requests
             let
                 request : HttpRequest

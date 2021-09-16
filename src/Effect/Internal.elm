@@ -97,7 +97,8 @@ type Command restriction toMsg msg
 type Task restriction x a
     = Succeed a
     | Fail x
-    | HttpTask (HttpRequest restriction x a)
+    | HttpStringTask (HttpRequest String restriction x a)
+    | HttpBytesTask (HttpRequest Bytes restriction x a)
     | SleepTask Duration (() -> Task restriction x a)
     | TimeNow (Time.Posix -> Task restriction x a)
     | TimeHere (Time.Zone -> Task restriction x a)
@@ -128,12 +129,12 @@ type File
     | MockFile { name : String, mimeType : String, content : String, lastModified : Time.Posix }
 
 
-type alias HttpRequest restriction x a =
+type alias HttpRequest data restriction x a =
     { method : String
     , url : String
     , body : HttpBody
     , headers : List ( String, String )
-    , onRequestComplete : Http.Response String -> Task restriction x a
+    , onRequestComplete : Http.Response data -> Task restriction x a
     , timeout : Maybe Duration
     , isRisky : Bool
     }
@@ -171,8 +172,19 @@ andThen f task =
         Fail x ->
             Fail x
 
-        HttpTask request ->
-            HttpTask
+        HttpStringTask request ->
+            HttpStringTask
+                { method = request.method
+                , url = request.url
+                , body = request.body
+                , headers = request.headers
+                , onRequestComplete = request.onRequestComplete >> andThen f
+                , timeout = request.timeout
+                , isRisky = request.isRisky
+                }
+
+        HttpBytesTask request ->
+            HttpBytesTask
                 { method = request.method
                 , url = request.url
                 , body = request.body
@@ -234,8 +246,19 @@ taskMapError f task =
         Fail x ->
             Fail (f x)
 
-        HttpTask request ->
-            HttpTask
+        HttpStringTask request ->
+            HttpStringTask
+                { method = request.method
+                , url = request.url
+                , body = request.body
+                , headers = request.headers
+                , onRequestComplete = request.onRequestComplete >> taskMapError f
+                , timeout = request.timeout
+                , isRisky = request.isRisky
+                }
+
+        HttpBytesTask request ->
+            HttpBytesTask
                 { method = request.method
                 , url = request.url
                 , body = request.body

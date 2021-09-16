@@ -294,6 +294,59 @@ toCmd broadcastCmd toFrontendCmd toBackendCmd effect =
             Http.cancel string
 
 
+httpHelper httpRequest resolver =
+    Http.task
+        { method = httpRequest.method
+        , headers = List.map (\( key, value ) -> Http.header key value) httpRequest.headers
+        , url = httpRequest.url
+        , body =
+            case httpRequest.body of
+                Effect.Internal.EmptyBody ->
+                    Http.emptyBody
+
+                Effect.Internal.StringBody { contentType, content } ->
+                    Http.stringBody contentType content
+
+                Effect.Internal.JsonBody value ->
+                    Http.jsonBody value
+
+                Effect.Internal.MultipartBody httpParts ->
+                    List.map
+                        (\part ->
+                            case part of
+                                Effect.Internal.StringPart a b ->
+                                    Http.stringPart a b
+
+                                Effect.Internal.FilePart a b ->
+                                    case b of
+                                        Effect.Internal.RealFile file ->
+                                            Http.filePart a file
+
+                                        Effect.Internal.MockFile _ ->
+                                            Http.stringPart "" ""
+
+                                Effect.Internal.BytesPart key mimeType content ->
+                                    Http.bytesPart key mimeType content
+                        )
+                        httpParts
+                        |> Http.multipartBody
+
+                Effect.Internal.BytesBody a b ->
+                    Http.bytesBody a b
+
+                Effect.Internal.FileBody file ->
+                    case file of
+                        Effect.Internal.RealFile realFile ->
+                            Http.fileBody realFile
+
+                        MockFile _ ->
+                            Http.emptyBody
+        , resolver = resolver Ok
+        , timeout = Maybe.map Duration.inMilliseconds httpRequest.timeout
+        }
+        |> Task.andThen (\response -> httpRequest.onRequestComplete response |> toTask)
+
+
 toTask : Effect.Internal.Task restriction x b -> Task.Task x b
 toTask simulatedTask =
     case simulatedTask of
@@ -303,57 +356,11 @@ toTask simulatedTask =
         Effect.Internal.Fail x ->
             Task.fail x
 
-        Effect.Internal.HttpTask httpRequest ->
-            Http.task
-                { method = httpRequest.method
-                , headers = List.map (\( key, value ) -> Http.header key value) httpRequest.headers
-                , url = httpRequest.url
-                , body =
-                    case httpRequest.body of
-                        Effect.Internal.EmptyBody ->
-                            Http.emptyBody
+        Effect.Internal.HttpStringTask httpRequest ->
+            httpHelper httpRequest Http.stringResolver
 
-                        Effect.Internal.StringBody { contentType, content } ->
-                            Http.stringBody contentType content
-
-                        Effect.Internal.JsonBody value ->
-                            Http.jsonBody value
-
-                        Effect.Internal.MultipartBody httpParts ->
-                            List.map
-                                (\part ->
-                                    case part of
-                                        Effect.Internal.StringPart a b ->
-                                            Http.stringPart a b
-
-                                        Effect.Internal.FilePart a b ->
-                                            case b of
-                                                Effect.Internal.RealFile file ->
-                                                    Http.filePart a file
-
-                                                Effect.Internal.MockFile _ ->
-                                                    Http.stringPart "" ""
-
-                                        Effect.Internal.BytesPart key mimeType content ->
-                                            Http.bytesPart key mimeType content
-                                )
-                                httpParts
-                                |> Http.multipartBody
-
-                        Effect.Internal.BytesBody a b ->
-                            Http.bytesBody a b
-
-                        Effect.Internal.FileBody file ->
-                            case file of
-                                Effect.Internal.RealFile realFile ->
-                                    Http.fileBody realFile
-
-                                MockFile _ ->
-                                    Http.emptyBody
-                , resolver = Http.stringResolver Ok
-                , timeout = Maybe.map Duration.inMilliseconds httpRequest.timeout
-                }
-                |> Task.andThen (\response -> httpRequest.onRequestComplete response |> toTask)
+        Effect.Internal.HttpBytesTask httpRequest ->
+            httpHelper httpRequest Http.bytesResolver
 
         Effect.Internal.SleepTask duration function ->
             Process.sleep (Duration.inMilliseconds duration)

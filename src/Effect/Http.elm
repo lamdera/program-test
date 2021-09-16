@@ -3,12 +3,12 @@ module Effect.Http exposing
     , Header, header
     , Body, emptyBody, stringBody, jsonBody, fileBody, bytesBody
     , multipartBody, Part, stringPart, filePart, bytesPart
-    , Expect, expectString, expectJson, expectWhatever, Error(..)
+    , Expect, expectString, expectJson, expectBytes, expectWhatever, Error(..)
     , track, Progress(..), fractionSent, fractionReceived
     , cancel
     , riskyRequest
-    , expectStringResponse, Response(..), Metadata
-    , task, Resolver, stringResolver
+    , expectStringResponse, expectBytesResponse, Response(..), Metadata
+    , task, Resolver, stringResolver, bytesResolver, riskyTask
     )
 
 {-| Send HTTP requests.
@@ -66,6 +66,7 @@ module Effect.Http exposing
 -}
 
 import Bytes exposing (Bytes)
+import Bytes.Decode
 import Dict exposing (Dict)
 import Duration exposing (Duration)
 import Effect.Command exposing (Command)
@@ -142,20 +143,12 @@ request :
     }
     -> Command restriction toFrontend msg
 request r =
-    let
-        (Expect onResult) =
-            r.expect
-    in
-    HttpTask
-        { method = r.method
-        , url = r.url
-        , headers = r.headers
-        , body = r.body
-        , onRequestComplete = mapResponse >> onResult >> Effect.Task.succeed
-        , timeout = r.timeout
-        , isRisky = False
-        }
-        |> Effect.Internal.Task
+    case r.expect of
+        ExpectString onResult ->
+            HttpStringTask (requestHelper False r onResult) |> Effect.Internal.Task
+
+        ExpectBytes onResult ->
+            HttpBytesTask (requestHelper False r onResult) |> Effect.Internal.Task
 
 
 mapResponse : Http.Response body -> Response body
@@ -534,33 +527,37 @@ riskyRequest :
     }
     -> Command restriction toMsg msg
 riskyRequest r =
-    let
-        (Expect onResult) =
-            r.expect
-    in
-    HttpTask
-        { method = r.method
-        , url = r.url
-        , headers = r.headers
-        , body = r.body
-        , onRequestComplete = mapResponse >> onResult >> Effect.Task.succeed
-        , timeout = r.timeout
-        , isRisky = True
-        }
-        |> Effect.Internal.Task
+    case r.expect of
+        ExpectString onResult ->
+            HttpStringTask (requestHelper True r onResult) |> Effect.Internal.Task
+
+        ExpectBytes onResult ->
+            HttpBytesTask (requestHelper True r onResult) |> Effect.Internal.Task
+
+
+requestHelper isRisky r onResult =
+    { method = r.method
+    , url = r.url
+    , headers = r.headers
+    , body = r.body
+    , onRequestComplete = mapResponse >> onResult >> Effect.Task.succeed
+    , timeout = r.timeout
+    , isRisky = isRisky
+    }
 
 
 {-| Logic for interpreting a response body.
 -}
 type Expect msg
-    = Expect (Response String -> msg)
+    = ExpectString (Response String -> msg)
+    | ExpectBytes (Response Bytes -> msg)
 
 
 {-| Expect the response body to be a `String`.
 -}
 expectString : (Result Error String -> msg) -> Expect msg
 expectString onResult =
-    Expect <|
+    ExpectString <|
         \response ->
             case response of
                 BadUrl_ s ->
@@ -583,14 +580,25 @@ expectString onResult =
 -}
 expectStringResponse : (Result x a -> msg) -> (Response String -> Result x a) -> Expect msg
 expectStringResponse toMsg onResponse =
-    Expect (onResponse >> toMsg)
+    ExpectString (onResponse >> toMsg)
+
+
+{-| Expect a [`Response`](#Response) with a `Bytes` body.
+
+It works just like [`expectStringResponse`](#expectStringResponse), giving you
+more access to headers and more leeway in defining your own errors.
+
+-}
+expectBytesResponse : (Result x a -> msg) -> (Response Bytes -> Result x a) -> Expect msg
+expectBytesResponse toMsg onResponse =
+    ExpectBytes (onResponse >> toMsg)
 
 
 {-| Expect the response body to be JSON.
 -}
 expectJson : (Result Error a -> msg) -> Decoder a -> Expect msg
 expectJson onResult decoder =
-    Expect <|
+    ExpectString <|
         \response ->
             case response of
                 BadUrl_ s ->
@@ -614,11 +622,63 @@ expectJson onResult decoder =
                             onResult (Ok value)
 
 
+{-| Expect the response body to be binary data. For example, maybe you are
+talking to an endpoint that gives back ProtoBuf data:
+
+    import Bytes.Decode as Bytes
+    import Http
+
+    type Msg
+        = GotData (Result Http.Error Data)
+
+    getData : Cmd Msg
+    getData =
+        Http.get
+            { url = "/data"
+            , expect = Http.expectBytes GotData dataDecoder
+            }
+
+    -- dataDecoder : Bytes.Decoder Data
+
+You would use [`elm/bytes`](/packages/elm/bytes/latest/) to decode the binary
+data according to a proto definition file like `example.proto`.
+
+If the decoder fails, you get a `BadBody` error that just indicates that
+_something_ went wrong. It probably makes sense to debug by peeking at the
+bytes you are getting in the browser developer tools or something.
+
+-}
+expectBytes : (Result Error a -> msg) -> Bytes.Decode.Decoder a -> Expect msg
+expectBytes onResult decoder =
+    ExpectBytes <|
+        \response ->
+            case response of
+                BadUrl_ s ->
+                    onResult (Err <| BadUrl s)
+
+                Timeout_ ->
+                    onResult (Err Timeout)
+
+                NetworkError_ ->
+                    onResult (Err NetworkError)
+
+                BadStatus_ metadata _ ->
+                    onResult (Err <| BadStatus metadata.statusCode)
+
+                GoodStatus_ _ body ->
+                    case Bytes.Decode.decode decoder body of
+                        Nothing ->
+                            onResult (Err <| BadBody "unexpected bytes")
+
+                        Just value ->
+                            onResult (Ok value)
+
+
 {-| Expect the response body to be whatever.
 -}
 expectWhatever : (Result Error () -> msg) -> Expect msg
 expectWhatever onResult =
-    Expect <|
+    ExpectString <|
         \response ->
             case response of
                 BadUrl_ s ->
@@ -714,24 +774,35 @@ task :
     }
     -> Task restriction x a
 task r =
-    HttpTask
-        { method = r.method
-        , url = r.url
-        , headers = r.headers
-        , body = r.body
-        , onRequestComplete =
-            case r.resolver of
-                StringResolver f ->
-                    mapResponse >> f
-        , timeout = r.timeout
-        , isRisky = False
-        }
+    case r.resolver of
+        StringResolver f ->
+            HttpStringTask
+                { method = r.method
+                , url = r.url
+                , headers = r.headers
+                , body = r.body
+                , onRequestComplete = mapResponse >> f
+                , timeout = r.timeout
+                , isRisky = False
+                }
+
+        BytesResolver f ->
+            HttpBytesTask
+                { method = r.method
+                , url = r.url
+                , headers = r.headers
+                , body = r.body
+                , onRequestComplete = mapResponse >> f
+                , timeout = r.timeout
+                , isRisky = False
+                }
 
 
 {-| Describes how to resolve an HTTP task.
 -}
 type Resolver restriction x a
     = StringResolver (Response String -> Task restriction x a)
+    | BytesResolver (Response Bytes -> Task restriction x a)
 
 
 {-| Turn a response with a `String` body into a result.
@@ -748,3 +819,57 @@ stringResolver f =
                     Effect.Task.succeed a
     in
     StringResolver (f >> fromResult)
+
+
+{-| Turn a response with a `Bytes` body into a result.
+Similar to [`expectBytesResponse`](#expectBytesResponse).
+-}
+bytesResolver : (Response Bytes -> Result x a) -> Resolver restriction x a
+bytesResolver f =
+    let
+        fromResult result =
+            case result of
+                Err x ->
+                    Effect.Task.fail x
+
+                Ok a ->
+                    Effect.Task.succeed a
+    in
+    BytesResolver (f >> fromResult)
+
+
+{-| Just like [`riskyRequest`](#riskyRequest), but it creates a `Task`. **Use
+with caution!** This has all the same security concerns as `riskyRequest`.
+-}
+riskyTask :
+    { method : String
+    , headers : List Header
+    , url : String
+    , body : Body
+    , resolver : Resolver restriction x a
+    , timeout : Maybe Duration
+    }
+    -> Task restriction x a
+riskyTask r =
+    case r.resolver of
+        StringResolver f ->
+            HttpStringTask
+                { method = r.method
+                , url = r.url
+                , headers = r.headers
+                , body = r.body
+                , onRequestComplete = mapResponse >> f
+                , timeout = r.timeout
+                , isRisky = True
+                }
+
+        BytesResolver f ->
+            HttpBytesTask
+                { method = r.method
+                , url = r.url
+                , headers = r.headers
+                , body = r.body
+                , onRequestComplete = mapResponse >> f
+                , timeout = r.timeout
+                , isRisky = True
+                }

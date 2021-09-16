@@ -363,8 +363,19 @@ onError f task =
         Fail x ->
             f x
 
-        HttpTask request ->
-            HttpTask
+        HttpStringTask request ->
+            HttpStringTask
+                { method = request.method
+                , url = request.url
+                , body = request.body
+                , headers = request.headers
+                , onRequestComplete = request.onRequestComplete >> onError f
+                , timeout = request.timeout
+                , isRisky = request.isRisky
+                }
+
+        HttpBytesTask request ->
+            HttpBytesTask
                 { method = request.method
                 , url = request.url
                 , body = request.body
