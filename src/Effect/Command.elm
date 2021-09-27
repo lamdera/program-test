@@ -170,6 +170,9 @@ map mapToMsg mapMsg frontendEffect =
         SendToFrontend clientId toMsg ->
             SendToFrontend clientId (mapToMsg toMsg)
 
+        SendToFrontends sessionId toMsg ->
+            SendToFrontends sessionId (mapToMsg toMsg)
+
         FileDownloadUrl record ->
             FileDownloadUrl record
 

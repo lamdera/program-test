@@ -1095,6 +1095,9 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
         SendToFrontend _ _ ->
             state
 
+        SendToFrontends _ _ ->
+            state
+
         FileDownloadUrl _ ->
             state
 
@@ -1223,6 +1226,24 @@ runBackendEffects frontendApp backendApp effect state =
                     Dict.update
                         (Effect.Lamdera.clientIdFromString clientId)
                         (Maybe.map (\frontend -> { frontend | toFrontend = frontend.toFrontend ++ [ toFrontend ] }))
+                        state.frontends
+            }
+
+        SendToFrontends (Effect.Internal.SessionId sessionId) toFrontend ->
+            let
+                sessionId_ =
+                    Effect.Lamdera.sessionIdFromString sessionId
+            in
+            { state
+                | frontends =
+                    Dict.map
+                        (\_ frontend ->
+                            if frontend.sessionId == sessionId_ then
+                                { frontend | toFrontend = frontend.toFrontend ++ [ toFrontend ] }
+
+                            else
+                                frontend
+                        )
                         state.frontends
             }
 

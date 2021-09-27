@@ -1,8 +1,8 @@
-module Effect.Lamdera exposing (frontend, backend, sendToBackend, sendToFrontend, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString, Url, Document, Key, UrlRequest)
+module Effect.Lamdera exposing (frontend, backend, sendToBackend, sendToFrontend, sendToFrontends, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString, Url, Document, Key, UrlRequest)
 
 {-| backend
 
-@docs frontend, backend, sendToBackend, sendToFrontend, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString, Url, Document, Key, UrlRequest
+@docs frontend, backend, sendToBackend, sendToFrontend, sendToFrontends, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString, Url, Document, Key, UrlRequest
 
 -}
 
@@ -114,6 +114,13 @@ sendToBackend =
 sendToFrontend : ClientId -> toFrontend -> Command BackendOnly toFrontend backendMsg
 sendToFrontend client toFrontend =
     Effect.Internal.SendToFrontend (clientIdToString client |> Effect.Internal.ClientId) toFrontend
+
+
+{-| Send a toFrontend msg to all the frontends that have a given SessionId.
+-}
+sendToFrontends : SessionId -> toFrontend -> Command BackendOnly toFrontend backendMsg
+sendToFrontends sessionId toFrontend =
+    Effect.Internal.SendToFrontends (sessionIdToString sessionId |> Effect.Internal.SessionId) toFrontend
 
 
 {-| Send a toFrontend msg to all currently connected clients
@@ -271,6 +278,9 @@ toCmd broadcastCmd toFrontendCmd toBackendCmd effect =
 
         Effect.Internal.SendToFrontend (Effect.Internal.ClientId clientId) toFrontend ->
             toFrontendCmd clientId toFrontend
+
+        Effect.Internal.SendToFrontends (Effect.Internal.SessionId sessionId) toFrontend ->
+            toFrontendCmd sessionId toFrontend
 
         Effect.Internal.FileDownloadUrl { href } ->
             File.Download.url href

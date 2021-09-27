@@ -85,6 +85,7 @@ type Command restriction toMsg msg
     | Task (Task restriction msg msg)
     | Port String (Json.Encode.Value -> Cmd msg) Json.Encode.Value
     | SendToFrontend ClientId toMsg
+    | SendToFrontends SessionId toMsg
     | Broadcast toMsg
     | FileDownloadUrl { href : String }
     | FileDownloadString { name : String, mimeType : String, content : String }
