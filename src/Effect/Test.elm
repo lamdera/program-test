@@ -26,8 +26,8 @@ import Bytes exposing (Bytes)
 import Bytes.Decode
 import Bytes.Encode
 import Duration exposing (Duration)
+import Effect.Browser.Navigation
 import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
-import Effect.File as File
 import Effect.Http exposing (Body)
 import Effect.Internal exposing (Command(..), File, NavigationKey(..), Task(..))
 import Effect.Lamdera exposing (ClientId, SessionId)
@@ -320,7 +320,7 @@ startTime =
 
 {-| -}
 type alias FrontendApp toBackend frontendMsg frontendModel toFrontend =
-    { init : Url -> NavigationKey -> ( frontendModel, Command FrontendOnly toBackend frontendMsg )
+    { init : Url -> Effect.Browser.Navigation.Key -> ( frontendModel, Command FrontendOnly toBackend frontendMsg )
     , onUrlRequest : UrlRequest -> frontendMsg
     , onUrlChange : Url -> frontendMsg
     , update : frontendMsg -> frontendModel -> ( frontendModel, Command FrontendOnly toBackend frontendMsg )
@@ -474,7 +474,7 @@ connectFrontend frontendApp backendApp sessionId url andThenFunc =
                     "clientId " ++ String.fromInt state.counter |> Effect.Lamdera.clientIdFromString
 
                 ( frontend, effects ) =
-                    frontendApp.init url MockNavigationKey
+                    frontendApp.init url (Effect.Browser.Navigation.fromInternalKey MockNavigationKey)
 
                 subscriptions =
                     frontendApp.subscriptions frontend

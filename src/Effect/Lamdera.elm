@@ -1,8 +1,8 @@
-module Effect.Lamdera exposing (frontend, backend, sendToBackend, sendToFrontend, sendToFrontends, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString, Url, Document, Key, UrlRequest)
+module Effect.Lamdera exposing (frontend, backend, sendToBackend, sendToFrontend, sendToFrontends, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString)
 
 {-| backend
 
-@docs frontend, backend, sendToBackend, sendToFrontend, sendToFrontends, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString, Url, Document, Key, UrlRequest
+@docs frontend, backend, sendToBackend, sendToFrontend, sendToFrontends, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString
 
 -}
 
@@ -33,16 +33,16 @@ import Url
 frontend :
     (toBackend -> Cmd frontendMsg)
     ->
-        { init : Url.Url -> Key -> ( model, Command FrontendOnly toBackend frontendMsg )
+        { init : Url.Url -> Effect.Browser.Navigation.Key -> ( model, Command FrontendOnly toBackend frontendMsg )
         , view : model -> Browser.Document frontendMsg
         , update : frontendMsg -> model -> ( model, Command FrontendOnly toBackend frontendMsg )
         , updateFromBackend : toFrontend -> model -> ( model, Command FrontendOnly toBackend frontendMsg )
         , subscriptions : model -> Subscription FrontendOnly frontendMsg
         , onUrlRequest : Browser.UrlRequest -> frontendMsg
-        , onUrlChange : Url -> frontendMsg
+        , onUrlChange : Url.Url -> frontendMsg
         }
     ->
-        { init : Url -> Browser.Navigation.Key -> ( model, Cmd frontendMsg )
+        { init : Url.Url -> Browser.Navigation.Key -> ( model, Cmd frontendMsg )
         , view : model -> Browser.Document frontendMsg
         , update : frontendMsg -> model -> ( model, Cmd frontendMsg )
         , updateFromBackend : toFrontend -> model -> ( model, Cmd frontendMsg )
@@ -182,30 +182,6 @@ clientIdFromString =
 clientIdToString : ClientId -> String
 clientIdToString (ClientId clientId) =
     clientId
-
-
-{-| Alias of elm/url:Url.Url
--}
-type alias Url =
-    Url.Url
-
-
-{-| Alias of elm/browser:Browser.Document
--}
-type alias Document msg =
-    Browser.Document msg
-
-
-{-| Alias of elm/browser:Browser.UrlRequest
--}
-type alias UrlRequest =
-    Browser.UrlRequest
-
-
-{-| Alias of elm/browser:Browser.Navigation.Key
--}
-type alias Key =
-    Effect.Browser.Navigation.Key
 
 
 toCmd : (toMsg -> Cmd msg) -> (String -> toMsg -> Cmd msg) -> (toMsg -> Cmd msg) -> Command restriction toMsg msg -> Cmd msg
