@@ -1,6 +1,6 @@
 module Effect.Test exposing
     ( testApp, TestApp, FrontendApp, BackendApp, HttpRequest, PortToJs
-    , connectFrontend, disconnectFrontend, reconnectFrontend, clickButton, inputText, keyDownEvent, clickLink, sendToBackend, fastForward, simulateTime, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
+    , sendToBackend, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
     , checkState, checkFrontend, checkBackend, toExpectation
     )
 
@@ -10,7 +10,7 @@ module Effect.Test exposing
 
 Control the simulation
 
-@docs connectFrontend, disconnectFrontend, reconnectFrontend, clickButton, inputText, keyDownEvent, clickLink, sendToBackend, fastForward, simulateTime, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
+@docs sendToBackend, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
 
 Test the simulation
 
@@ -349,10 +349,22 @@ type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg bac
         -> (( Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, ClientId ) -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    , keyDownEvent : ClientId -> String -> Int -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    , clickButton : ClientId -> String -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    , inputText : ClientId -> String -> String -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    , clickLink : ClientId -> String -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , keyDownEvent :
+        { clientId : ClientId, htmlId : String, keyCode : Int }
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , clickButton :
+        { clientId : ClientId, htmlId : String }
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , inputText :
+        { clientId : ClientId, htmlId : String, text : String }
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , clickLink :
+        { clientId : ClientId, href : String }
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , checkView : ClientId -> (Test.Html.Query.Single frontendMsg -> Expectation) -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     }
 
@@ -516,8 +528,12 @@ connectFrontend frontendApp backendApp sessionId url andThenFunc =
 
 
 {-| -}
-keyDownEvent : FrontendApp toBackend frontendMsg frontendModel toFrontend -> ClientId -> String -> Int -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-keyDownEvent frontendApp clientId htmlId keyCode state =
+keyDownEvent :
+    FrontendApp toBackend frontendMsg frontendModel toFrontend
+    -> { clientId : ClientId, htmlId : String, keyCode : Int }
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+keyDownEvent frontendApp { clientId, htmlId, keyCode } state =
     userEvent
         frontendApp
         ("Key down " ++ String.fromInt keyCode)
@@ -528,14 +544,22 @@ keyDownEvent frontendApp clientId htmlId keyCode state =
 
 
 {-| -}
-clickButton : FrontendApp toBackend frontendMsg frontendModel toFrontend -> ClientId -> String -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickButton frontendApp clientId htmlId state =
+clickButton :
+    FrontendApp toBackend frontendMsg frontendModel toFrontend
+    -> { clientId : ClientId, htmlId : String }
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+clickButton frontendApp { clientId, htmlId } state =
     userEvent frontendApp "Click button" clientId htmlId Test.Html.Event.click state
 
 
 {-| -}
-inputText : FrontendApp toBackend frontendMsg frontendModel toFrontend -> ClientId -> String -> String -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-inputText frontendApp clientId htmlId text state =
+inputText :
+    FrontendApp toBackend frontendMsg frontendModel toFrontend
+    -> { clientId : ClientId, htmlId : String, text : String }
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+inputText frontendApp { clientId, htmlId, text } state =
     userEvent frontendApp ("Input text \"" ++ text ++ "\"") clientId htmlId (Test.Html.Event.input text) state
 
 
@@ -559,11 +583,10 @@ normalizeUrl domainUrl path =
 {-| -}
 clickLink :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> ClientId
-    -> String
+    -> { clientId : ClientId, href : String }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickLink frontendApp clientId href =
+clickLink frontendApp { clientId, href } =
     NextStep
         ("Click link " ++ href)
         (\state ->
@@ -738,7 +761,12 @@ reconnectFrontend backendApp frontendState state =
 {-| Normally you won't send data directly to the backend and instead use `connectFrontend` followed by things like `clickButton` or `inputText` to cause the frontend to send data to the backend.
 If you do need to send data directly, then you can use this though.
 -}
-sendToBackend : SessionId -> ClientId -> toBackend -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+sendToBackend :
+    SessionId
+    -> ClientId
+    -> toBackend
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 sendToBackend sessionId clientId toBackend =
     NextStep "Send to backend"
         (\state ->
