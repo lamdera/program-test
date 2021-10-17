@@ -182,7 +182,11 @@ checkBackend checkFunc =
 
 
 {-| -}
-checkFrontend : ClientId -> (frontendModel -> Result String ()) -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+checkFrontend :
+    ClientId
+    -> (frontendModel -> Result String ())
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 checkFrontend clientId checkFunc =
     NextStep
         "Check frontend"
@@ -204,7 +208,10 @@ checkFrontend clientId checkFunc =
         )
 
 
-addTestError : String -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+addTestError :
+    String
+    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 addTestError error state =
     { state | testErrors = state.testErrors ++ [ error ] }
 
