@@ -1,4 +1,4 @@
-module Effect.Snapshot exposing (PercyApiKey(..), snapshot)
+module Effect.Snapshot exposing (PercyApiKey(..), PublicFiles, Snapshot, uploadSnapshots)
 
 import Base64
 import Bytes exposing (Bytes)
@@ -14,11 +14,11 @@ import Test.Html.Query.Internal
 import Url
 import Url.Builder
 
-
+{-| Name of the snapshot and the html in it to be diffed. -}
 type alias Snapshot msg =
     { name : String, html : Html msg }
 
-
+{-| Files in your public folder such as `images/profile-image.png` or `favicon.ico`. -}
 type alias PublicFiles =
     { filepath : String
     , content : Bytes
@@ -33,9 +33,9 @@ htmlToString html =
                 >> Test.Html.Query.Internal.prettyPrint
             )
 
-
-snapshot : PercyApiKey -> Nonempty (Snapshot msg) -> List PublicFiles -> Task Http.Error FinalizeResponse
-snapshot apiKey snapshots publicFiles =
+{-| Upload snapshots to Percy.io for visual regression testing. You'll need to create an account first in order to get an API key. -}
+uploadSnapshots : PercyApiKey -> Nonempty (Snapshot msg) -> List PublicFiles -> Task Http.Error FinalizeResponse
+uploadSnapshots apiKey snapshots publicFiles =
     let
         publicFiles_ =
             List.map (\file -> ( SHA256.fromBytes file.content, file )) publicFiles
@@ -263,7 +263,7 @@ encodeCreateSnapshot data =
           )
         ]
 
-
+{-| An API key needed to upload snapshots to Percy.io. Create an account first in order to get an API key. -}
 type PercyApiKey
     = PercyApiKey String
 
