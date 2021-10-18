@@ -14,11 +14,15 @@ import Test.Html.Query.Internal
 import Url
 import Url.Builder
 
-{-| Name of the snapshot and the html in it to be diffed. -}
+
+{-| Name of the snapshot and the html in it to be diffed.
+-}
 type alias Snapshot msg =
     { name : String, html : Html msg }
 
-{-| Files in your public folder such as `images/profile-image.png` or `favicon.ico`. -}
+
+{-| Files in your public folder such as `images/profile-image.png` or `favicon.ico`.
+-}
 type alias PublicFiles =
     { filepath : String
     , content : Bytes
@@ -33,9 +37,35 @@ htmlToString html =
                 >> Test.Html.Query.Internal.prettyPrint
             )
 
-{-| Upload snapshots to Percy.io for visual regression testing. You'll need to create an account first in order to get an API key. -}
-uploadSnapshots : PercyApiKey -> Nonempty (Snapshot msg) -> List PublicFiles -> Task Http.Error FinalizeResponse
-uploadSnapshots apiKey snapshots publicFiles =
+
+{-| Upload snapshots to Percy.io for visual regression testing. You'll need to create an account first in order to get an API key.
+
+    import Effect.Snapshot exposing (PercyApiKey(..))
+    import List.Nonempty exposing (Nonempty(..))
+    import MyLogin
+
+    heroBannerBytes =
+        ...
+
+    a =
+        uploadSnapshots
+            { apiKey = PercyApiKey "my api token"
+            , gitBranch = "my-feature-branch"
+            , gitTargetBranch = "main"
+            , snapshots = Nonempty { name = "Login page", html = MyLogin.view } []
+            , publicFiles = [ { filepath = "hero-banner.png", content = heroBannerBytes } ]
+            }
+
+-}
+uploadSnapshots :
+    { apiKey : PercyApiKey
+    , gitBranch : String
+    , gitTargetBranch : String
+    , snapshots : Nonempty (Snapshot msg)
+    , publicFiles : List PublicFiles
+    }
+    -> Task Http.Error FinalizeResponse
+uploadSnapshots { apiKey, gitBranch, gitTargetBranch, snapshots, publicFiles } =
     let
         publicFiles_ =
             List.map (\file -> ( SHA256.fromBytes file.content, file )) publicFiles
@@ -43,8 +73,8 @@ uploadSnapshots apiKey snapshots publicFiles =
     createBuild
         apiKey
         { attributes =
-            { branch = "main"
-            , targetBranch = "main"
+            { branch = gitBranch
+            , targetBranch = gitTargetBranch
             }
         , relationships = { resources = { data = [] } }
         }
@@ -263,7 +293,9 @@ encodeCreateSnapshot data =
           )
         ]
 
-{-| An API key needed to upload snapshots to Percy.io. Create an account first in order to get an API key. -}
+
+{-| An API key needed to upload snapshots to Percy.io. Create an account first in order to get an API key.
+-}
 type PercyApiKey
     = PercyApiKey String
 
