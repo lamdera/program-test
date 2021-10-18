@@ -1,46 +1,46 @@
-module Snapshot exposing (..)
+module Effect.Snapshot exposing (PercyApiKey(..), snapshot)
 
 import Base64
-import Browser
 import Bytes exposing (Bytes)
-import Html exposing (Html, text)
+import Html exposing (Html)
 import Http
 import Json.Decode exposing (Decoder)
 import Json.Encode
 import List.Nonempty exposing (Nonempty(..))
 import SHA256
 import Task exposing (Task)
+import Test.Html.Internal.Inert
+import Test.Html.Query.Internal
+import Url
 import Url.Builder
 
 
-type Msg
-    = PercyResponse (Result Http.Error FinalizeResponse)
+type alias Snapshot msg =
+    { name : String, html : Html msg }
 
 
-main : Program () {} Msg
-main =
-    Browser.element
-        { init =
-            \_ ->
-                ( {}
-                , run ""
-                    |> Task.attempt PercyResponse
-                )
-        , update =
-            \msg _ ->
-                let
-                    _ =
-                        Debug.log "result" msg
-                in
-                ( {}, Cmd.none )
-        , view = \_ -> Html.text "test"
-        , subscriptions = \_ -> Sub.none
-        }
+type alias PublicFiles =
+    { filepath : String
+    , content : Bytes
+    }
 
 
-run : PercyApiKey -> Html msg -> Task Http.Error FinalizeResponse
-run apiKey html =
-    build
+htmlToString : Html msg -> Result String String
+htmlToString html =
+    Test.Html.Internal.Inert.fromHtml html
+        |> Result.map
+            (Test.Html.Internal.Inert.toElmHtml
+                >> Test.Html.Query.Internal.prettyPrint
+            )
+
+
+snapshot : PercyApiKey -> Nonempty (Snapshot msg) -> List PublicFiles -> Task Http.Error FinalizeResponse
+snapshot apiKey snapshots publicFiles =
+    let
+        publicFiles_ =
+            List.map (\file -> ( SHA256.fromBytes file.content, file )) publicFiles
+    in
+    createBuild
         apiKey
         { attributes =
             { branch = "main"
@@ -50,38 +50,82 @@ run apiKey html =
         }
         |> Task.andThen
             (\{ data } ->
-                let
-                    digest =
-                        SHA256.fromString html
-                in
-                createSnapshot
-                    apiKey
-                    data.id
-                    { name = "test"
-                    , widths = Nonempty 500 []
-                    , minHeight = Nothing
-                    , resources =
-                        Nonempty
-                            { id = digest
-                            , attributes =
-                                { resourceUrl = "/index.html"
-                                , isRoot = True
-                                , mimeType = "text/html"
+                List.Nonempty.toList snapshots
+                    |> List.map
+                        (\snapshot_ ->
+                            let
+                                hash : SHA256.Digest
+                                hash =
+                                    SHA256.fromString htmlString
+
+                                htmlString : String
+                                htmlString =
+                                    "<!DOCTYPE html>\n<html><head></head><body>"
+                                        ++ Result.withDefault
+                                            "Something went wrong when converting this Html into a String. Please file a github issue with what the Html looked like."
+                                            (htmlToString snapshot_.html)
+                                        ++ "</body></html>"
+
+                                filesToUpload =
+                                    List.filter
+                                        (\( _, file ) -> String.contains file.filepath htmlString)
+                                        publicFiles_
+                            in
+                            createSnapshot
+                                apiKey
+                                data.buildId
+                                { name = snapshot_.name
+                                , widths = Nonempty 500 []
+                                , minHeight = Nothing
+                                , resources =
+                                    Nonempty
+                                        { id = hash
+                                        , attributes =
+                                            { resourceUrl = "/index.html"
+                                            , isRoot = True
+                                            , mimeType = Just "text/html"
+                                            }
+                                        }
+                                        (List.map
+                                            (\( fileHash, file ) ->
+                                                { id = fileHash
+                                                , attributes =
+                                                    { resourceUrl =
+                                                        List.map Url.percentEncode (String.split "/" file.filepath)
+                                                            |> String.join "/"
+                                                            |> (++) "/"
+                                                    , isRoot = False
+                                                    , mimeType = Nothing
+                                                    }
+                                                }
+                                            )
+                                            filesToUpload
+                                        )
                                 }
-                            }
-                            []
-                    }
-                    |> Task.andThen (\_ -> uploadResource apiKey data.id html)
-                    |> Task.andThen (\_ -> finalize apiKey data.id)
+                                |> Task.andThen
+                                    (\_ ->
+                                        uploadResource apiKey data.buildId hash htmlString
+                                            :: List.map
+                                                (\( fileHash, file ) ->
+                                                    uploadResourceBytes apiKey data.buildId fileHash file.content
+                                                )
+                                                filesToUpload
+                                            |> Task.sequence
+                                    )
+                        )
+                    |> Task.sequence
+                    |> Task.andThen (\_ -> finalize apiKey data.buildId)
             )
 
 
 type alias SnapshotResource =
     { id : SHA256.Digest
     , attributes :
-        { resourceUrl : String
-        , isRoot : Bool
-        , mimeType : String
+        { -- resource filepath (probably the filepath that will be used within the webpage)
+          resourceUrl : String
+        , -- True if this is the html text
+          isRoot : Bool
+        , mimeType : Maybe String
         }
     }
 
@@ -91,29 +135,60 @@ percyApiDomain =
     "https://percy.io/api/v1"
 
 
-uploadResource : PercyApiKey -> BuildId -> String -> Task Http.Error ()
-uploadResource (PercyApiKey apiKey) (BuildId buildId) content =
+uploadResource : PercyApiKey -> BuildId -> SHA256.Digest -> String -> Task Http.Error ()
+uploadResource (PercyApiKey apiKey) (BuildId buildId) hash content =
     Http.task
         { method = "POST"
         , headers = [ Http.header "Authorization" ("Token " ++ apiKey) ]
         , url = Url.Builder.crossOrigin percyApiDomain [ "builds", buildId, "resources" ] []
-        , body = Http.jsonBody (encodeUploadResource content)
+        , body = Http.jsonBody (encodeUploadResource hash content)
         , resolver = Http.stringResolver (resolver (Json.Decode.succeed ()))
         , timeout = Nothing
         }
 
 
-encodeUploadResource : String -> Json.Encode.Value
-encodeUploadResource content =
+uploadResourceBytes : PercyApiKey -> BuildId -> SHA256.Digest -> Bytes -> Task Http.Error ()
+uploadResourceBytes (PercyApiKey apiKey) (BuildId buildId) hash content =
+    Http.task
+        { method = "POST"
+        , headers = [ Http.header "Authorization" ("Token " ++ apiKey) ]
+        , url = Url.Builder.crossOrigin percyApiDomain [ "builds", buildId, "resources" ] []
+        , body = Http.jsonBody (encodeUploadResourceBytes hash content)
+        , resolver = Http.stringResolver (resolver (Json.Decode.succeed ()))
+        , timeout = Nothing
+        }
+
+
+encodeUploadResource : SHA256.Digest -> String -> Json.Encode.Value
+encodeUploadResource hash content =
     Json.Encode.object
         [ ( "data"
           , Json.Encode.object
                 [ ( "type", Json.Encode.string "resources" )
-                , ( "id", SHA256.fromString content |> SHA256.toHex |> Json.Encode.string )
+                , ( "id", SHA256.toHex hash |> Json.Encode.string )
                 , ( "attributes"
                   , Json.Encode.object
                         [ ( "base64-content"
                           , Base64.fromString content |> Maybe.withDefault "" |> Json.Encode.string
+                          )
+                        ]
+                  )
+                ]
+          )
+        ]
+
+
+encodeUploadResourceBytes : SHA256.Digest -> Bytes -> Json.Encode.Value
+encodeUploadResourceBytes hash content =
+    Json.Encode.object
+        [ ( "data"
+          , Json.Encode.object
+                [ ( "type", Json.Encode.string "resources" )
+                , ( "id", SHA256.toHex hash |> Json.Encode.string )
+                , ( "attributes"
+                  , Json.Encode.object
+                        [ ( "base64-content"
+                          , Base64.fromBytes content |> Maybe.withDefault "" |> Json.Encode.string
                           )
                         ]
                   )
@@ -158,11 +233,15 @@ encodeCreateSnapshot data =
                 , ( "attributes"
                   , Json.Encode.object
                         [ ( "name", Json.Encode.string data.name )
-                        , ( "widths", Json.Encode.null )
+                        , ( "widths"
+                          , List.Nonempty.toList data.widths
+                                |> List.map (clamp 10 2000)
+                                |> Json.Encode.list Json.Encode.int
+                          )
                         , ( "minimum-height"
                           , case data.minHeight of
                                 Just minHeight ->
-                                    Json.Encode.int minHeight
+                                    Json.Encode.int (clamp 10 2000 minHeight)
 
                                 Nothing ->
                                     Json.Encode.null
@@ -206,7 +285,7 @@ type BuildId
 
 
 type alias BuildResponse =
-    { data : { id : BuildId }
+    { data : { buildId : BuildId }
     }
 
 
@@ -215,7 +294,7 @@ buildResponseCodec =
     Json.Decode.map BuildResponse
         (Json.Decode.field
             "data"
-            (Json.Decode.map (\id -> { id = id })
+            (Json.Decode.map (\id -> { buildId = id })
                 (Json.Decode.field "id" buildIdCodec)
             )
         )
@@ -263,14 +342,24 @@ encodeResource resource =
           , Json.Encode.object
                 [ ( "resource-url", Json.Encode.string resource.attributes.resourceUrl )
                 , ( "is-root", Json.Encode.bool resource.attributes.isRoot )
-                , ( "mimetype", Json.Encode.string resource.attributes.mimeType )
+                , ( "mimetype", encodeMaybe Json.Encode.string resource.attributes.mimeType )
                 ]
           )
         ]
 
 
-build : PercyApiKey -> BuildData -> Task Http.Error BuildResponse
-build (PercyApiKey apiKey) buildData =
+encodeMaybe : (a -> Json.Encode.Value) -> Maybe a -> Json.Encode.Value
+encodeMaybe encoder maybe =
+    case maybe of
+        Just value ->
+            encoder value
+
+        Nothing ->
+            Json.Encode.null
+
+
+createBuild : PercyApiKey -> BuildData -> Task Http.Error BuildResponse
+createBuild (PercyApiKey apiKey) buildData =
     Http.task
         { method = "POST"
         , headers = [ Http.header "Authorization" ("Token " ++ apiKey) ]
