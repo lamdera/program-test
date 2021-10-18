@@ -18,6 +18,7 @@
         "Effect.Task",
         "Effect.Time",
         "Effect.Process",
+        "Effect.Snapshot",
         "Effect.Subscription",
         "Effect.Test"
     ],
