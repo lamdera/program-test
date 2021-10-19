@@ -2,6 +2,7 @@ module Effect.Test exposing
     ( testApp, TestApp, FrontendApp, BackendApp, HttpRequest, PortToJs
     , sendToBackend, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
     , checkState, checkFrontend, checkBackend, toExpectation
+    , fakeNavigationKey
     )
 
 {-| Setting up the simulation
@@ -15,6 +16,10 @@ Control the simulation
 Test the simulation
 
 @docs checkState, checkFrontend, checkBackend, toExpectation
+
+Miscellaneous
+
+@docs fakeNavigationKey
 
 -}
 
@@ -83,6 +88,13 @@ type alias HttpRequest =
     , body : HttpBody
     , headers : List ( String, String )
     }
+
+
+{-| Only use this for tests!
+-}
+fakeNavigationKey : Effect.Browser.Navigation.Key
+fakeNavigationKey =
+    Effect.Browser.Navigation.fromInternalKey Effect.Internal.MockNavigationKey
 
 
 httpBodyFromInternal body =
@@ -316,6 +328,7 @@ type alias FrontendState toBackend frontendMsg frontendModel toFrontend =
     , clipboard : String
     , timers : Dict Duration { msg : Time.Posix -> frontendMsg, startTime : Time.Posix }
     , url : Url
+    , windowSize : { width : Int, height : Int }
     }
 
 
@@ -353,6 +366,7 @@ type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg bac
     , connectFrontend :
         SessionId
         -> Url
+        -> { width : Int, height : Int }
         -> (( Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, ClientId ) -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -372,7 +386,11 @@ type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg bac
         { clientId : ClientId, href : String }
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    , checkView : ClientId -> (Test.Html.Query.Single frontendMsg -> Expectation) -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , checkView :
+        ClientId
+        -> (Test.Html.Query.Single frontendMsg -> Expectation)
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     }
 
 
@@ -482,10 +500,11 @@ connectFrontend :
     -> BackendApp toBackend toFrontend backendMsg backendModel
     -> SessionId
     -> Url
+    -> { width : Int, height : Int }
     -> (( Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, ClientId ) -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-connectFrontend frontendApp backendApp sessionId url andThenFunc =
+connectFrontend frontendApp backendApp sessionId url windowSize andThenFunc =
     AndThen
         (\state ->
             let
@@ -520,6 +539,7 @@ connectFrontend frontendApp backendApp sessionId url andThenFunc =
                                 , clipboard = ""
                                 , timers = getTimers (Duration.addTo startTime state.elapsedTime) subscriptions
                                 , url = url
+                                , windowSize = windowSize
                                 }
                                 state.frontends
                         , counter = state.counter + 1
@@ -1449,7 +1469,29 @@ runTask maybeClientId frontendApp state task =
             getTimeZoneName (Time.Offset 0) |> runTask maybeClientId frontendApp state
 
         GetViewport function ->
-            function { scene = { width = 1920, height = 1080 }, viewport = { x = 0, y = 0, width = 1920, height = 1080 } }
+            (case maybeClientId of
+                Just clientId ->
+                    case Dict.get clientId state.frontends of
+                        Just frontend ->
+                            function
+                                { scene =
+                                    { width = toFloat frontend.windowSize.width
+                                    , height = toFloat frontend.windowSize.height
+                                    }
+                                , viewport =
+                                    { x = 0
+                                    , y = 0
+                                    , width = toFloat frontend.windowSize.width
+                                    , height = toFloat frontend.windowSize.height
+                                    }
+                                }
+
+                        Nothing ->
+                            function { scene = { width = 1920, height = 1080 }, viewport = { x = 0, y = 0, width = 1920, height = 1080 } }
+
+                Nothing ->
+                    function { scene = { width = 1920, height = 1080 }, viewport = { x = 0, y = 0, width = 1920, height = 1080 } }
+            )
                 |> runTask maybeClientId frontendApp state
 
         SetViewport _ _ function ->
@@ -1515,6 +1557,14 @@ runTask maybeClientId frontendApp state task =
             getDomTask frontendApp maybeClientId state htmlId function ()
 
 
+getDomTask :
+    FrontendApp toBackend frontendMsg frontendModel toFrontend
+    -> Maybe ClientId
+    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> String
+    -> (Result Effect.Internal.BrowserDomError value -> Task restriction x x)
+    -> value
+    -> ( State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, x )
 getDomTask frontendApp maybeClientId state htmlId function value =
     (case Maybe.andThen (\clientId -> Dict.get clientId state.frontends) maybeClientId of
         Just frontend ->
