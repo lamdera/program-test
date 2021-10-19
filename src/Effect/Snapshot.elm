@@ -1,4 +1,11 @@
-module Effect.Snapshot exposing (PercyApiKey(..), PublicFiles, Snapshot, uploadSnapshots)
+module Effect.Snapshot exposing (uploadSnapshots, PercyApiKey(..), Snapshot, PublicFiles)
+
+{-| Upload snapshots to Percy.io for visual regression testing.
+You'll need to create an account first in order to get an API key.
+
+@docs uploadSnapshots, PercyApiKey, Snapshot, PublicFiles
+
+-}
 
 import Base64
 import Bytes exposing (Bytes)
@@ -38,7 +45,8 @@ htmlToString html =
             )
 
 
-{-| Upload snapshots to Percy.io for visual regression testing. You'll need to create an account first in order to get an API key.
+{-| Upload snapshots to Percy.io for visual regression testing.
+You'll need to create an account first in order to get an API key.
 
     import Effect.Snapshot exposing (PercyApiKey(..))
     import List.Nonempty exposing (Nonempty(..))
