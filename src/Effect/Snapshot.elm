@@ -1,9 +1,9 @@
-module Effect.Snapshot exposing (uploadSnapshots, PercyApiKey(..), Snapshot, PublicFiles)
+module Effect.Snapshot exposing (uploadSnapshots, PercyApiKey(..), Snapshot, PublicFile, Response)
 
 {-| Upload snapshots to Percy.io for visual regression testing.
 You'll need to create an account first in order to get an API key.
 
-@docs uploadSnapshots, PercyApiKey, Snapshot, PublicFiles
+@docs uploadSnapshots, PercyApiKey, Snapshot, PublicFile, Response
 
 -}
 
@@ -23,14 +23,17 @@ import Url.Builder
 
 
 {-| Name of the snapshot and the html in it to be diffed.
+`widths` specify what widths you want the html to be rendered at.
+`minimumHeight` is the minimum height in pixels of the rendered html (it will be taller if the html doesn't fit).
+If you set `minimumHeight` to Nothing then it's always the default height of the rendered html.
 -}
 type alias Snapshot msg =
-    { name : String, html : Html msg }
+    { name : String, html : Html msg, widths : Nonempty Int, minimumHeight : Maybe Int }
 
 
 {-| Files in your public folder such as `images/profile-image.png` or `favicon.ico`.
 -}
-type alias PublicFiles =
+type alias PublicFile =
     { filepath : String
     , content : Bytes
     }
@@ -70,9 +73,9 @@ uploadSnapshots :
     , gitBranch : String
     , gitTargetBranch : String
     , snapshots : Nonempty (Snapshot msg)
-    , publicFiles : List PublicFiles
+    , publicFiles : List PublicFile
     }
-    -> Task Http.Error FinalizeResponse
+    -> Task Http.Error Response
 uploadSnapshots { apiKey, gitBranch, gitTargetBranch, snapshots, publicFiles } =
     let
         publicFiles_ =
@@ -113,8 +116,8 @@ uploadSnapshots { apiKey, gitBranch, gitTargetBranch, snapshots, publicFiles } =
                                 apiKey
                                 data.buildId
                                 { name = snapshot_.name
-                                , widths = Nonempty 500 []
-                                , minHeight = Nothing
+                                , widths = snapshot_.widths
+                                , minHeight = snapshot_.minimumHeight
                                 , resources =
                                     Nonempty
                                         { id = hash
@@ -435,7 +438,7 @@ resolver codec =
                         Json.Decode.errorToString error |> Http.BadBody |> Err
 
 
-finalize : PercyApiKey -> BuildId -> Task Http.Error FinalizeResponse
+finalize : PercyApiKey -> BuildId -> Task Http.Error Response
 finalize (PercyApiKey apiKey) (BuildId buildId) =
     Http.task
         { method = "POST"
@@ -447,11 +450,13 @@ finalize (PercyApiKey apiKey) (BuildId buildId) =
         }
 
 
-type alias FinalizeResponse =
+{-| Response from server after we upload snapshots.
+-}
+type alias Response =
     { success : Bool }
 
 
-finalizeResponseCodec : Decoder FinalizeResponse
+finalizeResponseCodec : Decoder Response
 finalizeResponseCodec =
-    Json.Decode.map FinalizeResponse
+    Json.Decode.map Response
         (Json.Decode.field "success" Json.Decode.bool)
