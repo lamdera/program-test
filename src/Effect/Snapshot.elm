@@ -101,11 +101,18 @@ uploadSnapshots { apiKey, gitBranch, gitTargetBranch, snapshots, publicFiles } =
 
                                 htmlString : String
                                 htmlString =
-                                    "<!DOCTYPE html>\n<html><head></head><body>"
+                                    """<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, minimum-scale=1.0">
+    </head>
+    <body>
+        """
                                         ++ Result.withDefault
                                             "Something went wrong when converting this Html into a String. Please file a github issue with what the Html looked like."
                                             (htmlToString snapshot_.html)
-                                        ++ "</body></html>"
+                                        ++ "    </body>\n</html>"
 
                                 filesToUpload =
                                     List.filter
