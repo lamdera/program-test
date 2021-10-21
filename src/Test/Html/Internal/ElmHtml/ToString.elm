@@ -115,7 +115,11 @@ nodeRecordToString options { tag, children, facts } =
                     styleValues
                         |> List.map (\( key, value ) -> key ++ ":" ++ value ++ ";")
                         |> String.join ""
-                        |> (\styleString -> "style=\"" ++ styleString ++ "\"")
+                        |> (\styleString ->
+                                "style=\""
+                                    ++ String.replace "\"" "&quot;" styleString
+                                    ++ "\""
+                           )
                         |> Just
 
         classes =
