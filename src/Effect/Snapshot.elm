@@ -9,6 +9,7 @@ You'll need to create an account first in order to get an API key.
 
 import Base64
 import Bytes exposing (Bytes)
+import Dict
 import Html exposing (Html)
 import Http
 import Json.Decode exposing (Decoder)
@@ -174,15 +175,22 @@ uploadSnapshots { apiKey, gitBranch, gitTargetBranch, snapshots, publicFiles } =
                                                 data.buildId
                                                 hash
                                                 (Base64.fromString htmlString |> Maybe.withDefault "")
-                                                :: List.map
-                                                    (\{ contentHash, base64Content } ->
-                                                        uploadResource apiKey data.buildId contentHash base64Content
-                                                    )
-                                                    filesToUpload
-                                                |> Task.sequence
+                                                |> Task.andThen (\_ -> Task.succeed filesToUpload)
                                         )
                             )
                         |> Task.sequence
+                        |> Task.andThen
+                            (\filesToUpload ->
+                                List.concat filesToUpload
+                                    |> List.map (\a -> ( SHA256.toHex a.contentHash, a ))
+                                    |> Dict.fromList
+                                    |> Dict.toList
+                                    |> List.map
+                                        (\( _, { contentHash, base64Content } ) ->
+                                            uploadResource apiKey data.buildId contentHash base64Content
+                                        )
+                                    |> Task.sequence
+                            )
                         |> Task.andThen (\_ -> finalize apiKey data.buildId)
                 )
 
