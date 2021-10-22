@@ -1,21 +1,21 @@
 module Effect.Test exposing
-    ( testApp, TestApp, FrontendApp, BackendApp, HttpRequest, PortToJs
-    , sendToBackend, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
-    , checkState, checkFrontend, checkBackend, toExpectation
+    ( testApp, TestApp, FrontendApp, BackendApp, HttpRequest, RequestedBy(..), PortToJs
+    , FrontendActions, sendToBackend, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
+    , checkState, checkBackend, toExpectation
     , fakeNavigationKey
     )
 
 {-| Setting up the simulation
 
-@docs testApp, TestApp, FrontendApp, BackendApp, HttpRequest, PortToJs
+@docs testApp, TestApp, FrontendApp, BackendApp, HttpRequest, RequestedBy, PortToJs
 
 Control the simulation
 
-@docs sendToBackend, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
+@docs FrontendActions, sendToBackend, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
 
 Test the simulation
 
-@docs checkState, checkFrontend, checkBackend, toExpectation
+@docs checkState, checkBackend, toExpectation
 
 Miscellaneous
 
@@ -65,10 +65,10 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
     , testErrors : List String
     , httpRequests : List HttpRequest
     , handleHttpRequest :
-        { currentRequest : HttpRequest, httpRequests : List HttpRequest }
+        { currentRequest : HttpRequest, pastRequests : List HttpRequest }
         -> Effect.Http.Response Bytes
     , handlePortToJs :
-        { currentRequest : PortToJs, portRequests : List PortToJs }
+        { currentRequest : PortToJs, pastRequests : List PortToJs }
         -> Maybe ( String, Json.Decode.Value )
     , portRequests : List PortToJs
     , handleFileRequest : { mimeTypes : List String } -> Maybe Effect.Internal.File
@@ -78,16 +78,24 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
 
 {-| -}
 type alias PortToJs =
-    { portName : String, value : Json.Encode.Value }
+    { clientId : ClientId, portName : String, value : Json.Encode.Value }
 
 
 {-| -}
 type alias HttpRequest =
-    { method : String
+    { requestedBy : RequestedBy
+    , method : String
     , url : String
     , body : HttpBody
     , headers : List ( String, String )
     }
+
+
+{-| Who made this http request?
+-}
+type RequestedBy
+    = RequestedByFrontend ClientId
+    | RequestedByBackend
 
 
 {-| Only use this for tests!
@@ -367,28 +375,59 @@ type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg bac
         SessionId
         -> Url
         -> { width : Int, height : Int }
-        -> (( Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, ClientId ) -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+        ->
+            (( Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+             , FrontendActions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+             )
+             -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+            )
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    }
+
+
+{-| This record contains functions you can run for a frontend you have connected.
+
+    import Effect.Test
+
+    testApp = Effect.Test.testApp ...
+
+    test =
+        test "myButton is clickable" <|
+            \_ ->
+                testApp.init
+                    |> testApp.connectFrontend
+                        sessionId0
+                        myDomain
+                        { width = 1920, height = 1080 }
+                        (\( state, frontendActions ) ->
+                            -- frontendActions is a record we can use on this specific frontend we just connected
+                            state
+                                |> frontendActions.clickButton { htmlId = "myButton" }
+                        )
+                    |> Effect.Test.toExpectation
+
+-}
+type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
+    { clientId : ClientId
     , keyDownEvent :
-        { clientId : ClientId, htmlId : String, keyCode : Int }
+        { htmlId : String, keyCode : Int }
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , clickButton :
-        { clientId : ClientId, htmlId : String }
+        { htmlId : String }
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , inputText :
-        { clientId : ClientId, htmlId : String, text : String }
+        { htmlId : String, text : String }
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , clickLink :
-        { clientId : ClientId, href : String }
+        { href : String }
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , checkView :
-        ClientId
-        -> (Test.Html.Query.Single frontendMsg -> Expectation)
+        (Test.Html.Query.Single frontendMsg -> Expectation)
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     }
@@ -398,9 +437,9 @@ type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg bac
 testApp :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
-    -> ({ currentRequest : HttpRequest, httpRequests : List HttpRequest } -> Effect.Http.Response Bytes)
+    -> ({ currentRequest : HttpRequest, pastRequests : List HttpRequest } -> Effect.Http.Response Bytes)
     ->
-        ({ currentRequest : PortToJs, portRequests : List PortToJs }
+        ({ currentRequest : PortToJs, pastRequests : List PortToJs }
          -> Maybe ( String, Json.Decode.Value )
         )
     -> ({ mimeTypes : List String } -> Maybe { name : String, mimeType : String, content : String, lastModified : Time.Posix })
@@ -433,11 +472,6 @@ testApp frontendApp backendApp handleHttpRequest handlePortToJs handleFileReques
         Start state
     , simulateTime = simulateTime frontendApp backendApp
     , connectFrontend = connectFrontend frontendApp backendApp
-    , keyDownEvent = keyDownEvent frontendApp
-    , clickButton = clickButton frontendApp
-    , inputText = inputText frontendApp
-    , clickLink = clickLink frontendApp
-    , checkView = checkView frontendApp
     }
 
 
@@ -494,14 +528,40 @@ getClientConnectSubs backendSub =
             []
 
 
-{-| -}
+{-| Add a frontend client to the simulation!
+
+    import Effect.Test
+
+    testApp = Effect.Test.testApp ...
+
+    test =
+        test "myButton is clickable" <|
+            \_ ->
+                testApp.init
+                    |> testApp.connectFrontend
+                        sessionId0
+                        myDomain
+                        { width = 1920, height = 1080 }
+                        (\( state, frontendActions ) ->
+                            -- frontendActions is a record we can use on this specific frontend we just connected
+                            state
+                                |> frontendActions.clickButton { htmlId = "myButton" }
+                        )
+                    |> Effect.Test.toExpectation
+
+-}
 connectFrontend :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
     -> SessionId
     -> Url
     -> { width : Int, height : Int }
-    -> (( Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, ClientId ) -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    ->
+        (( Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+         , FrontendActions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+         )
+         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        )
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 connectFrontend frontendApp backendApp sessionId url windowSize andThenFunc =
@@ -549,7 +609,13 @@ connectFrontend frontendApp backendApp sessionId url windowSize andThenFunc =
             in
             andThenFunc
                 ( Start state2 |> NextStep "Connect new frontend" identity
-                , clientId
+                , { clientId = clientId
+                  , keyDownEvent = keyDownEvent frontendApp clientId
+                  , clickButton = clickButton frontendApp clientId
+                  , inputText = inputText frontendApp clientId
+                  , clickLink = clickLink frontendApp clientId
+                  , checkView = checkView frontendApp clientId
+                  }
                 )
         )
 
@@ -557,10 +623,11 @@ connectFrontend frontendApp backendApp sessionId url windowSize andThenFunc =
 {-| -}
 keyDownEvent :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> { clientId : ClientId, htmlId : String, keyCode : Int }
+    -> ClientId
+    -> { htmlId : String, keyCode : Int }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-keyDownEvent frontendApp { clientId, htmlId, keyCode } state =
+keyDownEvent frontendApp clientId { htmlId, keyCode } state =
     userEvent
         frontendApp
         ("Key down " ++ String.fromInt keyCode)
@@ -573,20 +640,22 @@ keyDownEvent frontendApp { clientId, htmlId, keyCode } state =
 {-| -}
 clickButton :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> { clientId : ClientId, htmlId : String }
+    -> ClientId
+    -> { htmlId : String }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickButton frontendApp { clientId, htmlId } state =
+clickButton frontendApp clientId { htmlId } state =
     userEvent frontendApp "Click button" clientId htmlId Test.Html.Event.click state
 
 
 {-| -}
 inputText :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> { clientId : ClientId, htmlId : String, text : String }
+    -> ClientId
+    -> { htmlId : String, text : String }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-inputText frontendApp { clientId, htmlId, text } state =
+inputText frontendApp clientId { htmlId, text } state =
     userEvent frontendApp ("Input text \"" ++ text ++ "\"") clientId htmlId (Test.Html.Event.input text) state
 
 
@@ -610,10 +679,11 @@ normalizeUrl domainUrl path =
 {-| -}
 clickLink :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> { clientId : ClientId, href : String }
+    -> ClientId
+    -> { href : String }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickLink frontendApp { clientId, href } =
+clickLink frontendApp clientId { href } =
     NextStep
         ("Click link " ++ href)
         (\state ->
@@ -870,7 +940,12 @@ simulateStep frontendApp backendApp state =
         |> runEffects frontendApp backendApp
 
 
-{-| -}
+{-| Simulate the passage of time.
+This will trigger any subscriptions like `Browser.onAnimationFrame` or `Time.every` along the way.
+
+If you need to simulate a large passage of time and are finding that it's taking too long to run, try `fastForward` instead.
+
+-}
 simulateTime :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
@@ -897,7 +972,11 @@ simulateTimeHelper frontendApp backendApp duration state =
         simulateTimeHelper frontendApp backendApp (duration |> Quantity.minus animationFrame) (simulateStep frontendApp backendApp state)
 
 
-{-| -}
+{-| Similar to `simulateTime` but this will not trigger any `Browser.onAnimationFrame` or `Time.every` subscriptions.
+
+This is useful if you need to move the clock forward a week and it would take too long to simulate it perfectly.
+
+-}
 fastForward :
     Duration
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -908,7 +987,27 @@ fastForward duration =
         (\state -> { state | elapsedTime = Quantity.plus state.elapsedTime duration })
 
 
-{-| -}
+{-| Sometimes you need to decide what should happen next based on some simulation state.
+In order to do that you can write something like this:
+
+    state
+        |> TF.andThen
+            (\state2 ->
+                case List.filterMap isLoginEmail state2.httpRequests |> List.head of
+                    Just loginEmail ->
+                        TF.continueWith state2
+                                |> testApp.connectFrontend
+                                    sessionIdFromEmail
+                                    (loginEmail.loginUrl)
+                                    (\( state3, clientIdFromEmail ) ->
+                                        ...
+                                    )
+
+                    Nothing ->
+                        TF.continueWith state2 |> TF.checkState (\_ -> Err "Should have gotten a login email")
+            )
+
+-}
 andThen :
     (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -917,7 +1016,27 @@ andThen =
     AndThen
 
 
-{-| -}
+{-| Sometimes you need to decide what should happen next based on some simulation state.
+In order to do that you can write something like this:
+
+    state
+        |> TF.andThen
+            (\state2 ->
+                case List.filterMap isLoginEmail state2.httpRequests |> List.head of
+                    Just loginEmail ->
+                        TF.continueWith state2
+                                |> testApp.connectFrontend
+                                    sessionIdFromEmail
+                                    (loginEmail.loginUrl)
+                                    (\( state3, clientIdFromEmail ) ->
+                                        ...
+                                    )
+
+                    Nothing ->
+                        TF.continueWith state2 |> TF.checkState (\_ -> Err "Should have gotten a login email")
+            )
+
+-}
 continueWith : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 continueWith state =
     Start state
@@ -1094,7 +1213,7 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
         Port portName _ value ->
             let
                 portRequest =
-                    { portName = portName, value = value }
+                    { clientId = clientId, portName = portName, value = value }
 
                 newState =
                     { state | portRequests = portRequest :: state.portRequests }
@@ -1102,7 +1221,7 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
             case
                 newState.handlePortToJs
                     { currentRequest = portRequest
-                    , portRequests = state.portRequests
+                    , pastRequests = state.portRequests
                     }
             of
                 Just ( responsePortName, responseValue ) ->
@@ -1392,13 +1511,20 @@ runTask maybeClientId frontendApp state task =
             let
                 request : HttpRequest
                 request =
-                    { method = httpRequest.method
+                    { requestedBy =
+                        case maybeClientId of
+                            Just clientId ->
+                                RequestedByFrontend clientId
+
+                            Nothing ->
+                                RequestedByBackend
+                    , method = httpRequest.method
                     , url = httpRequest.url
                     , body = httpBodyFromInternal httpRequest.body
                     , headers = httpRequest.headers
                     }
             in
-            state.handleHttpRequest { currentRequest = request, httpRequests = state.httpRequests }
+            state.handleHttpRequest { currentRequest = request, pastRequests = state.httpRequests }
                 |> (\response ->
                         case response of
                             Effect.Http.BadUrl_ url ->
@@ -1428,13 +1554,20 @@ runTask maybeClientId frontendApp state task =
             let
                 request : HttpRequest
                 request =
-                    { method = httpRequest.method
+                    { requestedBy =
+                        case maybeClientId of
+                            Just clientId ->
+                                RequestedByFrontend clientId
+
+                            Nothing ->
+                                RequestedByBackend
+                    , method = httpRequest.method
                     , url = httpRequest.url
                     , body = httpBodyFromInternal httpRequest.body
                     , headers = httpRequest.headers
                     }
             in
-            state.handleHttpRequest { currentRequest = request, httpRequests = state.httpRequests }
+            state.handleHttpRequest { currentRequest = request, pastRequests = state.httpRequests }
                 |> (\response ->
                         case response of
                             Effect.Http.BadUrl_ url ->
