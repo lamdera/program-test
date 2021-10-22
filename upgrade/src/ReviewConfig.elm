@@ -17,4 +17,4 @@ import Upgrade
 
 config : List Rule
 config =
-    [ Upgrade.rule ]
+    [ Upgrade.rule |> Review.Rule.ignoreErrorsForDirectories [ "src/Evergreen" ] ]
