@@ -24,13 +24,13 @@ import Url
 import Url.Builder
 
 
-{-| Name of the snapshot and the html in it to be diffed.
+{-| Name of the snapshot and the html to be placed inside the body tag.
 `widths` specify what widths you want the html to be rendered at.
 `minimumHeight` is the minimum height in pixels of the rendered html (it will be taller if the html doesn't fit).
 If you set `minimumHeight` to Nothing then it's always the default height of the rendered html.
 -}
 type alias Snapshot msg =
-    { name : String, html : Html msg, widths : Nonempty Int, minimumHeight : Maybe Int }
+    { name : String, body : List (Html msg), widths : Nonempty Int, minimumHeight : Maybe Int }
 
 
 {-| Files in your public folder such as `images/profile-image.png` or `favicon.ico`.
@@ -80,7 +80,7 @@ uploadSnapshots :
     -> Task Error Response
 uploadSnapshots { apiKey, gitBranch, gitTargetBranch, snapshots, publicFiles } =
     let
-        publicFiles_ : List { contentHash : SHA256.Digest, filepath : String, base64Content : String }
+        publicFiles_ : List HashedPublicFile
         publicFiles_ =
             List.map
                 (\file ->
@@ -110,74 +110,7 @@ uploadSnapshots { apiKey, gitBranch, gitTargetBranch, snapshots, publicFiles } =
             |> Task.andThen
                 (\{ data } ->
                     List.Nonempty.toList snapshots
-                        |> List.map
-                            (\snapshot_ ->
-                                let
-                                    hash : SHA256.Digest
-                                    hash =
-                                        SHA256.fromString htmlString
-
-                                    htmlString : String
-                                    htmlString =
-                                        """<!DOCTYPE html>
-<html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, minimum-scale=1.0">
-    </head>
-    <body>
-        """
-                                            ++ Result.withDefault
-                                                "Something went wrong when converting this Html into a String. Please file a github issue with what the Html looked like."
-                                                (htmlToString snapshot_.html)
-                                            ++ "    </body>\n</html>"
-
-                                    filesToUpload =
-                                        List.filter
-                                            (\{ filepath } -> String.contains filepath htmlString)
-                                            publicFiles_
-                                in
-                                createSnapshot
-                                    apiKey
-                                    data.buildId
-                                    { name = snapshot_.name
-                                    , widths = snapshot_.widths
-                                    , minHeight = snapshot_.minimumHeight
-                                    , resources =
-                                        Nonempty
-                                            { id = hash
-                                            , attributes =
-                                                { resourceUrl = "/index.html"
-                                                , isRoot = True
-                                                , mimeType = Just "text/html"
-                                                }
-                                            }
-                                            (List.map
-                                                (\{ contentHash, filepath } ->
-                                                    { id = contentHash
-                                                    , attributes =
-                                                        { resourceUrl =
-                                                            List.map Url.percentEncode (String.split "/" filepath)
-                                                                |> String.join "/"
-                                                                |> (++) "/"
-                                                        , isRoot = False
-                                                        , mimeType = Nothing
-                                                        }
-                                                    }
-                                                )
-                                                filesToUpload
-                                            )
-                                    }
-                                    |> Task.andThen
-                                        (\_ ->
-                                            uploadResource
-                                                apiKey
-                                                data.buildId
-                                                hash
-                                                (Base64.fromString htmlString |> Maybe.withDefault "")
-                                                |> Task.andThen (\_ -> Task.succeed filesToUpload)
-                                        )
-                            )
+                        |> List.map (uploadSnapshotHelper apiKey data.buildId publicFiles_)
                         |> Task.sequence
                         |> Task.andThen
                             (\filesToUpload ->
@@ -193,6 +126,77 @@ uploadSnapshots { apiKey, gitBranch, gitTargetBranch, snapshots, publicFiles } =
                             )
                         |> Task.andThen (\_ -> finalize apiKey data.buildId)
                 )
+
+
+type alias HashedPublicFile =
+    { contentHash : SHA256.Digest, filepath : String, base64Content : String }
+
+
+uploadSnapshotHelper : PercyApiKey -> BuildId -> List HashedPublicFile -> Snapshot msg -> Task Error (List HashedPublicFile)
+uploadSnapshotHelper apiKey buildId publicFiles_ snapshot_ =
+    let
+        hash : SHA256.Digest
+        hash =
+            SHA256.fromString htmlString
+
+        bodyContent : String
+        bodyContent =
+            List.map
+                (htmlToString >> Result.withDefault "<div>Something went wrong when converting this Html into a String. Please file a github issue with what the Html looked like.</div>")
+                snapshot_.body
+                |> String.concat
+
+        htmlString : String
+        htmlString =
+            """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, minimum-scale=1.0"></head><body>"""
+                ++ bodyContent
+                ++ "</body></html>"
+
+        filesToUpload =
+            List.filter
+                (\{ filepath } -> String.contains filepath htmlString)
+                publicFiles_
+    in
+    createSnapshot
+        apiKey
+        buildId
+        { name = snapshot_.name
+        , widths = snapshot_.widths
+        , minHeight = snapshot_.minimumHeight
+        , resources =
+            Nonempty
+                { id = hash
+                , attributes =
+                    { resourceUrl = "/index.html"
+                    , isRoot = True
+                    , mimeType = Just "text/html"
+                    }
+                }
+                (List.map
+                    (\{ contentHash, filepath } ->
+                        { id = contentHash
+                        , attributes =
+                            { resourceUrl =
+                                List.map Url.percentEncode (String.split "/" filepath)
+                                    |> String.join "/"
+                                    |> (++) "/"
+                            , isRoot = False
+                            , mimeType = Nothing
+                            }
+                        }
+                    )
+                    filesToUpload
+                )
+        }
+        |> Task.andThen
+            (\_ ->
+                uploadResource
+                    apiKey
+                    buildId
+                    hash
+                    (Base64.fromString htmlString |> Maybe.withDefault "")
+                    |> Task.andThen (\_ -> Task.succeed filesToUpload)
+            )
 
 
 type alias SnapshotResource =
