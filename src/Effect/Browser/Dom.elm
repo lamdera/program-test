@@ -1,9 +1,10 @@
 module Effect.Browser.Dom exposing
-    ( HtmlId, idFromString, idToAttribute, idToString
+    ( HtmlId, idToAttribute, idToString
     , focus, blur, Error(..)
     , getViewport, Viewport, getViewportOf
     , setViewport, setViewportOf
     , getElement, Element
+    , id
     )
 
 {-| This module allows you to manipulate the DOM in various ways. It covers:
@@ -106,7 +107,7 @@ idToString (HtmlId htmlId) =
     import Html
 
     buttonId =
-        Dom.idFromString "my-button"
+        Dom.id "my-button"
 
     button =
         Html.button [ Dom.idToAttribute buttonId ] []
@@ -119,8 +120,8 @@ idToAttribute =
 
 {-| Create an HtmlId from a String.
 -}
-idFromString : String -> HtmlId
-idFromString =
+id : String -> HtmlId
+id =
     HtmlId
 
 
@@ -156,7 +157,7 @@ focus htmlId =
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound (idFromString err))
+                    Effect.Internal.Fail (NotFound (htmlId err))
         )
 
 
@@ -188,7 +189,7 @@ blur htmlId =
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound (idFromString err))
+                    Effect.Internal.Fail (NotFound (htmlId err))
         )
 
 
@@ -294,7 +295,7 @@ getViewportOf htmlId =
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound (idFromString err))
+                    Effect.Internal.Fail (NotFound (htmlId err))
         )
 
 
@@ -370,7 +371,7 @@ setViewportOf htmlId x y =
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound (idFromString err))
+                    Effect.Internal.Fail (NotFound (htmlId err))
         )
 
 
@@ -451,7 +452,7 @@ getElement htmlId =
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound (idFromString err))
+                    Effect.Internal.Fail (NotFound (htmlId err))
         )
 
 
