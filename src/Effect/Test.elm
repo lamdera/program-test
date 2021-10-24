@@ -31,6 +31,7 @@ import Bytes exposing (Bytes)
 import Bytes.Decode
 import Bytes.Encode
 import Duration exposing (Duration)
+import Effect.Browser.Dom exposing (HtmlId)
 import Effect.Browser.Navigation
 import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
 import Effect.Http exposing (Body)
@@ -105,6 +106,7 @@ fakeNavigationKey =
     Effect.Browser.Navigation.fromInternalKey Effect.Internal.MockNavigationKey
 
 
+httpBodyFromInternal : Effect.Internal.HttpBody -> HttpBody
 httpBodyFromInternal body =
     case body of
         Effect.Internal.EmptyBody ->
@@ -411,15 +413,17 @@ type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg bac
 type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
     { clientId : ClientId
     , keyDownEvent :
-        { htmlId : String, keyCode : Int }
+        HtmlId
+        -> { keyCode : Int }
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , clickButton :
-        { htmlId : String }
+        HtmlId
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , inputText :
-        { htmlId : String, text : String }
+        HtmlId
+        -> String
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , clickLink :
@@ -624,10 +628,11 @@ connectFrontend frontendApp backendApp sessionId url windowSize andThenFunc =
 keyDownEvent :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> ClientId
-    -> { htmlId : String, keyCode : Int }
+    -> HtmlId
+    -> { keyCode : Int }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-keyDownEvent frontendApp clientId { htmlId, keyCode } state =
+keyDownEvent frontendApp clientId htmlId { keyCode } state =
     userEvent
         frontendApp
         ("Key down " ++ String.fromInt keyCode)
@@ -641,10 +646,10 @@ keyDownEvent frontendApp clientId { htmlId, keyCode } state =
 clickButton :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> ClientId
-    -> { htmlId : String }
+    -> HtmlId
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickButton frontendApp clientId { htmlId } state =
+clickButton frontendApp clientId htmlId state =
     userEvent frontendApp "Click button" clientId htmlId Test.Html.Event.click state
 
 
@@ -652,10 +657,11 @@ clickButton frontendApp clientId { htmlId } state =
 inputText :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> ClientId
-    -> { htmlId : String, text : String }
+    -> HtmlId
+    -> String
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-inputText frontendApp clientId { htmlId, text } state =
+inputText frontendApp clientId htmlId text state =
     userEvent frontendApp ("Input text \"" ++ text ++ "\"") clientId htmlId (Test.Html.Event.input text) state
 
 
@@ -730,13 +736,17 @@ userEvent :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> String
     -> ClientId
-    -> String
+    -> HtmlId
     -> ( String, Json.Encode.Value )
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 userEvent frontendApp name clientId htmlId event =
+    let
+        htmlIdString =
+            Effect.Browser.Dom.idToString htmlId
+    in
     NextStep
-        (Effect.Lamdera.clientIdToString clientId ++ ": " ++ name ++ " for " ++ htmlId)
+        (Effect.Lamdera.clientIdToString clientId ++ ": " ++ name ++ " for " ++ htmlIdString)
         (\state ->
             case Dict.get clientId state.frontends of
                 Just frontend ->
@@ -746,7 +756,7 @@ userEvent frontendApp name clientId htmlId event =
                                 |> .body
                                 |> Html.div []
                                 |> Test.Html.Query.fromHtml
-                                |> Test.Html.Query.find [ Test.Html.Selector.id htmlId ]
+                                |> Test.Html.Query.find [ Test.Html.Selector.id htmlIdString ]
                     in
                     case Test.Html.Event.simulate event query |> Test.Html.Event.toResult of
                         Ok msg ->
@@ -766,12 +776,12 @@ userEvent frontendApp name clientId htmlId event =
                             case Test.Runner.getFailureReason (Test.Html.Query.has [] query) of
                                 Just { description } ->
                                     addTestError
-                                        ("User event failed for " ++ htmlId ++ ": " ++ formatHtmlError description)
+                                        ("User event failed for " ++ htmlIdString ++ ": " ++ formatHtmlError description)
                                         state
 
                                 Nothing ->
                                     addTestError
-                                        ("User event failed for " ++ htmlId ++ ": " ++ err)
+                                        ("User event failed for " ++ htmlIdString ++ ": " ++ err)
                                         state
 
                 Nothing ->

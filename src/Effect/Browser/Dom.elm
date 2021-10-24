@@ -1,5 +1,6 @@
 module Effect.Browser.Dom exposing
-    ( focus, blur, Error(..)
+    ( HtmlId, idFromString, idToAttribute, idToString
+    , focus, blur, Error(..)
     , getViewport, Viewport, getViewportOf
     , setViewport, setViewportOf
     , getElement, Element
@@ -49,6 +50,11 @@ Hockney explores the history of _perspective_ in art. Really interesting!
 [doc]: https://www.imdb.com/title/tt0164525/
 
 
+# DOM node ids
+
+@docs HtmlId, idFromString, idToAttribute, idToString
+
+
 # Focus
 
 @docs focus, blur, Error
@@ -73,6 +79,49 @@ Hockney explores the history of _perspective_ in art. Really interesting!
 import Effect.Command exposing (FrontendOnly)
 import Effect.Internal
 import Effect.Task exposing (Task)
+import Html
+import Html.Attributes
+
+
+
+-- DOM node ids
+
+
+{-| The id of a DOM node.
+-}
+type HtmlId
+    = HtmlId String
+
+
+{-| Convert an HtmlId to a String.
+-}
+idToString : HtmlId -> String
+idToString (HtmlId htmlId) =
+    htmlId
+
+
+{-| Convert a HtmlId to an Html.Attribute that you can assign to a DOM node.
+
+    import Effect.Browser.Dom as Dom
+    import Html
+
+    buttonId =
+        Dom.idFromString "my-button"
+
+    button =
+        Html.button [ Dom.idToAttribute buttonId ] []
+
+-}
+idToAttribute : HtmlId -> Html.Attribute msg
+idToAttribute =
+    idToString >> Html.Attributes.id
+
+
+{-| Create an HtmlId from a String.
+-}
+idFromString : String -> HtmlId
+idFromString =
+    HtmlId
 
 
 
@@ -97,17 +146,17 @@ as an `id` by any node, failing silently in that case. It would be better to
 log the failure with whatever error reporting system you use.
 
 -}
-focus : String -> Task FrontendOnly Error ()
+focus : HtmlId -> Task FrontendOnly Error ()
 focus htmlId =
     Effect.Internal.Focus
-        htmlId
+        (idToString htmlId)
         (\result ->
             case result of
                 Ok ok ->
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound err)
+                    Effect.Internal.Fail (NotFound (idFromString err))
         )
 
 
@@ -129,17 +178,17 @@ as an `id` by any node, failing silently in that case. It would be better to
 log the failure with whatever error reporting system you use.
 
 -}
-blur : String -> Task FrontendOnly Error ()
+blur : HtmlId -> Task FrontendOnly Error ()
 blur htmlId =
     Effect.Internal.Blur
-        htmlId
+        (idToString htmlId)
         (\result ->
             case result of
                 Ok ok ->
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound err)
+                    Effect.Internal.Fail (NotFound (idFromString err))
         )
 
 
@@ -151,7 +200,7 @@ blur htmlId =
 ask for an `id` that is not in the DOM, you will get this error.
 -}
 type Error
-    = NotFound String
+    = NotFound HtmlId
 
 
 
@@ -235,17 +284,17 @@ API improvements!
 [oh]: https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/offsetHeight
 
 -}
-getViewportOf : String -> Task FrontendOnly Error Viewport
+getViewportOf : HtmlId -> Task FrontendOnly Error Viewport
 getViewportOf htmlId =
     Effect.Internal.GetViewportOf
-        htmlId
+        (idToString htmlId)
         (\result ->
             case result of
                 Ok ok ->
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound err)
+                    Effect.Internal.Fail (NotFound (idFromString err))
         )
 
 
@@ -309,10 +358,10 @@ be great to log that information. It means there may be a bug or a dead link
 somewhere!
 
 -}
-setViewportOf : String -> Float -> Float -> Task FrontendOnly Error ()
+setViewportOf : HtmlId -> Float -> Float -> Task FrontendOnly Error ()
 setViewportOf htmlId x y =
     Effect.Internal.SetViewportOf
-        htmlId
+        (idToString htmlId)
         x
         y
         (\result ->
@@ -321,7 +370,7 @@ setViewportOf htmlId x y =
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound err)
+                    Effect.Internal.Fail (NotFound (idFromString err))
         )
 
 
@@ -392,17 +441,17 @@ element in a `<div>` that adds the spacing. Just something to be aware of!
 [gbcr]: https://developer.mozilla.org/en-US/docs/Web/API/Element/getBoundingClientRect
 
 -}
-getElement : String -> Task FrontendOnly Error Element
+getElement : HtmlId -> Task FrontendOnly Error Element
 getElement htmlId =
     Effect.Internal.GetElement
-        htmlId
+        (idToString htmlId)
         (\result ->
             case result of
                 Ok ok ->
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound err)
+                    Effect.Internal.Fail (NotFound (idFromString err))
         )
 
 
