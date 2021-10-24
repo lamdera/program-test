@@ -1,10 +1,9 @@
 module Effect.Browser.Dom exposing
-    ( HtmlId, idToAttribute, idToString
+    ( HtmlId, id, idToAttribute, idToString
     , focus, blur, Error(..)
     , getViewport, Viewport, getViewportOf
     , setViewport, setViewportOf
     , getElement, Element
-    , id
     )
 
 {-| This module allows you to manipulate the DOM in various ways. It covers:
@@ -53,7 +52,7 @@ Hockney explores the history of _perspective_ in art. Really interesting!
 
 # DOM node ids
 
-@docs HtmlId, idFromString, idToAttribute, idToString
+@docs HtmlId, id, idToAttribute, idToString
 
 
 # Focus
@@ -157,7 +156,7 @@ focus htmlId =
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound (htmlId err))
+                    Effect.Internal.Fail (NotFound (id err))
         )
 
 
@@ -189,7 +188,7 @@ blur htmlId =
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound (htmlId err))
+                    Effect.Internal.Fail (NotFound (id err))
         )
 
 
@@ -295,7 +294,7 @@ getViewportOf htmlId =
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound (htmlId err))
+                    Effect.Internal.Fail (NotFound (id err))
         )
 
 
@@ -371,7 +370,7 @@ setViewportOf htmlId x y =
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound (htmlId err))
+                    Effect.Internal.Fail (NotFound (id err))
         )
 
 
@@ -452,7 +451,7 @@ getElement htmlId =
                     Effect.Internal.Succeed ok
 
                 Err (Effect.Internal.BrowserDomNotFound err) ->
-                    Effect.Internal.Fail (NotFound (htmlId err))
+                    Effect.Internal.Fail (NotFound (id err))
         )
 
 
