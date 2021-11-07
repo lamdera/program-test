@@ -700,8 +700,15 @@ clickLink frontendApp clientId { href } =
                             |> .body
                             |> Html.div []
                             |> Test.Html.Query.fromHtml
-                            |> Test.Html.Query.find [ Test.Html.Selector.attribute (Html.Attributes.href href) ]
-                            |> Test.Html.Query.has []
+                            |> Test.Html.Query.findAll [ Test.Html.Selector.attribute (Html.Attributes.href href) ]
+                            |> Test.Html.Query.count
+                                (\count ->
+                                    if count > 0 then
+                                        Expect.pass
+
+                                    else
+                                        Expect.fail ("Expected at least one link pointing to " ++ href)
+                                )
                             |> Test.Runner.getFailureReason
                     of
                         Nothing ->
