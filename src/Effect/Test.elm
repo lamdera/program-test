@@ -1,9 +1,8 @@
 module Effect.Test exposing
     ( init, connectFrontend, FrontendApp, BackendApp, HttpRequest, RequestedBy(..), PortToJs
     , FrontendActions, sendToBackend, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
-    , checkState, checkBackend
+    , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey
-    , toSnapshots, toTest
     )
 
 {-| Setting up the simulation
@@ -16,7 +15,7 @@ Control the simulation
 
 Test the simulation
 
-@docs checkState, checkBackend, toExpectation
+@docs checkState, checkBackend, toTest, toSnapshots
 
 Miscellaneous
 
@@ -370,6 +369,9 @@ gatherWith testFn list =
     helper list []
 
 
+{-| Get all snapshots from a test.
+This can be used with Effect.Snapshot.uploadSnapshots to perform visual regression testing.
+-}
 toSnapshots :
     Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> List (Snapshot frontendMsg)
