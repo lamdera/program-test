@@ -1,17 +1,18 @@
 module Effect.Test exposing
-    ( testApp, TestApp, FrontendApp, BackendApp, HttpRequest, RequestedBy(..), PortToJs
-    , FrontendActions, sendToBackend, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
-    , checkState, checkBackend, toExpectation
+    ( init, connectFrontend, FrontendApp, BackendApp, HttpRequest, RequestedBy(..), PortToJs
+    , FrontendActions, sendToBackend, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
+    , checkState, checkBackend
     , fakeNavigationKey
+    , toSnapshots, toTest
     )
 
 {-| Setting up the simulation
 
-@docs testApp, TestApp, FrontendApp, BackendApp, HttpRequest, RequestedBy, PortToJs
+@docs init, connectFrontend, FrontendApp, BackendApp, HttpRequest, RequestedBy, PortToJs
 
 Control the simulation
 
-@docs FrontendActions, sendToBackend, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
+@docs FrontendActions, sendToBackend, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
 
 Test the simulation
 
@@ -37,6 +38,7 @@ import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
 import Effect.Http exposing (Body)
 import Effect.Internal exposing (Command(..), File, NavigationKey(..), Task(..))
 import Effect.Lamdera exposing (ClientId, SessionId)
+import Effect.Snapshot exposing (Snapshot)
 import Effect.Subscription exposing (Subscription)
 import Expect exposing (Expectation)
 import Html exposing (Html)
@@ -46,6 +48,7 @@ import Json.Decode
 import Json.Encode
 import List.Nonempty exposing (Nonempty)
 import Quantity
+import Test exposing (Test)
 import Test.Html.Event
 import Test.Html.Query
 import Test.Html.Selector
@@ -56,7 +59,10 @@ import Url exposing (Url)
 
 {-| -}
 type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
-    { backend : backendModel
+    { testName : String
+    , frontendApp : FrontendApp toBackend frontendMsg frontendModel toFrontend
+    , backendApp : BackendApp toBackend toFrontend backendMsg backendModel
+    , backend : backendModel
     , pendingEffects : Command BackendOnly toFrontend backendMsg
     , frontends : Dict ClientId (FrontendState toBackend frontendMsg frontendModel toFrontend)
     , counter : Int
@@ -74,6 +80,7 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
     , portRequests : List PortToJs
     , handleFileRequest : { mimeTypes : List String } -> Maybe Effect.Internal.File
     , domain : Url
+    , snapshots : List { name : String, body : List (Html frontendMsg), width : Int, height : Int }
     }
 
 
@@ -239,19 +246,18 @@ addTestError error state =
 
 
 checkView :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> ClientId
+    ClientId
     -> (Test.Html.Query.Single frontendMsg -> Expectation)
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-checkView frontendApp clientId query =
+checkView clientId query =
     NextStep
         "Check view"
         (\state ->
             case Dict.get clientId state.frontends of
                 Just frontend ->
                     case
-                        frontendApp.view frontend.model
+                        state.frontendApp.view frontend.model
                             |> .body
                             |> Html.div []
                             |> Test.Html.Query.fromHtml
@@ -273,17 +279,115 @@ checkView frontendApp clientId query =
 
 
 {-| -}
-toExpectation : Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Expectation
-toExpectation inProgress =
+toTest : Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Test
+toTest instructions =
     let
         state =
-            instructionsToState inProgress
+            instructionsToState instructions
     in
-    if List.isEmpty state.testErrors then
-        Expect.pass
+    Test.test state.testName <|
+        \() ->
+            case state.testErrors of
+                firstError :: _ ->
+                    Expect.fail firstError
 
-    else
-        Expect.fail <| String.join "," state.testErrors
+                [] ->
+                    let
+                        duplicates =
+                            gatherEqualsBy .name state.snapshots
+                                |> List.filterMap
+                                    (\( first, rest ) ->
+                                        if List.isEmpty rest then
+                                            Nothing
+
+                                        else
+                                            Just ( first.name, List.length rest + 1 )
+                                    )
+                    in
+                    case duplicates of
+                        [] ->
+                            Expect.pass
+
+                        ( name, count ) :: [] ->
+                            "A snapshot named \""
+                                ++ name
+                                ++ "\" appears "
+                                ++ String.fromInt count
+                                ++ " times. Make sure snapshot names are unique!"
+                                |> Expect.fail
+
+                        rest ->
+                            "These snapshot names appear multiple times:"
+                                ++ String.concat
+                                    (List.map
+                                        (\( name, count ) -> "\n" ++ name ++ " (" ++ String.fromInt count ++ " times)")
+                                        rest
+                                    )
+                                ++ " Make sure snapshot names are unique!"
+                                |> Expect.fail
+
+
+{-| Copied from elm-community/list-extra
+
+Group equal elements together. A function is applied to each element of the list
+and then the equality check is performed against the results of that function evaluation.
+Elements will be grouped in the same order as they appear in the original list. The
+same applies to elements within each group.
+gatherEqualsBy .age [{age=25},{age=23},{age=25}]
+--> [({age=25},[{age=25}]),({age=23},[])]
+
+-}
+gatherEqualsBy : (a -> b) -> List a -> List ( a, List a )
+gatherEqualsBy extract list =
+    gatherWith (\a b -> extract a == extract b) list
+
+
+{-| Copied from elm-community/list-extra
+
+Group equal elements together using a custom equality function. Elements will be
+grouped in the same order as they appear in the original list. The same applies to
+elements within each group.
+gatherWith (==) [1,2,1,3,2]
+--> [(1,[1]),(2,[2]),(3,[])]
+
+-}
+gatherWith : (a -> a -> Bool) -> List a -> List ( a, List a )
+gatherWith testFn list =
+    let
+        helper : List a -> List ( a, List a ) -> List ( a, List a )
+        helper scattered gathered =
+            case scattered of
+                [] ->
+                    List.reverse gathered
+
+                toGather :: population ->
+                    let
+                        ( gathering, remaining ) =
+                            List.partition (testFn toGather) population
+                    in
+                    helper remaining (( toGather, gathering ) :: gathered)
+    in
+    helper list []
+
+
+toSnapshots :
+    Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> List (Snapshot frontendMsg)
+toSnapshots instructions =
+    let
+        state =
+            instructionsToState instructions
+    in
+    state
+        |> .snapshots
+        |> List.map
+            (\{ name, body, width, height } ->
+                { name = state.testName ++ ": " ++ name
+                , body = body
+                , widths = List.Nonempty.fromElement width
+                , minimumHeight = Just height
+                }
+            )
 
 
 flatten :
@@ -369,45 +473,33 @@ type alias BackendApp toBackend toFrontend backendMsg backendModel =
     }
 
 
-{-| -}
-type alias TestApp toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
-    { init : Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    , simulateTime : Duration -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    , connectFrontend :
-        SessionId
-        -> Url
-        -> { width : Int, height : Int }
-        ->
-            (( Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-             , FrontendActions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-             )
-             -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-            )
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    }
-
-
-{-| This record contains functions you can run for a frontend you have connected.
+{-| FrontendActions contains the possible functions we can call on the client we just connected.
 
     import Effect.Test
+    import Test exposing (Test)
 
-    testApp = Effect.Test.testApp ...
+    testApp =
+        Effect.Test.testApp
+            Frontend.appFunctions
+            Backend.appFunctions
+            (always NetworkError_)
+            (always Nothing)
+            (always Nothing)
+            (unsafeUrl "https://my-app.lamdera.app")
 
+    test : Test
     test =
-        test "myButton is clickable" <|
-            \_ ->
-                testApp.init
-                    |> testApp.connectFrontend
-                        sessionId0
-                        myDomain
-                        { width = 1920, height = 1080 }
-                        (\( state, frontendActions ) ->
-                            -- frontendActions is a record we can use on this specific frontend we just connected
-                            state
-                                |> frontendActions.clickButton { htmlId = "myButton" }
-                        )
-                    |> Effect.Test.toExpectation
+        testApp "myButton is clickable"
+            |> Effect.Test.connectFrontend
+                sessionId0
+                myDomain
+                { width = 1920, height = 1080 }
+                (\( state, frontendActions ) ->
+                    -- frontendActions is a record we can use on this specific frontend we just connected
+                    state
+                        |> frontendActions.clickButton { htmlId = "myButton" }
+                )
+            |> Effect.Test.toTest
 
 -}
 type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
@@ -434,11 +526,42 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         (Test.Html.Query.Single frontendMsg -> Expectation)
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , snapshotView :
+        { name : String }
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     }
 
 
-{-| -}
-testApp :
+{-| Setup a test.
+
+    import Effect.Test
+    import Test exposing (Test)
+
+    testApp =
+        Effect.Test.testApp
+            Frontend.appFunctions
+            Backend.appFunctions
+            (always NetworkError_)
+            (always Nothing)
+            (always Nothing)
+            (unsafeUrl "https://my-app.lamdera.app")
+
+    test : Test
+    test =
+        testApp "myButton is clickable"
+            |> Effect.Test.connectFrontend
+                sessionId0
+                myDomain
+                { width = 1920, height = 1080 }
+                (\( state, frontendActions ) ->
+                    state
+                        |> frontendActions.clickButton { htmlId = "myButton" }
+                )
+            |> Effect.Test.toTest
+
+-}
+init :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
     -> ({ currentRequest : HttpRequest, pastRequests : List HttpRequest } -> Effect.Http.Response Bytes)
@@ -448,35 +571,36 @@ testApp :
         )
     -> ({ mimeTypes : List String } -> Maybe { name : String, mimeType : String, content : String, lastModified : Time.Posix })
     -> Url
-    -> TestApp toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-testApp frontendApp backendApp handleHttpRequest handlePortToJs handleFileRequest domain =
-    { init =
-        let
-            ( backend, effects ) =
-                backendApp.init
+    -> String
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+init frontendApp backendApp handleHttpRequest handlePortToJs handleFileRequest domain testName =
+    let
+        ( backend, effects ) =
+            backendApp.init
 
-            state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-            state =
-                { backend = backend
-                , pendingEffects = effects
-                , frontends = Dict.empty
-                , counter = 0
-                , elapsedTime = Quantity.zero
-                , toBackend = []
-                , timers = getTimers startTime (backendApp.subscriptions backend)
-                , testErrors = []
-                , httpRequests = []
-                , handleHttpRequest = handleHttpRequest
-                , handlePortToJs = handlePortToJs
-                , portRequests = []
-                , handleFileRequest = handleFileRequest >> Maybe.map Effect.Internal.MockFile
-                , domain = domain
-                }
-        in
-        Start state
-    , simulateTime = simulateTime frontendApp backendApp
-    , connectFrontend = connectFrontend frontendApp backendApp
-    }
+        state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        state =
+            { testName = testName
+            , frontendApp = frontendApp
+            , backendApp = backendApp
+            , backend = backend
+            , pendingEffects = effects
+            , frontends = Dict.empty
+            , counter = 0
+            , elapsedTime = Quantity.zero
+            , toBackend = []
+            , timers = getTimers startTime (backendApp.subscriptions backend)
+            , testErrors = []
+            , httpRequests = []
+            , handleHttpRequest = handleHttpRequest
+            , handlePortToJs = handlePortToJs
+            , portRequests = []
+            , handleFileRequest = handleFileRequest >> Maybe.map Effect.Internal.MockFile
+            , domain = domain
+            , snapshots = []
+            }
+    in
+    Start state
 
 
 getTimers :
@@ -535,29 +659,33 @@ getClientConnectSubs backendSub =
 {-| Add a frontend client to the simulation!
 
     import Effect.Test
+    import Test exposing (Test)
 
-    testApp = Effect.Test.testApp ...
+    testApp =
+        Effect.Test.testApp
+            Frontend.appFunctions
+            Backend.appFunctions
+            (always NetworkError_)
+            (always Nothing)
+            (always Nothing)
+            (unsafeUrl "https://my-app.lamdera.app")
 
+    test : Test
     test =
-        test "myButton is clickable" <|
-            \_ ->
-                testApp.init
-                    |> testApp.connectFrontend
-                        sessionId0
-                        myDomain
-                        { width = 1920, height = 1080 }
-                        (\( state, frontendActions ) ->
-                            -- frontendActions is a record we can use on this specific frontend we just connected
-                            state
-                                |> frontendActions.clickButton { htmlId = "myButton" }
-                        )
-                    |> Effect.Test.toExpectation
+        testApp "myButton is clickable"
+            |> Effect.Test.connectFrontend
+                sessionId0
+                myDomain
+                { width = 1920, height = 1080 }
+                (\( state, frontendActions ) ->
+                    state
+                        |> frontendActions.clickButton { htmlId = "myButton" }
+                )
+            |> Effect.Test.toTest
 
 -}
 connectFrontend :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> BackendApp toBackend toFrontend backendMsg backendModel
-    -> SessionId
+    SessionId
     -> Url
     -> { width : Int, height : Int }
     ->
@@ -568,7 +696,7 @@ connectFrontend :
         )
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-connectFrontend frontendApp backendApp sessionId url windowSize andThenFunc =
+connectFrontend sessionId url windowSize andThenFunc =
     AndThen
         (\state ->
             let
@@ -576,16 +704,16 @@ connectFrontend frontendApp backendApp sessionId url windowSize andThenFunc =
                     "clientId " ++ String.fromInt state.counter |> Effect.Lamdera.clientIdFromString
 
                 ( frontend, effects ) =
-                    frontendApp.init url (Effect.Browser.Navigation.fromInternalKey MockNavigationKey)
+                    state.frontendApp.init url (Effect.Browser.Navigation.fromInternalKey MockNavigationKey)
 
                 subscriptions =
-                    frontendApp.subscriptions frontend
+                    state.frontendApp.subscriptions frontend
 
                 ( backend, backendEffects ) =
-                    getClientConnectSubs (backendApp.subscriptions state.backend)
+                    getClientConnectSubs (state.backendApp.subscriptions state.backend)
                         |> List.foldl
                             (\msg ( newBackend, newEffects ) ->
-                                backendApp.update (msg sessionId clientId) newBackend
+                                state.backendApp.update (msg sessionId clientId) newBackend
                                     |> Tuple.mapSecond (\a -> Effect.Command.batch [ newEffects, a ])
                             )
                             ( state.backend, state.pendingEffects )
@@ -614,55 +742,77 @@ connectFrontend frontendApp backendApp sessionId url windowSize andThenFunc =
             andThenFunc
                 ( Start state2 |> NextStep "Connect new frontend" identity
                 , { clientId = clientId
-                  , keyDownEvent = keyDownEvent frontendApp clientId
-                  , clickButton = clickButton frontendApp clientId
-                  , inputText = inputText frontendApp clientId
-                  , clickLink = clickLink frontendApp clientId
-                  , checkView = checkView frontendApp clientId
+                  , keyDownEvent = keyDownEvent clientId
+                  , clickButton = clickButton clientId
+                  , inputText = inputText clientId
+                  , clickLink = clickLink clientId
+                  , checkView = checkView clientId
+                  , snapshotView = snapshotView clientId
                   }
                 )
         )
 
 
+snapshotView :
+    ClientId
+    -> { name : String }
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+snapshotView clientId { name } =
+    NextStep
+        "Snapshot view"
+        (\state ->
+            case Dict.get clientId state.frontends of
+                Just frontend ->
+                    { state
+                        | snapshots =
+                            { name = name
+                            , body = state.frontendApp.view frontend.model |> .body
+                            , width = frontend.windowSize.width
+                            , height = frontend.windowSize.height
+                            }
+                                :: state.snapshots
+                    }
+
+                Nothing ->
+                    addTestError "ClientId not found" state
+        )
+
+
 {-| -}
 keyDownEvent :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> ClientId
+    ClientId
     -> HtmlId
     -> { keyCode : Int }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-keyDownEvent frontendApp clientId htmlId { keyCode } state =
+keyDownEvent clientId htmlId { keyCode } =
     userEvent
-        frontendApp
         ("Key down " ++ String.fromInt keyCode)
         clientId
         htmlId
         ( "keydown", Json.Encode.object [ ( "keyCode", Json.Encode.int keyCode ) ] )
-        state
 
 
 {-| -}
 clickButton :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> ClientId
+    ClientId
     -> HtmlId
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickButton frontendApp clientId htmlId state =
-    userEvent frontendApp "Click button" clientId htmlId Test.Html.Event.click state
+clickButton clientId htmlId =
+    userEvent "Click button" clientId htmlId Test.Html.Event.click
 
 
 {-| -}
 inputText :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> ClientId
+    ClientId
     -> HtmlId
     -> String
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-inputText frontendApp clientId htmlId text state =
-    userEvent frontendApp ("Input text \"" ++ text ++ "\"") clientId htmlId (Test.Html.Event.input text) state
+inputText clientId htmlId text =
+    userEvent ("Input text \"" ++ text ++ "\"") clientId htmlId (Test.Html.Event.input text)
 
 
 normalizeUrl : Url -> String -> String
@@ -684,19 +834,18 @@ normalizeUrl domainUrl path =
 
 {-| -}
 clickLink :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> ClientId
+    ClientId
     -> { href : String }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickLink frontendApp clientId { href } =
+clickLink clientId { href } =
     NextStep
         ("Click link " ++ href)
         (\state ->
             case Dict.get clientId state.frontends of
                 Just frontend ->
                     case
-                        frontendApp.view frontend.model
+                        state.frontendApp.view frontend.model
                             |> .body
                             |> Html.div []
                             |> Test.Html.Query.fromHtml
@@ -716,7 +865,7 @@ clickLink frontendApp clientId { href } =
                                 Just url ->
                                     let
                                         ( newModel, effects ) =
-                                            frontendApp.update (frontendApp.onUrlRequest (Internal url)) frontend.model
+                                            state.frontendApp.update (state.frontendApp.onUrlRequest (Internal url)) frontend.model
                                     in
                                     { state
                                         | frontends =
@@ -740,14 +889,13 @@ clickLink frontendApp clientId { href } =
 
 
 userEvent :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> String
+    String
     -> ClientId
     -> HtmlId
     -> ( String, Json.Encode.Value )
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userEvent frontendApp name clientId htmlId event =
+userEvent name clientId htmlId event =
     let
         htmlIdString =
             Effect.Browser.Dom.idToString htmlId
@@ -759,7 +907,7 @@ userEvent frontendApp name clientId htmlId event =
                 Just frontend ->
                     let
                         query =
-                            frontendApp.view frontend.model
+                            state.frontendApp.view frontend.model
                                 |> .body
                                 |> Html.div []
                                 |> Test.Html.Query.fromHtml
@@ -769,7 +917,7 @@ userEvent frontendApp name clientId htmlId event =
                         Ok msg ->
                             let
                                 ( newModel, effects ) =
-                                    frontendApp.update msg frontend.model
+                                    state.frontendApp.update msg frontend.model
                             in
                             { state
                                 | frontends =
@@ -964,15 +1112,13 @@ If you need to simulate a large passage of time and are finding that it's taking
 
 -}
 simulateTime :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> BackendApp toBackend toFrontend backendMsg backendModel
-    -> Duration
+    Duration
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-simulateTime frontendApp backendApp duration =
+simulateTime duration =
     NextStep
         ("Simulate time " ++ String.fromFloat (Duration.inSeconds duration) ++ "s")
-        (simulateTimeHelper frontendApp backendApp duration)
+        (\state -> simulateTimeHelper state.frontendApp state.backendApp duration state)
 
 
 simulateTimeHelper :
