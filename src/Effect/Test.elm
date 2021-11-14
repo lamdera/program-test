@@ -2,7 +2,7 @@ module Effect.Test exposing
     ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, RequestedBy(..), PortToJs
     , FrontendActions, sendToBackend, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
     , checkState, checkBackend, toTest, toSnapshots
-    , fakeNavigationKey
+    , fakeNavigationKey, viewer
     )
 
 {-| Setting up the simulation
@@ -19,7 +19,7 @@ Test the simulation
 
 Miscellaneous
 
-@docs fakeNavigationKey
+@docs fakeNavigationKey, viewer
 
 -}
 
@@ -27,6 +27,7 @@ import AssocList as Dict exposing (Dict)
 import Basics.Extra as Basics
 import Browser exposing (UrlRequest(..))
 import Browser.Dom
+import Browser.Navigation
 import Bytes exposing (Bytes)
 import Bytes.Decode
 import Bytes.Encode
@@ -39,6 +40,9 @@ import Effect.Internal exposing (Command(..), File, NavigationKey(..), Task(..))
 import Effect.Lamdera exposing (ClientId, SessionId)
 import Effect.Snapshot exposing (Snapshot)
 import Effect.Subscription exposing (Subscription)
+import Element exposing (Element)
+import Element.Border
+import Element.Input
 import Expect exposing (Expectation)
 import Html exposing (Html)
 import Html.Attributes
@@ -1919,3 +1923,169 @@ getDomTask frontendApp maybeClientId state htmlId function value =
     )
         |> function
         |> runTask maybeClientId frontendApp state
+
+
+
+-- Viewer
+
+
+type alias Model frontendModel =
+    { navigationKey : Browser.Navigation.Key
+    , currentTest : Maybe (TestView frontendModel)
+    }
+
+
+type alias TestView frontendModel =
+    { index : Int
+    , testName : String
+    , steps : Nonempty (TestStep frontendModel)
+    }
+
+
+type alias TestStep frontendModel =
+    { stepName : String
+    , frontends :
+        Dict
+            ClientId
+            { model : frontendModel
+            , sessionId : SessionId
+            , clipboard : String
+            , url : Url
+            , windowSize : { width : Int, height : Int }
+            }
+    }
+
+
+type Msg
+    = UrlClicked Browser.UrlRequest
+    | UrlChanged Url
+    | PressedViewTest Int
+
+
+init : () -> Url -> Browser.Navigation.Key -> ( Model frontendModel, Cmd Msg )
+init _ _ navigationKey =
+    ( { navigationKey = navigationKey, currentTest = Nothing }, Cmd.none )
+
+
+update :
+    List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> Msg
+    -> Model frontendModel
+    -> ( Model frontendModel, Cmd Msg )
+update tests msg model =
+    case msg of
+        UrlClicked urlRequest ->
+            case urlRequest of
+                Browser.Internal _ ->
+                    ( model, Cmd.none )
+
+                Browser.External url ->
+                    ( model, Browser.Navigation.load url )
+
+        UrlChanged _ ->
+            ( model, Cmd.none )
+
+        PressedViewTest index ->
+            case List.drop index tests |> List.head of
+                Just test ->
+                    let
+                        state =
+                            instructionsToState test
+                    in
+                    ( { model
+                        | currentTest =
+                            { index = index
+                            , testName = state.testName
+                            , steps =
+                                List.Nonempty.map
+                                    (\( stepName, state_ ) ->
+                                        { stepName = stepName
+                                        , frontends =
+                                            Dict.map
+                                                (\_ frontend ->
+                                                    { model = frontend.model
+                                                    , sessionId = frontend.sessionId
+                                                    , clipboard = frontend.clipboard
+                                                    , url = frontend.url
+                                                    , windowSize = frontend.windowSize
+                                                    }
+                                                )
+                                                state_.frontends
+                                        }
+                                    )
+                                    (flatten test)
+                            }
+                                |> Just
+                      }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+
+view :
+    List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> Model frontendModel
+    -> Browser.Document Msg
+view tests model =
+    { title = "Test viewer"
+    , body =
+        [ Element.layout
+            []
+            (case model.currentTest of
+                Just testView_ ->
+                    testView testView_
+
+                Nothing ->
+                    overview tests
+            )
+        ]
+    }
+
+
+overview : List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) -> Element Msg
+overview tests =
+    tests
+        |> List.indexedMap
+            (\index test ->
+                Element.Input.button
+                    [ Element.width Element.fill
+                    , Element.padding 8
+                    , Element.Border.width 1
+                    , Element.Border.color (Element.rgb 0.2 0.2 0.2)
+                    , Element.Border.rounded 4
+                    ]
+                    { onPress = PressedViewTest index |> Just
+                    , label =
+                        instructionsToState test
+                            |> .testName
+                            |> Element.text
+                            |> List.singleton
+                            |> Element.paragraph []
+                    }
+            )
+        |> Element.column [ Element.spacing 8 ]
+
+
+testView : TestView frontendModel -> Element Msg
+testView testView_ =
+    Element.column
+        []
+        []
+
+
+{-| View your end-to-end tests in a elm reactor style app.
+-}
+viewer :
+    List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> Program () (Model frontendModel) Msg
+viewer tests =
+    Browser.application
+        { init = init
+        , update = update tests
+        , view = view tests
+        , subscriptions = \_ -> Sub.none
+        , onUrlRequest = UrlClicked
+        , onUrlChange = UrlChanged
+        }
