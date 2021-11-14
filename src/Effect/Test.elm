@@ -1,5 +1,5 @@
 module Effect.Test exposing
-    ( init, connectFrontend, FrontendApp, BackendApp, HttpRequest, RequestedBy(..), PortToJs
+    ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, RequestedBy(..), PortToJs
     , FrontendActions, sendToBackend, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey
@@ -7,7 +7,7 @@ module Effect.Test exposing
 
 {-| Setting up the simulation
 
-@docs init, connectFrontend, FrontendApp, BackendApp, HttpRequest, RequestedBy, PortToJs
+@docs start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, RequestedBy, PortToJs
 
 Control the simulation
 
@@ -54,6 +54,46 @@ import Test.Html.Selector
 import Test.Runner
 import Time
 import Url exposing (Url)
+
+
+{-| Configure the simulation before starting it
+
+    import Backend
+    import Effect.Test
+    import Frontend
+    import Test exposing (Test)
+
+    config =
+        { frontendApp = Frontend.appFunctions
+        , backendApp = Backend.appFunctions
+        , handleHttpRequest = always NetworkError_
+        , handlePortToJs = always Nothing
+        , handleFileRequest = always Nothing
+        , domain = unsafeUrl "https://my-app.lamdera.app"
+        }
+
+    test : Test
+    test =
+        Effect.Test.start "myButton is clickable"
+            |> Effect.Test.connectFrontend
+                sessionId0
+                myDomain
+                { width = 1920, height = 1080 }
+                (\( state, frontendActions ) ->
+                    state
+                        |> frontendActions.clickButton { htmlId = "myButton" }
+                )
+            |> Effect.Test.toTest
+
+-}
+type alias Config toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
+    { frontendApp : FrontendApp toBackend frontendMsg frontendModel toFrontend
+    , backendApp : BackendApp toBackend toFrontend backendMsg backendModel
+    , handleHttpRequest : { currentRequest : HttpRequest, pastRequests : List HttpRequest } -> Effect.Http.Response Bytes
+    , handlePortToJs : { currentRequest : PortToJs, pastRequests : List PortToJs } -> Maybe ( String, Json.Decode.Value )
+    , handleFileRequest : { mimeTypes : List String } -> Maybe { name : String, mimeType : String, content : String, lastModified : Time.Posix }
+    , domain : Url
+    }
 
 
 {-| -}
@@ -537,21 +577,23 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
 
 {-| Setup a test.
 
+    import Backend
     import Effect.Test
+    import Frontend
     import Test exposing (Test)
 
-    testApp =
-        Effect.Test.testApp
-            Frontend.appFunctions
-            Backend.appFunctions
-            (always NetworkError_)
-            (always Nothing)
-            (always Nothing)
-            (unsafeUrl "https://my-app.lamdera.app")
+    config =
+        { frontendApp = Frontend.appFunctions
+        , backendApp = Backend.appFunctions
+        , handleHttpRequest = always NetworkError_
+        , handlePortToJs = always Nothing
+        , handleFileRequest = always Nothing
+        , domain = unsafeUrl "https://my-app.lamdera.app"
+        }
 
     test : Test
     test =
-        testApp "myButton is clickable"
+        Effect.Test.start "myButton is clickable"
             |> Effect.Test.connectFrontend
                 sessionId0
                 myDomain
@@ -563,42 +605,34 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
             |> Effect.Test.toTest
 
 -}
-init :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> BackendApp toBackend toFrontend backendMsg backendModel
-    -> ({ currentRequest : HttpRequest, pastRequests : List HttpRequest } -> Effect.Http.Response Bytes)
-    ->
-        ({ currentRequest : PortToJs, pastRequests : List PortToJs }
-         -> Maybe ( String, Json.Decode.Value )
-        )
-    -> ({ mimeTypes : List String } -> Maybe { name : String, mimeType : String, content : String, lastModified : Time.Posix })
-    -> Url
+start :
+    Config toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> String
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-init frontendApp backendApp handleHttpRequest handlePortToJs handleFileRequest domain testName =
+start config testName =
     let
         ( backend, effects ) =
-            backendApp.init
+            config.backendApp.init
 
         state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         state =
             { testName = testName
-            , frontendApp = frontendApp
-            , backendApp = backendApp
+            , frontendApp = config.frontendApp
+            , backendApp = config.backendApp
             , backend = backend
             , pendingEffects = effects
             , frontends = Dict.empty
             , counter = 0
             , elapsedTime = Quantity.zero
             , toBackend = []
-            , timers = getTimers startTime (backendApp.subscriptions backend)
+            , timers = getTimers startTime (config.backendApp.subscriptions backend)
             , testErrors = []
             , httpRequests = []
-            , handleHttpRequest = handleHttpRequest
-            , handlePortToJs = handlePortToJs
+            , handleHttpRequest = config.handleHttpRequest
+            , handlePortToJs = config.handlePortToJs
             , portRequests = []
-            , handleFileRequest = handleFileRequest >> Maybe.map Effect.Internal.MockFile
-            , domain = domain
+            , handleFileRequest = config.handleFileRequest >> Maybe.map Effect.Internal.MockFile
+            , domain = config.domain
             , snapshots = []
             }
     in
@@ -957,8 +991,8 @@ formatHtmlError description =
     in
     List.map2 Tuple.pair stylesStart stylesEnd
         |> List.foldr
-            (\( start, end ) text ->
-                String.slice 0 (start + String.length "<style>") text
+            (\( first, end ) text ->
+                String.slice 0 (first + String.length "<style>") text
                     ++ "..."
                     ++ String.slice end (String.length text + 999) text
             )
