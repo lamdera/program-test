@@ -2,7 +2,7 @@ module Effect.Test exposing
     ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, RequestedBy(..), PortToJs
     , FrontendActions, sendToBackend, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
     , checkState, checkBackend, toTest, toSnapshots
-    , fakeNavigationKey, viewer
+    , fakeNavigationKey, viewer, Msg, Model
     )
 
 {-| Setting up the simulation
@@ -19,7 +19,7 @@ Test the simulation
 
 Miscellaneous
 
-@docs fakeNavigationKey, viewer
+@docs fakeNavigationKey, viewer, Msg, Model
 
 -}
 
@@ -1929,6 +1929,7 @@ getDomTask frontendApp maybeClientId state htmlId function value =
 -- Viewer
 
 
+{-| -}
 type alias Model frontendModel =
     { navigationKey : Browser.Navigation.Key
     , currentTest : Maybe (TestView frontendModel)
@@ -1938,6 +1939,7 @@ type alias Model frontendModel =
 type alias TestView frontendModel =
     { index : Int
     , testName : String
+    , stepIndex : Int
     , steps : Nonempty (TestStep frontendModel)
     }
 
@@ -1956,10 +1958,12 @@ type alias TestStep frontendModel =
     }
 
 
+{-| -}
 type Msg
     = UrlClicked Browser.UrlRequest
     | UrlChanged Url
     | PressedViewTest Int
+    | NoOp
 
 
 init : () -> Url -> Browser.Navigation.Key -> ( Model frontendModel, Cmd Msg )
@@ -1986,7 +1990,7 @@ update tests msg model =
             ( model, Cmd.none )
 
         PressedViewTest index ->
-            case List.drop index tests |> List.head of
+            case getAt index tests of
                 Just test ->
                     let
                         state =
@@ -2014,6 +2018,7 @@ update tests msg model =
                                         }
                                     )
                                     (flatten test)
+                            , stepIndex = 0
                             }
                                 |> Just
                       }
@@ -2022,6 +2027,9 @@ update tests msg model =
 
                 Nothing ->
                     ( model, Cmd.none )
+
+        NoOp ->
+            ( model, Cmd.none )
 
 
 view :
@@ -2035,13 +2043,23 @@ view tests model =
             []
             (case model.currentTest of
                 Just testView_ ->
-                    testView testView_
+                    case getAt testView_.index tests of
+                        Just instructions ->
+                            testView instructions testView_
+
+                        Nothing ->
+                            Element.none
 
                 Nothing ->
                     overview tests
             )
         ]
     }
+
+
+getAt : Int -> List a -> Maybe a
+getAt index list =
+    List.drop index list |> List.head
 
 
 overview : List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) -> Element Msg
@@ -2068,11 +2086,42 @@ overview tests =
         |> Element.column [ Element.spacing 8 ]
 
 
-testView : TestView frontendModel -> Element Msg
-testView testView_ =
-    Element.column
-        []
-        []
+testView :
+    Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> TestView frontendModel
+    -> Element Msg
+testView instructions testView_ =
+    let
+        state =
+            instructionsToState instructions
+    in
+    Element.row
+        [ Element.width Element.fill
+        , Element.height Element.fill
+        ]
+        (List.Nonempty.get testView_.stepIndex testView_.steps
+            |> .frontends
+            |> Dict.toList
+            |> List.map
+                (\( clientId, frontend ) ->
+                    state.frontendApp.view frontend.model
+                        |> .body
+                        |> Html.node "body" []
+                        |> List.singleton
+                        |> Html.iframe
+                            [ Html.Attributes.width frontend.windowSize.width
+                            , Html.Attributes.height frontend.windowSize.height
+                            ]
+                        |> Element.html
+                        |> Element.map (\_ -> NoOp)
+                        |> Element.el
+                            [ Element.Border.width 1
+                            , Element.Border.color (Element.rgb 0 0 0)
+                            , Element.width Element.fill
+                            , Element.height Element.fill
+                            ]
+                )
+        )
 
 
 {-| View your end-to-end tests in a elm reactor style app.
