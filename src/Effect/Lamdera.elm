@@ -26,6 +26,7 @@ import Process
 import Task
 import Time
 import Url
+import WebGL.Texture
 
 
 {-| Create a Lamdera frontend application
@@ -429,6 +430,17 @@ toTask simulatedTask =
                 MockFile { content } ->
                     -- This isn't the correct behavior but it should be okay as MockFile should never be used here.
                     Task.succeed content |> Task.andThen (\result -> toTask (function result))
+
+        Effect.Internal.LoadTexture loadTextureOptions string function ->
+            WebGL.Texture.loadWith
+                { magnify = Resize Bigger
+                , minify = Resize Smaller
+                , horizontalWrap = Wrap
+                , verticalWrap = Wrap
+                , flipY = Bool
+                }
+                string
+                |> Task.andThen (\result -> toTask (function result))
 
 
 toSub : Subscription restriction msg -> Sub msg
