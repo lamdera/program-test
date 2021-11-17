@@ -17,6 +17,7 @@ import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
 import Effect.Http
 import Effect.Internal exposing (File(..), NavigationKey(..))
 import Effect.Subscription exposing (Subscription)
+import Effect.WebGL.Texture
 import File
 import File.Download
 import File.Select
@@ -431,15 +432,53 @@ toTask simulatedTask =
                     -- This isn't the correct behavior but it should be okay as MockFile should never be used here.
                     Task.succeed content |> Task.andThen (\result -> toTask (function result))
 
-        Effect.Internal.LoadTexture loadTextureOptions string function ->
+        Effect.Internal.LoadTexture options string function ->
+            let
+                convertWrap wrap =
+                    case wrap of
+                        Effect.Internal.Repeat ->
+                            WebGL.Texture.repeat
+
+                        Effect.Internal.ClampToEdge ->
+                            WebGL.Texture.clampToEdge
+
+                        Effect.Internal.MirroredRepeat ->
+                            WebGL.Texture.mirroredRepeat
+            in
             WebGL.Texture.loadWith
-                { magnify = Resize Bigger
-                , minify = Resize Smaller
-                , horizontalWrap = Wrap
-                , verticalWrap = Wrap
-                , flipY = Bool
+                { magnify =
+                    case options.magnify of
+                        Effect.Internal.Linear ->
+                            WebGL.Texture.linear
+
+                        _ ->
+                            WebGL.Texture.nearest
+                , minify =
+                    case options.minify of
+                        Effect.Internal.Linear ->
+                            WebGL.Texture.linear
+
+                        Effect.Internal.Nearest ->
+                            WebGL.Texture.nearest
+
+                        Effect.Internal.NearestMipmapNearest ->
+                            WebGL.Texture.nearestMipmapNearest
+
+                        Effect.Internal.LinearMipmapNearest ->
+                            WebGL.Texture.linearMipmapNearest
+
+                        Effect.Internal.NearestMipmapLinear ->
+                            WebGL.Texture.nearestMipmapLinear
+
+                        Effect.Internal.LinearMipmapLinear ->
+                            WebGL.Texture.linearMipmapLinear
+                , horizontalWrap = convertWrap options.horizontalWrap
+                , verticalWrap = convertWrap options.verticalWrap
+                , flipY = options.flipY
                 }
                 string
+                |> Task.map (Effect.Internal.RealTexture >> Ok)
+                |> Task.onError (Err >> Task.succeed)
                 |> Task.andThen (\result -> toTask (function result))
 
 

@@ -16,7 +16,6 @@ module Effect.Internal exposing
     , Subscription(..)
     , Task(..)
     , Texture(..)
-    , TextureLoadError(..)
     , Visibility(..)
     , Wrap(..)
     , andThen
@@ -121,17 +120,12 @@ type Task restriction x a
     | FileToString File (String -> Task restriction x a)
     | FileToBytes File (Bytes -> Task restriction x a)
     | FileToUrl File (String -> Task restriction x a)
-    | LoadTexture LoadTextureOptions String (Result TextureLoadError Texture -> Task restriction x a)
+    | LoadTexture LoadTextureOptions String (Result WebGL.Texture.Error Texture -> Task restriction x a)
 
 
 type Texture
     = RealTexture WebGL.Texture.Texture
     | MockTexture Int Int
-
-
-type TextureLoadError
-    = LoadError
-    | SizeError Int Int
 
 
 type Bigger
@@ -143,7 +137,9 @@ type Smaller
 
 
 type Wrap
-    = Wrap Int
+    = Repeat
+    | ClampToEdge
+    | MirroredRepeat
 
 
 type Resize a

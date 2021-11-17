@@ -44,7 +44,6 @@ module Effect.WebGL.Texture exposing
 import Effect.Command exposing (FrontendOnly)
 import Effect.Internal
 import Effect.Task exposing (Task)
-import Elm.Kernel.Texture
 import WebGL.Texture
 
 
@@ -53,7 +52,7 @@ You can create a texture with [`load`](#load) or [`loadWith`](#loadWith)
 and measure its dimensions with [`size`](#size).
 -}
 type alias Texture =
-    WebGL.Texture.Texture
+    Effect.Internal.Texture
 
 
 {-| Loads a texture from the given url with default options.
@@ -96,8 +95,21 @@ type Error
 {-| Same as load, but allows to set options.
 -}
 loadWith : Options -> String -> Task FrontendOnly Error Texture
-loadWith =
+loadWith options texturePath =
     Effect.Internal.LoadTexture
+        options
+        texturePath
+        (\result ->
+            case result of
+                Ok ok ->
+                    Effect.Internal.Succeed ok
+
+                Err WebGL.Texture.LoadError ->
+                    Effect.Internal.Fail LoadError
+
+                Err (WebGL.Texture.SizeError width height) ->
+                    Effect.Internal.Fail (SizeError width height)
+        )
 
 
 {-| `Options` describe how to:
@@ -254,7 +266,7 @@ type alias Smaller =
 {-| Sets the wrap parameter for texture coordinate.
 -}
 type alias Wrap =
-    WebGL.Texture.Wrap
+    Effect.Internal.Wrap
 
 
 {-| Causes the integer part of the coordinate to be ignored. This is the
@@ -262,7 +274,7 @@ default value for both texture axis.
 -}
 repeat : Wrap
 repeat =
-    WebGL.Texture.repeat
+    Effect.Internal.Repeat
 
 
 {-| Causes coordinates to be clamped to the range 1 2N 1 - 1 2N, where N is
@@ -270,7 +282,7 @@ the size of the texture in the direction of clamping.
 -}
 clampToEdge : Wrap
 clampToEdge =
-    WebGL.Texture.clampToEdge
+    Effect.Internal.ClampToEdge
 
 
 {-| Causes the coordinate c to be set to the fractional part of the texture
@@ -280,12 +292,17 @@ of the coordinate.
 -}
 mirroredRepeat : Wrap
 mirroredRepeat =
-    WebGL.Texture.mirroredRepeat
+    Effect.Internal.MirroredRepeat
 
 
 {-| Return the (width, height) size of a texture. Useful for sprite sheets
 or other times you may want to use only a potion of a texture image.
 -}
 size : Texture -> ( Int, Int )
-size =
-    WebGL.Texture.size
+size texture =
+    case texture of
+        Effect.Internal.RealTexture texture_ ->
+            WebGL.Texture.size texture_
+
+        Effect.Internal.MockTexture width height ->
+            ( width, height )
