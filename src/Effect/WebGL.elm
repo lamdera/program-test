@@ -351,8 +351,3 @@ to worry about synchronization between frames.
 preserveDrawingBuffer : Option
 preserveDrawingBuffer =
     WebGL.preserveDrawingBuffer
-
-noOpShader =
-    [|
-
-    |]

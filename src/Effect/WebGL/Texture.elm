@@ -1,5 +1,5 @@
 module Effect.WebGL.Texture exposing
-    ( Texture, load, Error(..), size
+    ( Texture, load, Error(..), size, unwrap
     , loadWith, Options, defaultOptions
     , Resize, linear, nearest
     , nearestMipmapLinear, nearestMipmapNearest
@@ -14,7 +14,7 @@ module Effect.WebGL.Texture exposing
 
 # Texture
 
-@docs Texture, load, Error, size
+@docs Texture, load, Error, size, unwrap
 
 
 # Custom Loading
@@ -53,6 +53,19 @@ and measure its dimensions with [`size`](#size).
 -}
 type alias Texture =
     Effect.Internal.Texture
+
+
+{-| Unfortunately in order to make this API work with Shaders, you need call this function to get the actual native Texture.
+This will return Nothing when running in a test and Just when running in a browser.
+-}
+unwrap : Texture -> Maybe WebGL.Texture.Texture
+unwrap texture =
+    case texture of
+        Effect.Internal.RealTexture texture_ ->
+            Just texture_
+
+        Effect.Internal.MockTexture _ _ ->
+            Nothing
 
 
 {-| Loads a texture from the given url with default options.
