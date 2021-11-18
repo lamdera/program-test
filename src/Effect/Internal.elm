@@ -1,5 +1,6 @@
 module Effect.Internal exposing
     ( BackendOnly
+    , Bigger(..)
     , BrowserDomError(..)
     , ClientId(..)
     , Command(..)
@@ -9,10 +10,14 @@ module Effect.Internal exposing
     , HttpPart(..)
     , HttpRequest
     , NavigationKey(..)
+    , Resize(..)
     , SessionId(..)
+    , Smaller(..)
     , Subscription(..)
     , Task(..)
+    , Texture(..)
     , Visibility(..)
+    , Wrap(..)
     , andThen
     , taskMap
     , taskMapError
@@ -27,6 +32,7 @@ import Http
 import Json.Decode
 import Json.Encode
 import Time
+import WebGL.Texture
 
 
 type SessionId
@@ -114,6 +120,44 @@ type Task restriction x a
     | FileToString File (String -> Task restriction x a)
     | FileToBytes File (Bytes -> Task restriction x a)
     | FileToUrl File (String -> Task restriction x a)
+    | LoadTexture LoadTextureOptions String (Result WebGL.Texture.Error Texture -> Task restriction x a)
+
+
+type Texture
+    = RealTexture WebGL.Texture.Texture
+    | MockTexture Int Int
+
+
+type Bigger
+    = Bigger
+
+
+type Smaller
+    = Smaller
+
+
+type Wrap
+    = Repeat
+    | ClampToEdge
+    | MirroredRepeat
+
+
+type Resize a
+    = Linear
+    | Nearest
+    | NearestMipmapNearest
+    | LinearMipmapNearest
+    | NearestMipmapLinear
+    | LinearMipmapLinear
+
+
+type alias LoadTextureOptions =
+    { magnify : Resize Bigger
+    , minify : Resize Smaller
+    , horizontalWrap : Wrap
+    , verticalWrap : Wrap
+    , flipY : Bool
+    }
 
 
 type NavigationKey
@@ -237,6 +281,9 @@ andThen f task =
         FileToUrl file function ->
             FileToUrl file (function >> andThen f)
 
+        LoadTexture loadTextureOptions string function ->
+            LoadTexture loadTextureOptions string (function >> andThen f)
+
 
 taskMapError : (x -> y) -> Task restriction x a -> Task restriction y a
 taskMapError f task =
@@ -310,3 +357,6 @@ taskMapError f task =
 
         FileToUrl file function ->
             FileToUrl file (function >> taskMapError f)
+
+        LoadTexture loadTextureOptions string function ->
+            LoadTexture loadTextureOptions string (function >> taskMapError f)

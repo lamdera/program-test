@@ -426,3 +426,6 @@ onError f task =
 
         FileToUrl file function ->
             FileToUrl file (function >> onError f)
+
+        LoadTexture loadTextureOptions string function ->
+            LoadTexture loadTextureOptions string (function >> onError f)

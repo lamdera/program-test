@@ -1892,6 +1892,9 @@ runTask maybeClientId frontendApp state task =
         SetViewportOf htmlId _ _ function ->
             getDomTask frontendApp maybeClientId state htmlId function ()
 
+        LoadTexture _ _ function ->
+            Effect.Internal.MockTexture 1024 1024 |> Ok |> function |> runTask maybeClientId frontendApp state
+
 
 getDomTask :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
