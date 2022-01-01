@@ -1,3 +1,5 @@
+⚠️ This is pre-release software. If you'd like to test the bleeding edge, ask on [Discord](https://dashboard.lamdera.app/docs/discuss).
+
 # program-test
 
 Write tests that let you simulate a user interacting with your Lamdera app.
