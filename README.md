@@ -1,4 +1,4 @@
-⚠️ This is pre-release software and won't work on the current Lamdera release. If you'd like to test the bleeding edge, ask on [Discord](https://dashboard.lamdera.app/docs/discuss).
+⚠️ This is pre-release WIP software. If you'd like to help test the bleeding edge, ask on [Discord](https://dashboard.lamdera.app/docs/discuss).
 
 # program-test
 
