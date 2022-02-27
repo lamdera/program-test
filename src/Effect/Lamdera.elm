@@ -1,4 +1,7 @@
-module Effect.Lamdera exposing (frontend, backend, sendToBackend, sendToFrontend, sendToFrontends, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString)
+module Effect.Lamdera exposing
+    ( frontend, backend, sendToBackend, sendToFrontend, sendToFrontends, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString
+    , toCmd
+    )
 
 {-| backend
 
@@ -280,6 +283,9 @@ toCmd broadcastCmd toFrontendCmd toBackendCmd effect =
 
         Effect.Internal.HttpCancel string ->
             Http.cancel string
+
+        Effect.Internal.Passthrough cmd ->
+            cmd
 
 
 httpHelper httpRequest resolver =

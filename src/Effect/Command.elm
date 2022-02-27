@@ -1,6 +1,7 @@
 module Effect.Command exposing
     ( Command, none, batch, sendToJs, FrontendOnly, BackendOnly
     , map
+    , fromCmd
     )
 
 {-|
@@ -193,3 +194,18 @@ map mapToMsg mapMsg frontendEffect =
 
         HttpCancel string ->
             HttpCancel string
+
+        Passthrough cmd ->
+            Passthrough (cmd |> Cmd.map mapMsg)
+
+
+{-| Escape hatch for `Cmd msg` values.
+
+No tests can be applied to this value, it will be completely ignored by program-test.
+
+You should not be using this function except temporarily in a progressive implementation of program-test.
+
+-}
+fromCmd : String -> Cmd msg -> Command restriction toMsg msg
+fromCmd reason cmd =
+    Passthrough cmd

@@ -1520,6 +1520,9 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
             -- TODO
             state
 
+        Passthrough cmd ->
+            state
+
 
 getPortSubscriptions :
     Subscription FrontendOnly frontendMsg
@@ -1692,6 +1695,9 @@ runBackendEffects frontendApp backendApp effect state =
 
         HttpCancel string ->
             -- TODO
+            state
+
+        Passthrough cmd ->
             state
 
 

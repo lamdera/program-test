@@ -1,6 +1,7 @@
 module Effect.Browser.Navigation exposing
     ( Key, pushUrl, replaceUrl, back, forward
     , load, reload, reloadAndSkipCache, fromInternalKey
+    , withRealKey
     )
 
 {-| This module helps you manage the browser’s URL yourself. This is the
@@ -205,3 +206,17 @@ results in a page load!** It is more common to want [`reload`](#reload).
 reloadAndSkipCache : Command FrontendOnly toMsg msg
 reloadAndSkipCache =
     Effect.Internal.NavigationReloadAndSkipCache
+
+
+{-| Escape hatch for extracting a Browser.Navigation.Key in non-test code. **This will
+cause a stack overflow if used in tests!**.
+-}
+withRealKey : Key -> Browser.Navigation.Key
+withRealKey k =
+    case k of
+        RealNavigationKey key ->
+            key
+
+        MockNavigationKey ->
+            -- Inifinite loop
+            withRealKey k

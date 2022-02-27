@@ -99,6 +99,7 @@ type Command restriction toMsg msg
     | FileSelectFile (List String) (File -> msg)
     | FileSelectFiles (List String) (File -> List File -> msg)
     | HttpCancel String
+    | Passthrough (Cmd msg)
 
 
 type Task restriction x a
