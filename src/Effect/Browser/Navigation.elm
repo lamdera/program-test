@@ -218,5 +218,19 @@ withRealKey k =
             key
 
         MockNavigationKey ->
-            -- Inifinite loop
-            withRealKey k
+            -- Stack overflow
+            crash ()
+
+
+crash : () -> a
+crash () =
+    let
+        _ =
+            causeStackOverflow 0
+    in
+    crash ()
+
+
+causeStackOverflow : Int -> Int
+causeStackOverflow value =
+    causeStackOverflow value + 1
