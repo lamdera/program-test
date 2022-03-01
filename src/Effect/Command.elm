@@ -25,6 +25,11 @@ module Effect.Command exposing
 
 @docs map
 
+
+# Temporary integration
+
+@docs fromCmd
+
 -}
 
 import Effect.Internal exposing (Command(..), NavigationKey, Subscription(..))

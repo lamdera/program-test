@@ -7,6 +7,11 @@ module Effect.Lamdera exposing
 
 @docs frontend, backend, sendToBackend, sendToFrontend, sendToFrontends, broadcast, onConnect, onDisconnect, ClientId, clientIdToString, clientIdFromString, SessionId, sessionIdToString, sessionIdFromString
 
+
+# Temporary integration
+
+@docs toCmd
+
 -}
 
 import Browser
@@ -189,6 +194,8 @@ clientIdToString (ClientId clientId) =
     clientId
 
 
+{-| Escape hatch for converting a `Command` to a regular `Cmd` in non-test code.
+-}
 toCmd : (toMsg -> Cmd msg) -> (String -> toMsg -> Cmd msg) -> (toMsg -> Cmd msg) -> Command restriction toMsg msg -> Cmd msg
 toCmd broadcastCmd toFrontendCmd toBackendCmd effect =
     case effect of

@@ -42,6 +42,11 @@ want!
 
 @docs load, reload, reloadAndSkipCache, fromInternalKey
 
+
+# Temporary integration
+
+@docs withRealKey
+
 -}
 
 import Browser.Navigation
