@@ -1972,6 +1972,8 @@ type Msg
     = UrlClicked Browser.UrlRequest
     | UrlChanged Url
     | PressedViewTest Int
+    | PressedStepBackward
+    | PressedStepForward
     | NoOp
 
 
@@ -2040,6 +2042,37 @@ update tests msg model =
         NoOp ->
             ( model, Cmd.none )
 
+        PressedStepForward ->
+            ( { model
+                | currentTest =
+                    case model.currentTest of
+                        Just currentTest ->
+                            { currentTest
+                                | stepIndex =
+                                    min (List.Nonempty.length currentTest.steps - 1) (currentTest.stepIndex + 1)
+                            }
+                                |> Just
+
+                        Nothing ->
+                            Nothing
+              }
+            , Cmd.none
+            )
+
+        PressedStepBackward ->
+            ( { model
+                | currentTest =
+                    case model.currentTest of
+                        Just currentTest ->
+                            { currentTest | stepIndex = max 0 (currentTest.stepIndex - 1) }
+                                |> Just
+
+                        Nothing ->
+                            Nothing
+              }
+            , Cmd.none
+            )
+
 
 view :
     List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
@@ -2104,33 +2137,42 @@ testView instructions testView_ =
         state =
             instructionsToState instructions
     in
-    Element.row
-        [ Element.width Element.fill
-        , Element.height Element.fill
+    Element.column
+        [ Element.spacing 8 ]
+        [ Element.row
+            [ Element.spacing 8 ]
+            [ Element.Input.button [] { onPress = Just PressedStepBackward, label = Element.text "Step backward" }
+            , Element.Input.button [] { onPress = Just PressedStepForward, label = Element.text "Step forward" }
+            , Element.text testView_.testName
+            ]
+        , Element.row
+            [ Element.width Element.fill
+            , Element.height Element.fill
+            ]
+            (List.Nonempty.get testView_.stepIndex testView_.steps
+                |> .frontends
+                |> Dict.toList
+                |> List.map
+                    (\( clientId, frontend ) ->
+                        state.frontendApp.view frontend.model
+                            |> .body
+                            |> Html.node "body" []
+                            |> List.singleton
+                            |> Html.iframe
+                                [ Html.Attributes.width frontend.windowSize.width
+                                , Html.Attributes.height frontend.windowSize.height
+                                ]
+                            |> Element.html
+                            |> Element.map (\_ -> NoOp)
+                            |> Element.el
+                                [ Element.Border.width 1
+                                , Element.Border.color (Element.rgb 0 0 0)
+                                , Element.width Element.fill
+                                , Element.height Element.fill
+                                ]
+                    )
+            )
         ]
-        (List.Nonempty.get testView_.stepIndex testView_.steps
-            |> .frontends
-            |> Dict.toList
-            |> List.map
-                (\( clientId, frontend ) ->
-                    state.frontendApp.view frontend.model
-                        |> .body
-                        |> Html.node "body" []
-                        |> List.singleton
-                        |> Html.iframe
-                            [ Html.Attributes.width frontend.windowSize.width
-                            , Html.Attributes.height frontend.windowSize.height
-                            ]
-                        |> Element.html
-                        |> Element.map (\_ -> NoOp)
-                        |> Element.el
-                            [ Element.Border.width 1
-                            , Element.Border.color (Element.rgb 0 0 0)
-                            , Element.width Element.fill
-                            , Element.height Element.fill
-                            ]
-                )
-        )
 
 
 {-| View your end-to-end tests in a elm reactor style app.
