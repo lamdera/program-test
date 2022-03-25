@@ -2141,9 +2141,29 @@ testView instructions testView_ =
         [ Element.spacing 8 ]
         [ Element.row
             [ Element.spacing 8 ]
-            [ Element.Input.button [] { onPress = Just PressedStepBackward, label = Element.text "Step backward" }
-            , Element.Input.button [] { onPress = Just PressedStepForward, label = Element.text "Step forward" }
-            , Element.text testView_.testName
+            [ Element.Input.button buttonAttributes
+                { onPress = Just PressedStepBackward
+                , label = Element.text "Step backward"
+                }
+            , Element.Input.button buttonAttributes
+                { onPress = Just PressedStepForward
+                , label = Element.text "Step forward"
+                }
+            , Element.text
+                (String.fromInt (testView_.stepIndex + 1)
+                    ++ "/"
+                    ++ String.fromInt (List.Nonempty.length testView_.steps)
+                )
+            , case
+                List.Nonempty.toList testView_.steps
+                    |> List.drop testView_.stepIndex
+                    |> List.head
+              of
+                Just step ->
+                    Element.text step.stepName
+
+                Nothing ->
+                    Element.none
             ]
         , Element.row
             [ Element.width Element.fill
@@ -2173,6 +2193,13 @@ testView instructions testView_ =
                     )
             )
         ]
+
+
+buttonAttributes =
+    [ Element.Border.width 1
+    , Element.Border.color (Element.rgb 0.3 0.3 0.3)
+    , Element.padding 4
+    ]
 
 
 {-| View your end-to-end tests in a elm reactor style app.
