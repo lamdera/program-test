@@ -117,7 +117,7 @@ map mapFunc subscription =
             Effect.Internal.OnKeyPress (Json.Decode.map mapFunc decoder)
 
         Effect.Internal.OnKeyDown decoder ->
-            Effect.Internal.OnKeyPress (Json.Decode.map mapFunc decoder)
+            Effect.Internal.OnKeyDown (Json.Decode.map mapFunc decoder)
 
         Effect.Internal.OnKeyUp decoder ->
             Effect.Internal.OnKeyUp (Json.Decode.map mapFunc decoder)
