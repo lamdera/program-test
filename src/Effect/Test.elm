@@ -24,7 +24,6 @@ Miscellaneous
 -}
 
 import AssocList as Dict exposing (Dict)
-import Basics.Extra as Basics
 import Browser exposing (UrlRequest(..))
 import Browser.Dom
 import Browser.Navigation
@@ -40,19 +39,21 @@ import Effect.Internal exposing (Command(..), File, NavigationKey(..), Task(..))
 import Effect.Lamdera exposing (ClientId, SessionId)
 import Effect.Snapshot exposing (Snapshot)
 import Effect.Subscription exposing (Subscription)
-import Element exposing (Element)
-import Element.Border
-import Element.Input
 import Expect exposing (Expectation)
 import Html exposing (Html)
 import Html.Attributes
+import Html.Events
 import Http
 import Json.Decode
 import Json.Encode
 import List.Nonempty exposing (Nonempty)
+import Process
 import Quantity
+import Task
 import Test exposing (Test)
 import Test.Html.Event
+import Test.Html.Internal.ElmHtml.ToString
+import Test.Html.Internal.Inert
 import Test.Html.Query
 import Test.Html.Selector
 import Test.Runner
@@ -112,7 +113,7 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
     , elapsedTime : Duration
     , toBackend : List ( SessionId, ClientId, toBackend )
     , timers : Dict Duration { msg : Time.Posix -> backendMsg, startTime : Time.Posix }
-    , testErrors : List String
+    , testErrors : List TestError
     , httpRequests : List HttpRequest
     , handleHttpRequest :
         { currentRequest : HttpRequest, pastRequests : List HttpRequest }
@@ -203,6 +204,13 @@ httpPartFromInternal part =
             BytesPart { key = key, mimeType = mimeType, content = bytes }
 
 
+type TestError
+    = CustomError String
+    | ClientIdNotFound ClientId
+    | ViewTestError String
+    | InvalidUrl String
+
+
 {-| -}
 type HttpPart
     = StringPart String String
@@ -231,7 +239,7 @@ checkState checkFunc =
                     state
 
                 Err error ->
-                    { state | testErrors = state.testErrors ++ [ error ] }
+                    addTestError (CustomError error) state
         )
 
 
@@ -249,7 +257,7 @@ checkBackend checkFunc =
                     state
 
                 Err error ->
-                    { state | testErrors = state.testErrors ++ [ error ] }
+                    addTestError (CustomError error) state
         )
 
 
@@ -270,18 +278,15 @@ checkFrontend clientId checkFunc =
                             state
 
                         Err error ->
-                            { state | testErrors = state.testErrors ++ [ error ] }
+                            addTestError (CustomError error) state
 
                 Nothing ->
-                    { state
-                        | testErrors =
-                            state.testErrors ++ [ "ClientId \"" ++ Effect.Lamdera.clientIdToString clientId ++ "\" not found." ]
-                    }
+                    addTestError (ClientIdNotFound clientId) state
         )
 
 
 addTestError :
-    String
+    TestError
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 addTestError error state =
@@ -308,17 +313,34 @@ checkView clientId query =
                             |> Test.Runner.getFailureReason
                     of
                         Just { description } ->
-                            { state | testErrors = state.testErrors ++ [ description ] }
+                            addTestError (ViewTestError description) state
 
                         Nothing ->
                             state
 
                 Nothing ->
-                    { state
-                        | testErrors =
-                            state.testErrors ++ [ "ClientId \"" ++ Effect.Lamdera.clientIdToString clientId ++ "\" not found." ]
-                    }
+                    addTestError (ClientIdNotFound clientId) state
         )
+
+
+testErrorToString : TestError -> String
+testErrorToString error =
+    case error of
+        CustomError text_ ->
+            text_
+
+        ClientIdNotFound clientId ->
+            "Client Id " ++ Effect.Lamdera.clientIdToString clientId ++ " not found"
+
+        ViewTestError string ->
+            if String.length string > 100 then
+                String.left 100 string ++ "..."
+
+            else
+                string
+
+        InvalidUrl string ->
+            string ++ " is not a valid url"
 
 
 {-| -}
@@ -332,7 +354,7 @@ toTest instructions =
         \() ->
             case state.testErrors of
                 firstError :: _ ->
-                    Expect.fail firstError
+                    testErrorToString firstError |> Expect.fail
 
                 [] ->
                     let
@@ -440,11 +462,18 @@ flatten :
     Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Nonempty ( String, State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel )
 flatten inProgress =
+    List.Nonempty.reverse (flattenHelper inProgress)
+
+
+flattenHelper :
+    Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Nonempty ( String, State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel )
+flattenHelper inProgress =
     case inProgress of
         NextStep name stepFunc inProgress_ ->
             let
                 list =
-                    flatten inProgress_
+                    flattenHelper inProgress_
 
                 previousState =
                     List.Nonempty.head list |> Tuple.second
@@ -454,12 +483,12 @@ flatten inProgress =
         AndThen andThenFunc inProgress_ ->
             let
                 list =
-                    flatten inProgress_
+                    flattenHelper inProgress_
 
                 previousState =
                     List.Nonempty.head list |> Tuple.second
             in
-            List.Nonempty.append (flatten (andThenFunc previousState)) list
+            List.Nonempty.append (flattenHelper (andThenFunc previousState)) list
 
         Start state ->
             List.Nonempty.fromElement ( "Start", state )
@@ -815,7 +844,7 @@ snapshotView clientId { name } =
                     }
 
                 Nothing ->
-                    addTestError "ClientId not found" state
+                    addTestError (ClientIdNotFound clientId) state
         )
 
 
@@ -851,8 +880,8 @@ inputText :
     -> String
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-inputText clientId htmlId text =
-    userEvent ("Input text \"" ++ text ++ "\"") clientId htmlId (Test.Html.Event.input text)
+inputText clientId htmlId text_ =
+    userEvent ("Input text \"" ++ text_ ++ "\"") clientId htmlId (Test.Html.Event.input text_)
 
 
 normalizeUrl : Url -> String -> String
@@ -916,15 +945,15 @@ clickLink clientId { href } =
                                     }
 
                                 Nothing ->
-                                    addTestError ("Invalid url: " ++ href) state
+                                    addTestError (InvalidUrl href) state
 
-                        Just err ->
+                        Just _ ->
                             addTestError
-                                ("Clicking link failed for " ++ href ++ ": " ++ formatHtmlError err.description)
+                                (CustomError ("Clicking link failed for " ++ href))
                                 state
 
                 Nothing ->
-                    addTestError "ClientId not found" state
+                    addTestError (ClientIdNotFound clientId) state
         )
 
 
@@ -971,16 +1000,16 @@ userEvent name clientId htmlId event =
                             case Test.Runner.getFailureReason (Test.Html.Query.has [] query) of
                                 Just { description } ->
                                     addTestError
-                                        ("User event failed for " ++ htmlIdString ++ ": " ++ formatHtmlError description)
+                                        (CustomError ("User event failed for element with id " ++ htmlIdString))
                                         state
 
                                 Nothing ->
                                     addTestError
-                                        ("User event failed for " ++ htmlIdString ++ ": " ++ err)
+                                        (CustomError ("Unable to find element with id " ++ htmlIdString))
                                         state
 
                 Nothing ->
-                    addTestError "ClientId not found" state
+                    addTestError (ClientIdNotFound clientId) state
         )
 
 
@@ -995,10 +1024,10 @@ formatHtmlError description =
     in
     List.map2 Tuple.pair stylesStart stylesEnd
         |> List.foldr
-            (\( first, end ) text ->
-                String.slice 0 (first + String.length "<style>") text
+            (\( first, end ) text_ ->
+                String.slice 0 (first + String.length "<style>") text_
                     ++ "..."
-                    ++ String.slice end (String.length text + 999) text
+                    ++ String.slice end (String.length text_ + 999) text_
             )
             description
 
@@ -1080,6 +1109,28 @@ animationFrame =
     Duration.seconds (1 / 60)
 
 
+{-| Copied from elm-community/basics-extra
+
+Perform [modular arithmetic](https://en.wikipedia.org/wiki/Modular_arithmetic)
+involving floating point numbers.
+
+The sign of the result is the same as the sign of the `modulus`
+in `fractionalModBy modulus x`.
+
+    fractionalModBy 2.5 5 --> 0
+
+    fractionalModBy 2 4.5 == 0.5
+
+    fractionalModBy 2 -4.5 == 1.5
+
+    fractionalModBy -2 4.5 == -1.5
+
+-}
+fractionalModBy : Float -> Float -> Float
+fractionalModBy modulus x =
+    x - modulus * toFloat (floor (x / modulus))
+
+
 simulateStep :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
@@ -1104,8 +1155,8 @@ simulateStep frontendApp backendApp state =
                             timerLength =
                                 Duration.inMilliseconds duration
                         in
-                        Basics.fractionalModBy timerLength (state.elapsedTime |> Quantity.minus offset |> Duration.inMilliseconds)
-                            > Basics.fractionalModBy timerLength (newTime |> Quantity.minus offset |> Duration.inMilliseconds)
+                        fractionalModBy timerLength (state.elapsedTime |> Quantity.minus offset |> Duration.inMilliseconds)
+                            > fractionalModBy timerLength (newTime |> Quantity.minus offset |> Duration.inMilliseconds)
                     )
 
         ( newBackend, newBackendEffects ) =
@@ -1942,6 +1993,7 @@ getDomTask frontendApp maybeClientId state htmlId function value =
 type alias Model frontendModel =
     { navigationKey : Browser.Navigation.Key
     , currentTest : Maybe (TestView frontendModel)
+    , testResults : List (Result TestError ())
     }
 
 
@@ -1955,6 +2007,7 @@ type alias TestView frontendModel =
 
 type alias TestStep frontendModel =
     { stepName : String
+    , errors : List TestError
     , frontends :
         Dict
             ClientId
@@ -1974,12 +2027,16 @@ type Msg
     | PressedViewTest Int
     | PressedStepBackward
     | PressedStepForward
+    | PressedBackToOverview
+    | ShortPauseFinished
     | NoOp
 
 
 init : () -> Url -> Browser.Navigation.Key -> ( Model frontendModel, Cmd Msg )
 init _ _ navigationKey =
-    ( { navigationKey = navigationKey, currentTest = Nothing }, Cmd.none )
+    ( { navigationKey = navigationKey, currentTest = Nothing, testResults = [] }
+    , Process.sleep 0 |> Task.perform (\() -> ShortPauseFinished)
+    )
 
 
 update :
@@ -2015,6 +2072,7 @@ update tests msg model =
                                 List.Nonempty.map
                                     (\( stepName, state_ ) ->
                                         { stepName = stepName
+                                        , errors = state_.testErrors
                                         , frontends =
                                             Dict.map
                                                 (\_ frontend ->
@@ -2073,6 +2131,29 @@ update tests msg model =
             , Cmd.none
             )
 
+        PressedBackToOverview ->
+            ( { model | currentTest = Nothing }, Cmd.none )
+
+        ShortPauseFinished ->
+            case getAt (List.length model.testResults) tests of
+                Just test ->
+                    ( { model
+                        | testResults =
+                            model.testResults
+                                ++ [ case instructionsToState test |> .testErrors of
+                                        firstError :: _ ->
+                                            Err firstError
+
+                                        [] ->
+                                            Ok ()
+                                   ]
+                      }
+                    , Process.sleep 0 |> Task.perform (\() -> ShortPauseFinished)
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
 
 view :
     List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
@@ -2081,20 +2162,17 @@ view :
 view tests model =
     { title = "Test viewer"
     , body =
-        [ Element.layout
-            []
-            (case model.currentTest of
-                Just testView_ ->
-                    case getAt testView_.index tests of
-                        Just instructions ->
-                            testView instructions testView_
+        [ case model.currentTest of
+            Just testView_ ->
+                case getAt testView_.index tests of
+                    Just instructions ->
+                        testView instructions testView_
 
-                        Nothing ->
-                            Element.none
+                    Nothing ->
+                        text "Invalid index for tests"
 
-                Nothing ->
-                    overview tests
-            )
+            Nothing ->
+                overview tests model.testResults
         ]
     }
 
@@ -2104,102 +2182,183 @@ getAt index list =
     List.drop index list |> List.head
 
 
-overview : List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) -> Element Msg
-overview tests =
-    tests
-        |> List.indexedMap
-            (\index test ->
-                Element.Input.button
-                    [ Element.width Element.fill
-                    , Element.padding 8
-                    , Element.Border.width 1
-                    , Element.Border.color (Element.rgb 0.2 0.2 0.2)
-                    , Element.Border.rounded 4
+overview :
+    List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> List (Result TestError ())
+    -> Html Msg
+overview tests testResults_ =
+    List.foldl
+        (\test { index, testResults, elements } ->
+            { index = index + 1
+            , testResults = List.drop 1 testResults
+            , elements =
+                Html.div
+                    []
+                    [ button (PressedViewTest index) (getTestName test)
+                    , case testResults of
+                        (Ok ()) :: _ ->
+                            Html.span
+                                [ Html.Attributes.style "color" "rgb(0, 200, 0)"
+                                , Html.Attributes.style "padding" "4px"
+                                ]
+                                [ Html.text "Passed" ]
+
+                        (Err head) :: _ ->
+                            Html.span
+                                [ Html.Attributes.style "color" "rgb(200, 10, 10)"
+                                , Html.Attributes.style "padding" "4px"
+                                ]
+                                [ Html.text (testErrorToString head) ]
+
+                        [] ->
+                            Html.text ""
                     ]
-                    { onPress = PressedViewTest index |> Just
-                    , label =
-                        instructionsToState test
-                            |> .testName
-                            |> Element.text
-                            |> List.singleton
-                            |> Element.paragraph []
-                    }
-            )
-        |> Element.column [ Element.spacing 8 ]
+                    :: elements
+            }
+        )
+        { index = 0, testResults = testResults_, elements = [] }
+        tests
+        |> .elements
+        |> List.reverse
+        |> (::) (titleText "End to end test viewer")
+        |> Html.div
+            [ Html.Attributes.style "padding" "8px"
+            , Html.Attributes.style "font-family" "arial"
+            , Html.Attributes.style "font-size" "16px"
+            ]
+
+
+button : msg -> String -> Html msg
+button onPress text_ =
+    Html.button
+        [ Html.Events.onClick onPress
+        , Html.Attributes.style "padding" "8px"
+        ]
+        [ Html.text text_ ]
+
+
+text : String -> Html msg
+text text_ =
+    Html.div
+        [ Html.Attributes.style "padding" "4px"
+        ]
+        [ Html.text text_ ]
+
+
+titleText : String -> Html msg
+titleText text_ =
+    Html.h1
+        [ Html.Attributes.style "font-size" "20px"
+        ]
+        [ Html.text text_ ]
+
+
+getViewFunc : Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> frontendModel -> List (Html frontendMsg)
+getViewFunc instructions =
+    case instructions of
+        NextStep _ _ instructions_ ->
+            getViewFunc instructions_
+
+        AndThen _ instructions_ ->
+            getViewFunc instructions_
+
+        Start state ->
+            \model -> state.frontendApp.view model |> .body
+
+
+getTestName : Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> String
+getTestName instructions =
+    case instructions of
+        NextStep _ _ instructions_ ->
+            getTestName instructions_
+
+        AndThen _ instructions_ ->
+            getTestName instructions_
+
+        Start state ->
+            state.testName
 
 
 testView :
     Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> TestView frontendModel
-    -> Element Msg
+    -> Html Msg
 testView instructions testView_ =
     let
-        state =
-            instructionsToState instructions
+        viewFunc : frontendModel -> List (Html frontendMsg)
+        viewFunc =
+            getViewFunc instructions
+
+        currentStep =
+            List.Nonempty.get testView_.stepIndex testView_.steps
     in
-    Element.column
-        [ Element.spacing 8 ]
-        [ Element.row
-            [ Element.spacing 8 ]
-            [ Element.Input.button buttonAttributes
-                { onPress = Just PressedStepBackward
-                , label = Element.text "Step backward"
-                }
-            , Element.Input.button buttonAttributes
-                { onPress = Just PressedStepForward
-                , label = Element.text "Step forward"
-                }
-            , Element.text
-                (String.fromInt (testView_.stepIndex + 1)
+    Html.div
+        [ Html.Attributes.style "padding" "8px"
+        , Html.Attributes.style "font-family" "arial"
+        , Html.Attributes.style "font-size" "16px"
+        ]
+        [ Html.div
+            []
+            [ button PressedBackToOverview "Back to overview"
+            , button PressedStepBackward "Step backward"
+            , button PressedStepForward "Step forward"
+            , text
+                (" "
+                    ++ String.fromInt (testView_.stepIndex + 1)
                     ++ "/"
                     ++ String.fromInt (List.Nonempty.length testView_.steps)
+                    ++ (" " ++ currentStep.stepName)
                 )
-            , case
-                List.Nonempty.toList testView_.steps
-                    |> List.drop testView_.stepIndex
-                    |> List.head
-              of
-                Just step ->
-                    Element.text step.stepName
-
-                Nothing ->
-                    Element.none
             ]
-        , Element.row
-            [ Element.width Element.fill
-            , Element.height Element.fill
+        , Html.div
+            [ Html.Attributes.style "color" "rgb(200, 10, 10)"
             ]
-            (List.Nonempty.get testView_.stepIndex testView_.steps
-                |> .frontends
-                |> Dict.toList
+            (List.map (testErrorToString >> text) currentStep.errors)
+        , Html.div
+            []
+            (Dict.toList currentStep.frontends
                 |> List.map
                     (\( clientId, frontend ) ->
-                        state.frontendApp.view frontend.model
-                            |> .body
-                            |> Html.node "body" []
-                            |> List.singleton
-                            |> Html.iframe
-                                [ Html.Attributes.width frontend.windowSize.width
-                                , Html.Attributes.height frontend.windowSize.height
+                        Html.div
+                            []
+                            [ "ClientId: " ++ Effect.Lamdera.clientIdToString clientId |> ellipsis 600
+                            , Url.toString frontend.url |> ellipsis 600
+                            , Html.iframe
+                                [ Html.Attributes.style "width" (String.fromInt frontend.windowSize.width ++ "px")
+                                , Html.Attributes.style "height" (String.fromInt frontend.windowSize.height ++ "px")
+                                , Html.Attributes.style "overflow" "scroll"
+                                , Html.Attributes.style "box-shadow" "0 0 8px 0 rgba(0,0,0,0.4)"
+                                , Html.Attributes.style "border" "0"
+                                , Html.node
+                                    "body"
+                                    []
+                                    (viewFunc frontend.model)
+                                    |> htmlToString
+                                    |> Result.withDefault "Error rendering html"
+                                    |> Html.Attributes.srcdoc
                                 ]
-                            |> Element.html
-                            |> Element.map (\_ -> NoOp)
-                            |> Element.el
-                                [ Element.Border.width 1
-                                , Element.Border.color (Element.rgb 0 0 0)
-                                , Element.width Element.fill
-                                , Element.height Element.fill
-                                ]
+                                []
+                            ]
                     )
             )
         ]
 
 
+ellipsis : Int -> String -> Html msg
+ellipsis width text_ =
+    Html.div
+        [ Html.Attributes.style "white-space" "nowrap"
+        , Html.Attributes.style "text-overflow" "ellipsis"
+        , Html.Attributes.style "width" (String.fromInt width ++ "px")
+        , Html.Attributes.style "overflow-x" "hidden"
+        , Html.Attributes.style "padding" "4px"
+        ]
+        [ Html.text text_ ]
+
+
+buttonAttributes : List (Html.Attribute msg)
 buttonAttributes =
-    [ Element.Border.width 1
-    , Element.Border.color (Element.rgb 0.3 0.3 0.3)
-    , Element.padding 4
-    ]
+    []
 
 
 {-| View your end-to-end tests in a elm reactor style app.
@@ -2216,3 +2375,12 @@ viewer tests =
         , onUrlRequest = UrlClicked
         , onUrlChange = UrlChanged
         }
+
+
+htmlToString : Html msg -> Result String String
+htmlToString html =
+    Test.Html.Internal.Inert.fromHtml html
+        |> Result.map
+            (Test.Html.Internal.Inert.toElmHtml
+                >> Test.Html.Internal.ElmHtml.ToString.nodeToString
+            )
