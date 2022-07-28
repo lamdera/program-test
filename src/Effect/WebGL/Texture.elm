@@ -51,8 +51,19 @@ import WebGL.Texture
 You can create a texture with [`load`](#load) or [`loadWith`](#loadWith)
 and measure its dimensions with [`size`](#size).
 -}
-type alias Texture =
-    Effect.Internal.Texture
+type Texture
+    = RealTexture WebGL.Texture.Texture
+    | MockTexture Int Int
+
+
+fromInternalFile : Effect.Internal.Texture -> Texture
+fromInternalFile file =
+    case file of
+        Effect.Internal.RealTexture realFile ->
+            RealTexture realFile
+
+        Effect.Internal.MockTexture width height ->
+            MockTexture width height
 
 
 {-| Unfortunately in order to make this API work with Shaders, you need call this function to get the actual native Texture.
@@ -61,10 +72,10 @@ This will return Nothing when running in a test and Just when running in a brows
 unwrap : Texture -> Maybe WebGL.Texture.Texture
 unwrap texture =
     case texture of
-        Effect.Internal.RealTexture texture_ ->
+        RealTexture texture_ ->
             Just texture_
 
-        Effect.Internal.MockTexture _ _ ->
+        MockTexture _ _ ->
             Nothing
 
 
@@ -115,7 +126,7 @@ loadWith options texturePath =
         (\result ->
             case result of
                 Ok ok ->
-                    Effect.Internal.Succeed ok
+                    Effect.Internal.Succeed (fromInternalFile ok)
 
                 Err WebGL.Texture.LoadError ->
                     Effect.Internal.Fail LoadError
@@ -314,8 +325,8 @@ or other times you may want to use only a potion of a texture image.
 size : Texture -> ( Int, Int )
 size texture =
     case texture of
-        Effect.Internal.RealTexture texture_ ->
+        RealTexture texture_ ->
             WebGL.Texture.size texture_
 
-        Effect.Internal.MockTexture width height ->
+        MockTexture width height ->
             ( width, height )
