@@ -1,6 +1,6 @@
 module Effect.Test exposing
     ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, RequestedBy(..), PortToJs
-    , FrontendActions, sendToBackend, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
+    , FrontendActions, sendToBackend, simulateTime, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model
     )
@@ -98,6 +98,7 @@ type alias Config toBackend frontendMsg frontendModel toFrontend backendMsg back
     , handlePortToJs : { currentRequest : PortToJs, pastRequests : List PortToJs } -> Maybe ( String, Json.Decode.Value )
     , handleFileRequest : { mimeTypes : List String } -> Maybe { name : String, mimeType : String, content : String, lastModified : Time.Posix }
     , domain : Url
+    , deployTime : Time.Posix
     }
 
 
@@ -110,7 +111,7 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
     , pendingEffects : Command BackendOnly toFrontend backendMsg
     , frontends : Dict ClientId (FrontendState toBackend frontendMsg frontendModel toFrontend)
     , counter : Int
-    , elapsedTime : Duration
+    , currentTime : Time.Posix
     , toBackend : List ( SessionId, ClientId, toBackend )
     , timers : Dict Duration { msg : Time.Posix -> backendMsg, startTime : Time.Posix }
     , testErrors : List TestError
@@ -656,7 +657,7 @@ start config testName =
             , pendingEffects = effects
             , frontends = Dict.empty
             , counter = 0
-            , elapsedTime = Quantity.zero
+            , currentTime = config.deployTime
             , toBackend = []
             , timers = getTimers startTime (config.backendApp.subscriptions backend)
             , testErrors = []
@@ -798,7 +799,7 @@ connectFrontend sessionId url windowSize andThenFunc =
                                 , pendingEffects = effects
                                 , toFrontend = []
                                 , clipboard = ""
-                                , timers = getTimers (Duration.addTo startTime state.elapsedTime) subscriptions
+                                , timers = getTimers state.currentTime subscriptions
                                 , url = url
                                 , windowSize = windowSize
                                 }
@@ -1131,69 +1132,71 @@ fractionalModBy modulus x =
     x - modulus * toFloat (floor (x / modulus))
 
 
-simulateStep :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> BackendApp toBackend toFrontend backendMsg backendModel
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-simulateStep frontendApp backendApp state =
-    let
-        newTime =
-            Quantity.plus state.elapsedTime animationFrame
 
-        getCompletedTimers : Dict Duration { a | startTime : Time.Posix } -> List ( Duration, { a | startTime : Time.Posix } )
-        getCompletedTimers timers =
-            Dict.toList timers
-                |> List.filter
-                    (\( duration, value ) ->
-                        let
-                            offset : Duration
-                            offset =
-                                Duration.from startTime value.startTime
-
-                            timerLength : Float
-                            timerLength =
-                                Duration.inMilliseconds duration
-                        in
-                        fractionalModBy timerLength (state.elapsedTime |> Quantity.minus offset |> Duration.inMilliseconds)
-                            > fractionalModBy timerLength (newTime |> Quantity.minus offset |> Duration.inMilliseconds)
-                    )
-
-        ( newBackend, newBackendEffects ) =
-            getCompletedTimers state.timers
-                |> List.foldl
-                    (\( _, { msg } ) ( backend, effects ) ->
-                        backendApp.update
-                            (msg (Duration.addTo startTime newTime))
-                            backend
-                            |> Tuple.mapSecond (\a -> Effect.Command.batch [ effects, a ])
-                    )
-                    ( state.backend, state.pendingEffects )
-    in
-    { state
-        | elapsedTime = newTime
-        , pendingEffects = newBackendEffects
-        , backend = newBackend
-        , frontends =
-            Dict.map
-                (\_ frontend ->
-                    let
-                        ( newFrontendModel, newFrontendEffects ) =
-                            getCompletedTimers frontend.timers
-                                |> List.foldl
-                                    (\( _, { msg } ) ( frontendModel, effects ) ->
-                                        frontendApp.update
-                                            (msg (Duration.addTo startTime newTime))
-                                            frontendModel
-                                            |> Tuple.mapSecond (\a -> Effect.Command.batch [ effects, a ])
-                                    )
-                                    ( frontend.model, frontend.pendingEffects )
-                    in
-                    { frontend | pendingEffects = newFrontendEffects, model = newFrontendModel }
-                )
-                state.frontends
-    }
-        |> runEffects frontendApp backendApp
+--
+--simulateStep :
+--    FrontendApp toBackend frontendMsg frontendModel toFrontend
+--    -> BackendApp toBackend toFrontend backendMsg backendModel
+--    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+--    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+--simulateStep frontendApp backendApp state =
+--    let
+--        newTime =
+--            Quantity.plus state.currentTime animationFrame
+--
+--        getCompletedTimers : Dict Duration { a | startTime : Time.Posix } -> List ( Duration, { a | startTime : Time.Posix } )
+--        getCompletedTimers timers =
+--            Dict.toList timers
+--                |> List.filter
+--                    (\( duration, value ) ->
+--                        let
+--                            offset : Duration
+--                            offset =
+--                                Duration.from startTime value.startTime
+--
+--                            timerLength : Float
+--                            timerLength =
+--                                Duration.inMilliseconds duration
+--                        in
+--                        fractionalModBy timerLength (state.currentTime |> Quantity.minus offset |> Duration.inMilliseconds)
+--                            > fractionalModBy timerLength (newTime |> Quantity.minus offset |> Duration.inMilliseconds)
+--                    )
+--
+--        ( newBackend, newBackendEffects ) =
+--            getCompletedTimers state.timers
+--                |> List.foldl
+--                    (\( _, { msg } ) ( backend, effects ) ->
+--                        backendApp.update
+--                            (msg (Duration.addTo startTime newTime))
+--                            backend
+--                            |> Tuple.mapSecond (\a -> Effect.Command.batch [ effects, a ])
+--                    )
+--                    ( state.backend, state.pendingEffects )
+--    in
+--    { state
+--        | currentTime = newTime
+--        , pendingEffects = newBackendEffects
+--        , backend = newBackend
+--        , frontends =
+--            Dict.map
+--                (\_ frontend ->
+--                    let
+--                        ( newFrontendModel, newFrontendEffects ) =
+--                            getCompletedTimers frontend.timers
+--                                |> List.foldl
+--                                    (\( _, { msg } ) ( frontendModel, effects ) ->
+--                                        frontendApp.update
+--                                            (msg (Duration.addTo startTime newTime))
+--                                            frontendModel
+--                                            |> Tuple.mapSecond (\a -> Effect.Command.batch [ effects, a ])
+--                                    )
+--                                    ( frontend.model, frontend.pendingEffects )
+--                    in
+--                    { frontend | pendingEffects = newFrontendEffects, model = newFrontendModel }
+--                )
+--                state.frontends
+--    }
+--        |> runEffects frontendApp backendApp
 
 
 {-| Simulate the passage of time.
@@ -1212,6 +1215,10 @@ simulateTime duration =
         (\state -> simulateTimeHelper state.frontendApp state.backendApp duration state)
 
 
+timeDiff tStart tEnd =
+    Time.posixToMillis tEnd - Time.posixToMillis tStart
+
+
 simulateTimeHelper :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
@@ -1219,26 +1226,133 @@ simulateTimeHelper :
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 simulateTimeHelper frontendApp backendApp duration state =
-    if duration |> Quantity.lessThan Quantity.zero then
-        state
+    let
+        nextBackendEvents : Maybe { millisUntil : Int, msgs : List (Time.Posix -> backendMsg) }
+        nextBackendEvents =
+            List.map
+                (\( timerDuration, value ) ->
+                    let
+                        offset : Int
+                        offset =
+                            timeDiff value.startTime state.currentTime
+                    in
+                    { msg = value.msg
+                    , millisUntil =
+                        modBy
+                            (Duration.inMilliseconds timerDuration |> max 1 |> round)
+                            offset
+                    }
+                )
+                (Dict.toList state.timers)
+                |> List.sortBy .millisUntil
+                |> (\list ->
+                        case list of
+                            head :: rest ->
+                                { msgs =
+                                    head
+                                        :: takeWhile (\item -> item.millisUntil == head.millisUntil) rest
+                                        |> List.map .msg
+                                , millisUntil = head.millisUntil
+                                }
+                                    |> Just
 
-    else
-        simulateTimeHelper frontendApp backendApp (duration |> Quantity.minus animationFrame) (simulateStep frontendApp backendApp state)
+                            [] ->
+                                Nothing
+                   )
+
+        --nextFrontendEvent =
+        --    Dict.map
+        --        (\_ frontend ->
+        --            let
+        --                ( newFrontendModel, newFrontendEffects ) =
+        --                    getCompletedTimers frontend.timers
+        --                        |> List.foldl
+        --                            (\( _, { msg } ) ( frontendModel, effects ) ->
+        --                                frontendApp.update
+        --                                    (msg (Duration.addTo startTime newTime))
+        --                                    frontendModel
+        --                                    |> Tuple.mapSecond (\a -> Effect.Command.batch [ effects, a ])
+        --                            )
+        --                            ( frontend.model, frontend.pendingEffects )
+        --            in
+        --            { frontend | pendingEffects = newFrontendEffects, model = newFrontendModel }
+        --        )
+        --        state.frontends
+    in
+    case nextBackendEvents of
+        Just backendEvent ->
+            let
+                newTime : Time.Posix
+                newTime =
+                    Time.posixToMillis state.currentTime + backendEvent.millisUntil + 1 |> Time.millisToPosix
+
+                ( newBackend, newBackendEffects ) =
+                    backendEvent.msgs
+                        |> List.foldl
+                            (\msg ( backend, effects ) ->
+                                backendApp.update
+                                    (msg newTime)
+                                    backend
+                                    |> Tuple.mapSecond (\a -> Effect.Command.batch [ effects, a ])
+                            )
+                            ( state.backend, state.pendingEffects )
+            in
+            { state
+                | backend = newBackend
+                , pendingEffects = newBackendEffects
+                , currentTime = newTime
+            }
+                |> runEffects frontendApp backendApp
+
+        Nothing ->
+            { state | currentTime = Duration.addTo state.currentTime duration }
 
 
-{-| Similar to `simulateTime` but this will not trigger any `Browser.onAnimationFrame` or `Time.every` subscriptions.
-
-This is useful if you need to move the clock forward a week and it would take too long to simulate it perfectly.
-
+{-| Take elements in order as long as the predicate evaluates to `True`. Copied from here <https://github.com/elm-community/list-extra/blob/22cb6ea5a435c468654f5b7f6664f050c28ba365/src/List/Extra.elm#L401>
 -}
-fastForward :
-    Duration
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-fastForward duration =
-    NextStep
-        ("Fast forward " ++ String.fromFloat (Duration.inSeconds duration) ++ "s")
-        (\state -> { state | elapsedTime = Quantity.plus state.elapsedTime duration })
+takeWhile : (a -> Bool) -> List a -> List a
+takeWhile predicate =
+    let
+        takeWhileMemo memo list =
+            case list of
+                [] ->
+                    List.reverse memo
+
+                x :: xs ->
+                    if predicate x then
+                        takeWhileMemo (x :: memo) xs
+
+                    else
+                        List.reverse memo
+    in
+    takeWhileMemo []
+
+
+{-| Find the first minimum element in a list using a comparable transformation. Copied from here <https://github.com/elm-community/list-extra/blob/22cb6ea5a435c468654f5b7f6664f050c28ba365/src/List/Extra.elm#L350>
+-}
+minimumBy : (a -> comparable) -> List a -> Maybe a
+minimumBy f ls =
+    let
+        minBy x ( y, fy ) =
+            let
+                fx =
+                    f x
+            in
+            if fx < fy then
+                ( x, fx )
+
+            else
+                ( y, fy )
+    in
+    case ls of
+        [ l_ ] ->
+            Just l_
+
+        l_ :: ls_ ->
+            Just <| Tuple.first <| List.foldl minBy ( l_, f l_ ) ls_
+
+        _ ->
+            Nothing
 
 
 {-| Sometimes you need to decide what should happen next based on some simulation state.
@@ -1853,7 +1967,7 @@ runTask maybeClientId frontendApp state task =
             runTask maybeClientId frontendApp state (function ())
 
         TimeNow gotTime ->
-            gotTime (Duration.addTo startTime state.elapsedTime) |> runTask maybeClientId frontendApp state
+            gotTime state.currentTime |> runTask maybeClientId frontendApp state
 
         TimeHere gotTimeZone ->
             gotTimeZone Time.utc |> runTask maybeClientId frontendApp state
