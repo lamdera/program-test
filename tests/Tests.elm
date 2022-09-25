@@ -1,6 +1,6 @@
 module Tests exposing (..)
 
-import Duration
+import Duration exposing (Duration)
 import Effect.Command as Command exposing (BackendOnly, Command, FrontendOnly)
 import Effect.Http exposing (Response(..))
 import Effect.Subscription as Subscription
@@ -54,33 +54,59 @@ simpleConfig =
     }
 
 
-type Msg
-    = GotTime Time.Posix
+type FrontendMsg
+    = GotTimeFrontend Time.Posix
+    | NoOpFrontend
+
+
+type BackendMsg
+    = GotTimeBackend Time.Posix
 
 
 type alias Model =
     { timeEveryEvents : List Time.Posix }
 
 
-timeEveryBackend : Effect.Test.BackendApp {} {} Msg Model
-timeEveryBackend =
+timeEveryFrontend : List Duration -> Effect.Test.FrontendApp {} FrontendMsg Model {}
+timeEveryFrontend durations =
+    { init = \_ _ -> ( { timeEveryEvents = [] }, Command.none )
+    , onUrlRequest = \_ -> NoOpFrontend
+    , onUrlChange = \_ -> NoOpFrontend
+    , update =
+        \msg model ->
+            ( case msg of
+                GotTimeFrontend time ->
+                    { model | timeEveryEvents = model.timeEveryEvents ++ [ time ] }
+
+                NoOpFrontend ->
+                    model
+            , Command.none
+            )
+    , updateFromBackend = \_ model -> ( model, Command.none )
+    , view = \_ -> { title = "Hi", body = [ Html.text "Hi" ] }
+    , subscriptions = \_ -> List.map (\duration -> Time.every duration GotTimeFrontend) durations |> Subscription.batch
+    }
+
+
+timeEveryBackend : List Duration -> Effect.Test.BackendApp {} {} BackendMsg Model
+timeEveryBackend durations =
     { init = ( { timeEveryEvents = [] }, Command.none )
     , update =
         \msg model ->
             ( case msg of
-                GotTime time ->
+                GotTimeBackend time ->
                     { model | timeEveryEvents = model.timeEveryEvents ++ [ time ] }
             , Command.none
             )
     , updateFromFrontend = \_ _ _ model -> ( model, Command.none )
-    , subscriptions = \_ -> Time.every Duration.second GotTime
+    , subscriptions = \_ -> List.map (\duration -> Time.every duration GotTimeBackend) durations |> Subscription.batch
     }
 
 
-timeEveryConfig : Effect.Test.Config {} {} {} {} Msg Model
-timeEveryConfig =
-    { frontendApp = simpleFrontend
-    , backendApp = timeEveryBackend
+timeEveryConfig : List Duration -> List Duration -> Effect.Test.Config {} FrontendMsg Model {} BackendMsg Model
+timeEveryConfig frontendDurations backendDurations =
+    { frontendApp = timeEveryFrontend frontendDurations
+    , backendApp = timeEveryBackend backendDurations
     , handleHttpRequest = always NetworkError_
     , handlePortToJs = always Nothing
     , handleFileRequest = always Nothing
@@ -98,36 +124,46 @@ tests : Test
 tests =
     Test.describe "Tests"
         [ Effect.Test.start simpleConfig "A test" |> Effect.Test.toTest
-        , Effect.Test.start timeEveryConfig "simulateTime test 0"
+        , Effect.Test.start (timeEveryConfig [] [ Duration.second ]) "simulateTime test 0"
             |> checkTimeEveryModel 0 []
             |> simulateMillis 100
             |> checkTimeEveryModel 1 []
             |> checkTime 100
             |> Effect.Test.toTest
-        , Effect.Test.start timeEveryConfig "simulateTime test 1"
-            |> checkTimeEveryModel 0 []
+        , Effect.Test.start (timeEveryConfig [] [ Duration.second ]) "simulateTime test 1"
             |> simulateMillis 1000
             |> checkTimeEveryModel 1 [ Time.millisToPosix 1000 ]
             |> checkTime 1000
             |> Effect.Test.toTest
-        , Effect.Test.start timeEveryConfig "simulateTime test 2"
+        , Effect.Test.start (timeEveryConfig [] [ Duration.second ]) "simulateTime test 2"
             |> simulateMillis 200
             |> checkTimeEveryModel 1 []
             |> simulateMillis 800
             |> checkTimeEveryModel 2 [ Time.millisToPosix 1000 ]
             |> checkTime 1000
             |> Effect.Test.toTest
-        , Effect.Test.start timeEveryConfig "simulateTime test 3"
+        , Effect.Test.start (timeEveryConfig [] [ Duration.second ]) "simulateTime test 3"
             |> simulateMillis 1200
             |> checkTimeEveryModel 1 [ Time.millisToPosix 1000 ]
             |> checkTime 1200
             |> Effect.Test.toTest
-        , Effect.Test.start timeEveryConfig "simulateTime test 4"
+        , Effect.Test.start (timeEveryConfig [] [ Duration.second ]) "simulateTime test 4"
             |> simulateMillis 2000
             |> checkTimeEveryModel 1 [ Time.millisToPosix 1000, Time.millisToPosix 2000 ]
             |> simulateMillis 1
             |> checkTimeEveryModel 2 [ Time.millisToPosix 1000, Time.millisToPosix 2000 ]
             |> checkTime 2001
+            |> Effect.Test.toTest
+        , Effect.Test.start (timeEveryConfig [] [ Duration.second, Duration.seconds 2 ]) "simulateTime test 5"
+            |> checkTimeEveryModel 0 []
+            |> simulateMillis 100
+            |> checkTimeEveryModel 1 []
+            |> checkTime 100
+            |> Effect.Test.toTest
+        , Effect.Test.start (timeEveryConfig [] [ Duration.second, Duration.seconds 2 ]) "simulateTime test 6"
+            |> simulateMillis 2000
+            |> checkTimeEveryModel 1 [ Time.millisToPosix 1000, Time.millisToPosix 2000, Time.millisToPosix 2000 ]
+            |> checkTime 2000
             |> Effect.Test.toTest
         ]
 
