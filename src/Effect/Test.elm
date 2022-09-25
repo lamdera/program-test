@@ -1321,6 +1321,7 @@ simulateTimeHelper frontendApp backendApp durationInMillis state =
                     , currentTime = newTime
                 }
                     |> runEffects frontendApp backendApp
+                    |> simulateTimeHelper frontendApp backendApp (durationInMillis - backendEvent.millisUntil)
 
         Nothing ->
             { state | currentTime = timeAddMillis durationInMillis state.currentTime }

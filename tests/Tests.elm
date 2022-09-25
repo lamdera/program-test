@@ -111,7 +111,6 @@ tests =
             |> checkTime 1000
             |> Effect.Test.toTest
         , Effect.Test.start timeEveryConfig "simulateTime test 2"
-            |> checkTimeEveryModel 0 []
             |> simulateMillis 200
             |> checkTimeEveryModel 1 []
             |> simulateMillis 800
@@ -119,10 +118,16 @@ tests =
             |> checkTime 1000
             |> Effect.Test.toTest
         , Effect.Test.start timeEveryConfig "simulateTime test 3"
-            |> checkTimeEveryModel 0 []
             |> simulateMillis 1200
             |> checkTimeEveryModel 1 [ Time.millisToPosix 1000 ]
             |> checkTime 1200
+            |> Effect.Test.toTest
+        , Effect.Test.start timeEveryConfig "simulateTime test 4"
+            |> simulateMillis 2000
+            |> checkTimeEveryModel 1 [ Time.millisToPosix 1000, Time.millisToPosix 2000 ]
+            |> simulateMillis 1
+            |> checkTimeEveryModel 2 [ Time.millisToPosix 1000, Time.millisToPosix 2000 ]
+            |> checkTime 2001
             |> Effect.Test.toTest
         ]
 
