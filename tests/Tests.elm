@@ -69,7 +69,7 @@ timeEveryBackend =
         \msg model ->
             ( case msg of
                 GotTime time ->
-                    { model | timeEveryEvents = time :: model.timeEveryEvents }
+                    { model | timeEveryEvents = model.timeEveryEvents ++ [ time ] }
             , Command.none
             )
     , updateFromFrontend = \_ _ _ model -> ( model, Command.none )
@@ -98,26 +98,67 @@ tests : Test
 tests =
     Test.describe "Tests"
         [ Effect.Test.start simpleConfig "A test" |> Effect.Test.toTest
-        , Effect.Test.start timeEveryConfig "simulateTime test"
-            |> Effect.Test.checkBackend
-                (\model ->
-                    if model.timeEveryEvents == [] then
-                        Ok ()
-
-                    else
-                        Err ("Check 1 failed: " ++ Debug.toString model)
-                )
-            |> Effect.Test.simulateTime (Duration.milliseconds 100)
-            |> Effect.Test.checkBackend
-                (\model ->
-                    if model.timeEveryEvents == [ Time.millisToPosix 1000 ] then
-                        Ok ()
-
-                    else
-                        Err ("Check 2 failed: " ++ Debug.toString model)
-                )
+        , Effect.Test.start timeEveryConfig "simulateTime test 0"
+            |> checkTimeEveryModel 0 []
+            |> simulateMillis 100
+            |> checkTimeEveryModel 1 []
+            |> checkTime 100
+            |> Effect.Test.toTest
+        , Effect.Test.start timeEveryConfig "simulateTime test 1"
+            |> checkTimeEveryModel 0 []
+            |> simulateMillis 1000
+            |> checkTimeEveryModel 1 [ Time.millisToPosix 1000 ]
+            |> checkTime 1000
+            |> Effect.Test.toTest
+        , Effect.Test.start timeEveryConfig "simulateTime test 2"
+            |> checkTimeEveryModel 0 []
+            |> simulateMillis 200
+            |> checkTimeEveryModel 1 []
+            |> simulateMillis 800
+            |> checkTimeEveryModel 2 [ Time.millisToPosix 1000 ]
+            |> checkTime 1000
+            |> Effect.Test.toTest
+        , Effect.Test.start timeEveryConfig "simulateTime test 3"
+            |> checkTimeEveryModel 0 []
+            |> simulateMillis 1200
+            |> checkTimeEveryModel 1 [ Time.millisToPosix 1000 ]
+            |> checkTime 1200
             |> Effect.Test.toTest
         ]
+
+
+checkTimeEveryModel index expected =
+    Effect.Test.checkBackend
+        (\model ->
+            if model.timeEveryEvents == expected then
+                Ok ()
+
+            else
+                Err ("Check " ++ String.fromInt index ++ " failed: " ++ Debug.toString model)
+        )
+
+
+simulateMillis :
+    Float
+    -> Effect.Test.Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Effect.Test.Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+simulateMillis millis instructions =
+    Effect.Test.simulateTime (Duration.milliseconds millis) instructions
+
+
+checkTime :
+    Int
+    -> Effect.Test.Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Effect.Test.Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+checkTime expectedMillis =
+    Effect.Test.checkState
+        (\state ->
+            if Time.millisToPosix expectedMillis == state.currentTime then
+                Ok ()
+
+            else
+                Err ("Incorrect time: " ++ Debug.toString state.currentTime)
+        )
 
 
 main : Program () (Effect.Test.Model {}) Effect.Test.Msg

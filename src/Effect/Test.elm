@@ -1212,20 +1212,26 @@ simulateTime :
 simulateTime duration =
     NextStep
         ("Simulate time " ++ String.fromFloat (Duration.inSeconds duration) ++ "s")
-        (\state -> simulateTimeHelper state.frontendApp state.backendApp duration state)
+        (\state -> simulateTimeHelper state.frontendApp state.backendApp (Duration.inMilliseconds duration |> round) state)
 
 
+timeDiff : Time.Posix -> Time.Posix -> Int
 timeDiff tStart tEnd =
     Time.posixToMillis tEnd - Time.posixToMillis tStart
+
+
+timeAddMillis : Int -> Time.Posix -> Time.Posix
+timeAddMillis millis time =
+    Time.posixToMillis time + millis |> Time.millisToPosix
 
 
 simulateTimeHelper :
     FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> BackendApp toBackend toFrontend backendMsg backendModel
-    -> Duration
+    -> Int
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-simulateTimeHelper frontendApp backendApp duration state =
+simulateTimeHelper frontendApp backendApp durationInMillis state =
     let
         nextBackendEvents : Maybe { millisUntil : Int, msgs : List (Time.Posix -> backendMsg) }
         nextBackendEvents =
@@ -1234,13 +1240,21 @@ simulateTimeHelper frontendApp backendApp duration state =
                     let
                         offset : Int
                         offset =
-                            timeDiff value.startTime state.currentTime
+                            timeDiff state.currentTime value.startTime
+
+                        timerDurationMillis =
+                            Duration.inMilliseconds timerDuration |> max 1 |> round
+
+                        millisUntil =
+                            modBy timerDurationMillis offset
                     in
                     { msg = value.msg
                     , millisUntil =
-                        modBy
-                            (Duration.inMilliseconds timerDuration |> max 1 |> round)
-                            offset
+                        if millisUntil == 0 then
+                            timerDurationMillis
+
+                        else
+                            millisUntil
                     }
                 )
                 (Dict.toList state.timers)
@@ -1281,31 +1295,35 @@ simulateTimeHelper frontendApp backendApp duration state =
     in
     case nextBackendEvents of
         Just backendEvent ->
-            let
-                newTime : Time.Posix
-                newTime =
-                    Time.posixToMillis state.currentTime + backendEvent.millisUntil + 1 |> Time.millisToPosix
+            if backendEvent.millisUntil > durationInMillis then
+                { state | currentTime = timeAddMillis durationInMillis state.currentTime }
 
-                ( newBackend, newBackendEffects ) =
-                    backendEvent.msgs
-                        |> List.foldl
-                            (\msg ( backend, effects ) ->
-                                backendApp.update
-                                    (msg newTime)
-                                    backend
-                                    |> Tuple.mapSecond (\a -> Effect.Command.batch [ effects, a ])
-                            )
-                            ( state.backend, state.pendingEffects )
-            in
-            { state
-                | backend = newBackend
-                , pendingEffects = newBackendEffects
-                , currentTime = newTime
-            }
-                |> runEffects frontendApp backendApp
+            else
+                let
+                    newTime : Time.Posix
+                    newTime =
+                        timeAddMillis backendEvent.millisUntil state.currentTime
+
+                    ( newBackend, newBackendEffects ) =
+                        backendEvent.msgs
+                            |> List.foldl
+                                (\msg ( backend, effects ) ->
+                                    backendApp.update
+                                        (msg newTime)
+                                        backend
+                                        |> Tuple.mapSecond (\a -> Effect.Command.batch [ effects, a ])
+                                )
+                                ( state.backend, state.pendingEffects )
+                in
+                { state
+                    | backend = newBackend
+                    , pendingEffects = newBackendEffects
+                    , currentTime = newTime
+                }
+                    |> runEffects frontendApp backendApp
 
         Nothing ->
-            { state | currentTime = Duration.addTo state.currentTime duration }
+            { state | currentTime = timeAddMillis durationInMillis state.currentTime }
 
 
 {-| Take elements in order as long as the predicate evaluates to `True`. Copied from here <https://github.com/elm-community/list-extra/blob/22cb6ea5a435c468654f5b7f6664f050c28ba365/src/List/Extra.elm#L401>
