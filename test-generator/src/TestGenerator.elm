@@ -155,6 +155,10 @@ view text =
             Html.text (Json.Decode.errorToString error)
 
 
+domIdExpr id =
+    "(Dom.id \"" ++ Dom.idToString id ++ "\")"
+
+
 generateTest : SessionLog -> String
 generateTest sessionLog =
     let
@@ -167,7 +171,7 @@ generateTest sessionLog =
                     case event of
                         ClickedButton id ->
                             """                |> shortPause
-                |> client.clickButton \"""" ++ Dom.idToString id ++ "\"" |> Just
+                |> client.clickButton """ ++ domIdExpr id |> Just
 
                         ClickedLink href ->
                             """                |> shortPause
@@ -178,7 +182,7 @@ generateTest sessionLog =
 
                         TypedInput id string ->
                             """                |> shortPause
-                |> client.inputText \"""" ++ Dom.idToString id ++ "\" \"" ++ string ++ "\"" |> Just
+                |> client.inputText """ ++ domIdExpr id ++ " \"" ++ string ++ "\"" |> Just
                 )
                 sessionLog.events
                 |> String.join "\n"
