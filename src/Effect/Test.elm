@@ -940,7 +940,10 @@ clickLink clientId { href } =
                                         | frontends =
                                             Dict.insert
                                                 clientId
-                                                { frontend | model = newModel, pendingEffects = effects }
+                                                { frontend
+                                                    | model = newModel
+                                                    , pendingEffects = Effect.Command.batch [ effects, frontend.pendingEffects ]
+                                                }
                                                 state.frontends
                                     }
 
@@ -992,7 +995,10 @@ userEvent name clientId htmlId event =
                                 | frontends =
                                     Dict.insert
                                         clientId
-                                        { frontend | model = newModel, pendingEffects = effects }
+                                        { frontend
+                                            | model = newModel
+                                            , pendingEffects = Effect.Command.batch [ effects, frontend.pendingEffects ]
+                                        }
                                         state.frontends
                             }
 
