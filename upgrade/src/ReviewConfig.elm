@@ -15,6 +15,20 @@ import Review.Rule exposing (Rule)
 import Upgrade
 
 
+ignoredDirs : List String
+ignoredDirs =
+    [ "tests/", "vendor/", "src/Evergreen/", ".elm-spa/" ]
+
+ignoredFiles : List String
+ignoredFiles =
+    [ "src/Config.elm", "src/Env.elm" ]
+
 config : List Rule
 config =
-    [ Upgrade.rule |> Review.Rule.ignoreErrorsForDirectories [ "src/Evergreen" ] ]
+    -- Note: Don't apply elm-review to vendored code, tests, elm-spa generated code, Evergreen, and a few special
+    --       Lamdera-related Elm files
+    config_
+        |> List.map (\rule -> rule
+        |> Rule.ignoreErrorsForDirectories ignoredDirs
+        |> Rule.ignoreErrorsForFiles ignoredFiles
+        )

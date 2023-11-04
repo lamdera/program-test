@@ -1,3 +1,7 @@
+This is fork to used to conform to the elm-review template, to the same rules I apply in the fir-sandbox repo
+(which is private as of writing)
+
+
 ⚠️ This is pre-release WIP software. If you'd like to help test the bleeding edge, ask on [Discord](https://dashboard.lamdera.app/docs/discuss).
 
 # program-test
