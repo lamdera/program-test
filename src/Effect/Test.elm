@@ -323,6 +323,37 @@ checkView clientId query =
         )
 
 
+frontendUpdate :
+    ClientId
+    -> frontendMsg
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+frontendUpdate clientId msg =
+    NextStep
+        "Frontend update"
+        (\state ->
+            case Dict.get clientId state.frontends of
+                Just frontend ->
+                    let
+                        ( newModel, effects ) =
+                            state.frontendApp.update msg frontend.model
+                    in
+                    { state
+                        | frontends =
+                            Dict.insert
+                                clientId
+                                { frontend
+                                    | model = newModel
+                                    , pendingEffects = Effect.Command.batch [ effects, frontend.pendingEffects ]
+                                }
+                                state.frontends
+                    }
+
+                Nothing ->
+                    addTestError (ClientIdNotFound clientId) state
+        )
+
+
 testErrorToString : TestError -> String
 testErrorToString error =
     case error of
@@ -601,6 +632,10 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         (Test.Html.Query.Single frontendMsg -> Expectation)
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , update :
+        frontendMsg
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , snapshotView :
         { name : String }
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -816,6 +851,7 @@ connectFrontend sessionId url windowSize andThenFunc =
                   , inputText = inputText clientId
                   , clickLink = clickLink clientId
                   , checkView = checkView clientId
+                  , update = frontendUpdate clientId
                   , snapshotView = snapshotView clientId
                   }
                 )
