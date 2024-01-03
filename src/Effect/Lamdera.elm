@@ -35,7 +35,7 @@ import Process
 import Task
 import Time
 import Url
-import WebGL.Texture
+import WebGLFix.Texture
 
 
 {-| Create a Lamdera frontend application
@@ -450,47 +450,48 @@ toTask simulatedTask =
                 convertWrap wrap =
                     case wrap of
                         Effect.Internal.Repeat ->
-                            WebGL.Texture.repeat
+                            WebGLFix.Texture.repeat
 
                         Effect.Internal.ClampToEdge ->
-                            WebGL.Texture.clampToEdge
+                            WebGLFix.Texture.clampToEdge
 
                         Effect.Internal.MirroredRepeat ->
-                            WebGL.Texture.mirroredRepeat
+                            WebGLFix.Texture.mirroredRepeat
             in
-            WebGL.Texture.loadWith
+            WebGLFix.Texture.loadWith
                 { magnify =
                     case options.magnify of
                         Effect.Internal.Linear ->
-                            WebGL.Texture.linear
+                            WebGLFix.Texture.linear
 
                         _ ->
-                            WebGL.Texture.nearest
+                            WebGLFix.Texture.nearest
                 , minify =
                     case options.minify of
                         Effect.Internal.Linear ->
-                            WebGL.Texture.linear
+                            WebGLFix.Texture.linear
 
                         Effect.Internal.Nearest ->
-                            WebGL.Texture.nearest
+                            WebGLFix.Texture.nearest
 
                         Effect.Internal.NearestMipmapNearest ->
-                            WebGL.Texture.nearestMipmapNearest
+                            WebGLFix.Texture.nearestMipmapNearest
 
                         Effect.Internal.LinearMipmapNearest ->
-                            WebGL.Texture.linearMipmapNearest
+                            WebGLFix.Texture.linearMipmapNearest
 
                         Effect.Internal.NearestMipmapLinear ->
-                            WebGL.Texture.nearestMipmapLinear
+                            WebGLFix.Texture.nearestMipmapLinear
 
                         Effect.Internal.LinearMipmapLinear ->
-                            WebGL.Texture.linearMipmapLinear
+                            WebGLFix.Texture.linearMipmapLinear
                 , horizontalWrap = convertWrap options.horizontalWrap
                 , verticalWrap = convertWrap options.verticalWrap
                 , flipY = options.flipY
+                , premultiplyAlpha = options.premultiplyAlpha
                 }
                 string
-                |> Task.map (Effect.Internal.RealTexture >> Ok)
+                |> Task.map Ok
                 |> Task.onError (Err >> Task.succeed)
                 |> Task.andThen (\result -> toTask (function result))
 

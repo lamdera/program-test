@@ -1,13 +1,12 @@
-module Effect.WebGL.Texture exposing
+module WebGLFix.Texture exposing
     ( Texture, load, Error(..), size
-    , loadWith, Options, defaultOptions
+    , loadWith, Options, defaultOptions, loadBytesWith, Format, rgb, rgba, luminanceAlpha, luminance, alpha
     , Resize, linear, nearest
     , nearestMipmapLinear, nearestMipmapNearest
     , linearMipmapNearest, linearMipmapLinear
     , Bigger, Smaller
     , Wrap, repeat, clampToEdge, mirroredRepeat
     , nonPowerOfTwoOptions
-    , alpha, loadBytesWith, luminance, luminanceAlpha, rgb, rgba
     )
 
 {-|
@@ -15,12 +14,12 @@ module Effect.WebGL.Texture exposing
 
 # Texture
 
-@docs Texture, load, Error, size, unwrap
+@docs Texture, load, Error, size
 
 
 # Custom Loading
 
-@docs loadWith, Options, defaultOptions
+@docs loadWith, Options, defaultOptions, loadBytesWith, Format, rgb, rgba, luminanceAlpha, luminance, alpha
 
 
 ## Resizing
@@ -42,11 +41,11 @@ module Effect.WebGL.Texture exposing
 
 -}
 
+import Bitwise
 import Bytes exposing (Bytes)
-import Effect.Command exposing (FrontendOnly)
-import Effect.Internal
-import Effect.Task exposing (Task)
-import WebGLFix.Texture
+import Elm.Kernel.TextureFix
+import Task exposing (Task)
+import WebGL.Texture
 
 
 {-| Use `Texture` to pass the `sampler2D` uniform value to the shader.
@@ -54,7 +53,7 @@ You can create a texture with [`load`](#load) or [`loadWith`](#loadWith)
 and measure its dimensions with [`size`](#size).
 -}
 type alias Texture =
-    WebGLFix.Texture.Texture
+    WebGL.Texture.Texture
 
 
 {-| Loads a texture from the given url with default options.
@@ -71,7 +70,7 @@ If you need to change flipping, filtering or wrapping, you can use
         loadWith defaultOptions url
 
 -}
-load : String -> Task FrontendOnly Error Texture
+load : String -> Task Error Texture
 load =
     loadWith defaultOptions
 
@@ -96,22 +95,13 @@ type Error
 
 {-| Same as load, but allows to set options.
 -}
-loadWith : Options -> String -> Task FrontendOnly Error Texture
-loadWith options texturePath =
-    Effect.Internal.LoadTexture
-        options
-        texturePath
-        (\result ->
-            case result of
-                Ok ok ->
-                    Effect.Internal.Succeed ok
-
-                Err WebGLFix.Texture.LoadError ->
-                    Effect.Internal.Fail LoadError
-
-                Err (WebGLFix.Texture.SizeError width height) ->
-                    Effect.Internal.Fail (SizeError width height)
-        )
+loadWith : Options -> String -> Task Error Texture
+loadWith { magnify, minify, horizontalWrap, verticalWrap, flipY, premultiplyAlpha } url =
+    let
+        expand (Resize mag) (Resize min) (Wrap hor) (Wrap vert) =
+            Elm.Kernel.TextureFix.load mag min hor vert flipY premultiplyAlpha url
+    in
+    expand magnify minify horizontalWrap verticalWrap
 
 
 {-| `Options` describe how to:
@@ -122,6 +112,7 @@ loadWith options texturePath =
   - `verticalWrap` - how to [`Wrap`](#Wrap) the texture vertically if the height is not a power of two
   - `flipY` - flip the Y axis of the texture so it has the same direction
     as the clip-space, i.e. pointing up.
+  - `premultiplyAlpha` - Multiply each pixel's red, green, and blue values with the alpha value.
 
 You can read more about these parameters in the
 [specification](https://www.khronos.org/opengles/sdk/docs/man/xhtml/glTexParameter.xml).
@@ -167,6 +158,7 @@ options:
     , horizontalWrap = clampToEdge
     , verticalWrap = clampToEdge
     , flipY = True
+    , premultiplyAlpha = False
     }
 
 -}
@@ -187,8 +179,8 @@ nonPowerOfTwoOptions =
 
 {-| How to resize a texture.
 -}
-type alias Resize a =
-    Effect.Internal.Resize a
+type Resize a
+    = Resize Int
 
 
 {-| Returns the weighted average of the four texture elements that are closest
@@ -196,7 +188,7 @@ to the center of the pixel being textured.
 -}
 linear : Resize a
 linear =
-    Effect.Internal.Linear
+    Resize 9729
 
 
 {-| Returns the value of the texture element that is nearest
@@ -204,7 +196,7 @@ linear =
 -}
 nearest : Resize a
 nearest =
-    Effect.Internal.Nearest
+    Resize 9728
 
 
 {-| Chooses the mipmap that most closely matches the size of the pixel being
@@ -219,7 +211,7 @@ This is the default value of the minify filter.
 -}
 nearestMipmapNearest : Resize Smaller
 nearestMipmapNearest =
-    Effect.Internal.NearestMipmapNearest
+    Resize 9984
 
 
 {-| Chooses the mipmap that most closely matches the size of the pixel being
@@ -229,7 +221,7 @@ texture value.
 -}
 linearMipmapNearest : Resize Smaller
 linearMipmapNearest =
-    Effect.Internal.LinearMipmapNearest
+    Resize 9985
 
 
 {-| Chooses the two mipmaps that most closely match the size of the pixel being
@@ -239,7 +231,7 @@ texture value is a weighted average of those two values.
 -}
 nearestMipmapLinear : Resize Smaller
 nearestMipmapLinear =
-    Effect.Internal.NearestMipmapLinear
+    Resize 9986
 
 
 {-| Chooses the two mipmaps that most closely match the size of the pixel being
@@ -250,28 +242,28 @@ of those two values.
 -}
 linearMipmapLinear : Resize Smaller
 linearMipmapLinear =
-    Effect.Internal.LinearMipmapLinear
+    Resize 9987
 
 
 {-| Helps restrict `options.magnify` to only allow
 [`linear`](#linear) and [`nearest`](#nearest).
 -}
-type alias Bigger =
-    Effect.Internal.Bigger
+type Bigger
+    = Bigger
 
 
 {-| Helps restrict `options.magnify`, while also allowing
 `options.minify` to use mipmapping resizes, like
 [`nearestMipmapNearest`](#nearestMipmapNearest).
 -}
-type alias Smaller =
-    Effect.Internal.Smaller
+type Smaller
+    = Smaller
 
 
 {-| Sets the wrap parameter for texture coordinate.
 -}
-type alias Wrap =
-    Effect.Internal.Wrap
+type Wrap
+    = Wrap Int
 
 
 {-| Causes the integer part of the coordinate to be ignored. This is the
@@ -279,7 +271,7 @@ default value for both texture axis.
 -}
 repeat : Wrap
 repeat =
-    Effect.Internal.Repeat
+    Wrap 10497
 
 
 {-| Causes coordinates to be clamped to the range 1 2N 1 - 1 2N, where N is
@@ -287,7 +279,7 @@ the size of the texture in the direction of clamping.
 -}
 clampToEdge : Wrap
 clampToEdge =
-    Effect.Internal.ClampToEdge
+    Wrap 33071
 
 
 {-| Causes the coordinate c to be set to the fractional part of the texture
@@ -297,7 +289,7 @@ of the coordinate.
 -}
 mirroredRepeat : Wrap
 mirroredRepeat =
-    Effect.Internal.MirroredRepeat
+    Wrap 33648
 
 
 {-| Return the (width, height) size of a texture. Useful for sprite sheets
@@ -305,98 +297,109 @@ or other times you may want to use only a potion of a texture image.
 -}
 size : Texture -> ( Int, Int )
 size =
-    WebGLFix.Texture.size
+    Elm.Kernel.TextureFix.size
 
 
-loadBytesWith : Options -> ( Int, Int ) -> Format -> Bytes -> Result Error Texture
-loadBytesWith options textureSize format bytes =
+{-| Building [`Texture`](#Texture) from bytes
+
+  - [`Options`](#Options) - same as for [`loadWith`](#loadWith)
+  - `(width, height)` - dimensions of new created texture
+  - [`Format`](#Format) - pixel format in bytes
+  - Bytes - encoded pixels, where `Bytes.width` > `width` \* `height` \* `Bytes per pixe`or you get `SizeError`
+    Do not generate texture in `view`, [read more about this here](https://package.elm-lang.org/packages/elm-explorations/webgl/latest#making-the-most-of-the-gpu).
+
+-}
+loadBytesWith :
+    Options
+    -> ( Int, Int )
+    -> Format
+    -> Bytes
+    -> Result Error Texture
+loadBytesWith ({ magnify, minify, horizontalWrap, verticalWrap, flipY } as opt) ( w, h ) ((Format _ bytesPerPixel) as format) b =
     let
-        convertWrap wrap =
-            case wrap of
-                Effect.Internal.Repeat ->
-                    WebGLFix.Texture.repeat
+        isMipmap =
+            minify /= nearest && minify /= linear
 
-                Effect.Internal.ClampToEdge ->
-                    WebGLFix.Texture.clampToEdge
+        widthPowerOfTwo =
+            Bitwise.and (w - 1) w == 0
 
-                Effect.Internal.MirroredRepeat ->
-                    WebGLFix.Texture.mirroredRepeat
+        heightPowerOfTwo =
+            Bitwise.and (h - 1) h == 0
 
-        result : Result WebGLFix.Texture.Error WebGLFix.Texture.Texture
-        result =
-            WebGLFix.Texture.loadBytesWith
-                { magnify =
-                    case options.magnify of
-                        Effect.Internal.Linear ->
-                            WebGLFix.Texture.linear
-
-                        _ ->
-                            WebGLFix.Texture.nearest
-                , minify =
-                    case options.minify of
-                        Effect.Internal.Linear ->
-                            WebGLFix.Texture.linear
-
-                        Effect.Internal.Nearest ->
-                            WebGLFix.Texture.nearest
-
-                        Effect.Internal.NearestMipmapNearest ->
-                            WebGLFix.Texture.nearestMipmapNearest
-
-                        Effect.Internal.LinearMipmapNearest ->
-                            WebGLFix.Texture.linearMipmapNearest
-
-                        Effect.Internal.NearestMipmapLinear ->
-                            WebGLFix.Texture.nearestMipmapLinear
-
-                        Effect.Internal.LinearMipmapLinear ->
-                            WebGLFix.Texture.linearMipmapLinear
-                , horizontalWrap = convertWrap options.horizontalWrap
-                , verticalWrap = convertWrap options.verticalWrap
-                , flipY = options.flipY
-                , premultiplyAlpha = options.premultiplyAlpha
-                }
-                textureSize
-                format
-                bytes
+        isSizeValid =
+            (widthPowerOfTwo && heightPowerOfTwo) || (not isMipmap && horizontalWrap == clampToEdge && verticalWrap == clampToEdge)
     in
-    case result of
-        Ok texture ->
-            Ok texture
+    if w > 0 && h > 0 && isSizeValid && Bytes.width b >= w * h * bytesPerPixel then
+        Ok (unsafeLoad opt ( w, h ) format b)
 
-        Err error ->
-            case error of
-                WebGLFix.Texture.LoadError ->
-                    Err LoadError
-
-                WebGLFix.Texture.SizeError w h ->
-                    SizeError w h |> Err
+    else
+        Err (SizeError w h)
 
 
-type alias Format =
-    WebGLFix.Texture.Format
+{-| It is intended specifically for library writers who want to create custom texture loaders.
+-}
+unsafeLoad :
+    Options
+    -> ( Int, Int )
+    -> Format
+    -> Bytes
+    -> Texture
+unsafeLoad { magnify, minify, horizontalWrap, verticalWrap, flipY, premultiplyAlpha } ( w, h ) (Format format _) b =
+    let
+        expand (Resize mag) (Resize min) (Wrap hor) (Wrap vert) =
+            Elm.Kernel.TextureFix.loadBytes mag min hor vert flipY w h ( format, premultiplyAlpha ) b
+    in
+    expand magnify minify horizontalWrap verticalWrap
 
 
-rgb : WebGLFix.Texture.Format
-rgb =
-    WebGLFix.Texture.rgb
+{-| How to read bytes into pixel
 
 
-rgba : WebGLFix.Texture.Format
+## | Format | Channels | Bytes per pixel |
+
+| rgba | 4 | 4 |
+| rgb | 3 | 3 |
+| luminanceAlpha | 2 | 2 |
+| luminance | 1 | 1 |
+
+
+## | alpha | 1 | 1 |
+
+-}
+type Format
+    = Format Int Int
+
+
+{-| Single pixel is 4 bytes long and have 4 channels
+-}
+rgba : Format
 rgba =
-    WebGLFix.Texture.rgba
+    Format 6408 4
 
 
-luminanceAlpha : WebGLFix.Texture.Format
+{-| Single pixel is 3 bytes long and have 3 channels
+-}
+rgb : Format
+rgb =
+    Format 6407 3
+
+
+{-| Single pixel is 2 bytes long and have 2 channels
+-}
+luminanceAlpha : Format
 luminanceAlpha =
-    WebGLFix.Texture.luminanceAlpha
+    Format 6410 2
 
 
-luminance : WebGLFix.Texture.Format
+{-| Single pixel is 1 bytes long and have 1 channels
+-}
+luminance : Format
 luminance =
-    WebGLFix.Texture.luminance
+    Format 6409 1
 
 
-alpha : WebGLFix.Texture.Format
+{-| Single pixel is 1 bytes long and have 1 channels
+-}
+alpha : Format
 alpha =
-    WebGLFix.Texture.alpha
+    Format 6406 1

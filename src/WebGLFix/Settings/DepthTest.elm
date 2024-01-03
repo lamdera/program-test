@@ -1,4 +1,4 @@
-module Effect.WebGL.Settings.DepthTest exposing
+module WebGLFix.Settings.DepthTest exposing
     ( default
     , Options, less, never, always, equal, greater, notEqual
     , lessOrEqual, greaterOrEqual
@@ -21,8 +21,8 @@ or [OpenGL docs](https://www.opengl.org/sdk/docs/man2/xhtml/glDepthFunc.xml).
 
 -}
 
+import WebGLFix.Internal as I
 import WebGLFix.Settings exposing (Setting)
-import WebGLFix.Settings.DepthTest
 
 
 {-| With every pixel, we have to figure out which color to show.
@@ -49,7 +49,7 @@ Requires [`WebGL.depth`](WebGL#depth) option in
 -}
 default : Setting
 default =
-    WebGLFix.Settings.DepthTest.default
+    less { write = True, near = 0, far = 1 }
 
 
 {-| When rendering, you have a buffer of pixels. Depth-testing works by
@@ -100,47 +100,47 @@ type alias Options =
 
 {-| -}
 less : Options -> Setting
-less =
-    WebGLFix.Settings.DepthTest.less
+less { write, near, far } =
+    I.DepthTest 513 write near far
 
 
 {-| -}
 never : Options -> Setting
-never =
-    WebGLFix.Settings.DepthTest.never
+never { write, near, far } =
+    I.DepthTest 512 write near far
 
 
 {-| -}
 always : Options -> Setting
-always =
-    WebGLFix.Settings.DepthTest.always
+always { write, near, far } =
+    I.DepthTest 519 write near far
 
 
 {-| -}
 equal : Options -> Setting
-equal =
-    WebGLFix.Settings.DepthTest.equal
+equal { write, near, far } =
+    I.DepthTest 514 write near far
 
 
 {-| -}
 greater : Options -> Setting
-greater =
-    WebGLFix.Settings.DepthTest.greater
+greater { write, near, far } =
+    I.DepthTest 516 write near far
 
 
 {-| -}
 notEqual : Options -> Setting
-notEqual =
-    WebGLFix.Settings.DepthTest.notEqual
+notEqual { write, near, far } =
+    I.DepthTest 517 write near far
 
 
 {-| -}
 lessOrEqual : Options -> Setting
-lessOrEqual =
-    WebGLFix.Settings.DepthTest.lessOrEqual
+lessOrEqual { write, near, far } =
+    I.DepthTest 515 write near far
 
 
 {-| -}
 greaterOrEqual : Options -> Setting
-greaterOrEqual =
-    WebGLFix.Settings.DepthTest.greaterOrEqual
+greaterOrEqual { write, near, far } =
+    I.DepthTest 518 write near far

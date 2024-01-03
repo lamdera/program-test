@@ -1,4 +1,4 @@
-module Effect.WebGL.Settings.StencilTest exposing
+module WebGLFix.Settings.StencilTest exposing
     ( test
     , Test, always, equal, never, less, greater, notEqual
     , lessOrEqual, greaterOrEqual
@@ -35,8 +35,8 @@ or [OpenGL docs](https://www.opengl.org/sdk/docs/man2/xhtml/glStencilFunc.xml).
 
 -}
 
+import WebGLFix.Internal as I
 import WebGLFix.Settings exposing (Setting)
-import WebGLFix.Settings.StencilTest
 
 
 {-| When you need to draw an intercection of two entities, e.g. a reflection in
@@ -93,8 +93,11 @@ test :
     , writeMask : Int
     }
     -> Setting
-test =
-    WebGLFix.Settings.StencilTest.test
+test stencilTest =
+    testSeparate
+        { ref = stencilTest.ref, mask = stencilTest.mask, writeMask = stencilTest.writeMask }
+        { test = stencilTest.test, fail = stencilTest.fail, zfail = stencilTest.zfail, zpass = stencilTest.zpass }
+        { test = stencilTest.test, fail = stencilTest.fail, zfail = stencilTest.zfail, zpass = stencilTest.zpass }
 
 
 {-| The `Test` allows you to define how to compare the reference value
@@ -118,83 +121,83 @@ the pixel will be drawn.
     greaterOrEqual -- ref & mask >= stencil & mask
 
 -}
-type alias Test =
-    WebGLFix.Settings.StencilTest.Test
+type Test
+    = Test Int
 
 
 {-| -}
 always : Test
 always =
-    WebGLFix.Settings.StencilTest.always
+    Test 519
 
 
 {-| -}
 equal : Test
 equal =
-    WebGLFix.Settings.StencilTest.equal
+    Test 514
 
 
 {-| -}
 never : Test
 never =
-    WebGLFix.Settings.StencilTest.never
+    Test 512
 
 
 {-| -}
 less : Test
 less =
-    WebGLFix.Settings.StencilTest.less
+    Test 513
 
 
 {-| -}
 greater : Test
 greater =
-    WebGLFix.Settings.StencilTest.greater
+    Test 516
 
 
 {-| -}
 notEqual : Test
 notEqual =
-    WebGLFix.Settings.StencilTest.notEqual
+    Test 517
 
 
 {-| -}
 lessOrEqual : Test
 lessOrEqual =
-    WebGLFix.Settings.StencilTest.lessOrEqual
+    Test 515
 
 
 {-| -}
 greaterOrEqual : Test
 greaterOrEqual =
-    WebGLFix.Settings.StencilTest.greaterOrEqual
+    Test 518
 
 
 {-| Defines how to update the value in the stencil buffer.
 -}
-type alias Operation =
-    WebGLFix.Settings.StencilTest.Operation
+type Operation
+    = Operation Int
 
 
 {-| Sets the stencil buffer value to `ref` from the stencil test.
 -}
 replace : Operation
 replace =
-    WebGLFix.Settings.StencilTest.replace
+    Operation 7681
 
 
 {-| Keeps the current stencil buffer value. Use this as a noop.
 -}
 keep : Operation
 keep =
-    WebGLFix.Settings.StencilTest.keep
+    Operation 7680
 
 
 {-| Sets the stencil buffer value to 0.
 -}
 zero : Operation
 zero =
-    WebGLFix.Settings.StencilTest.zero
+    Operation 0
 
 
 {-| Increments the current stencil buffer value. Clamps to the maximum
@@ -202,21 +205,21 @@ representable unsigned value.
 -}
 increment : Operation
 increment =
-    WebGLFix.Settings.StencilTest.increment
+    Operation 7682
 
 
 {-| Decrements the current stencil buffer value. Clamps to 0.
 -}
 decrement : Operation
 decrement =
-    WebGLFix.Settings.StencilTest.decrement
+    Operation 7683
 
 
 {-| Bitwise inverts the current stencil buffer value.
 -}
 invert : Operation
 invert =
-    WebGLFix.Settings.StencilTest.invert
+    Operation 5386
 
 
 {-| Increments the current stencil buffer value. Wraps stencil buffer value to
@@ -224,7 +227,7 @@ zero when incrementing the maximum representable unsigned value.
 -}
 incrementWrap : Operation
 incrementWrap =
-    WebGLFix.Settings.StencilTest.incrementWrap
+    Operation 34055
 
 
 {-| Decrements the current stencil buffer value.
@@ -233,7 +236,7 @@ value when decrementing a stencil buffer value of zero.
 -}
 decrementWrap : Operation
 decrementWrap =
-    WebGLFix.Settings.StencilTest.decrementWrap
+    Operation 34056
 
 
 {-| Different options for front and back facing polygons.
@@ -243,5 +246,20 @@ testSeparate :
     -> { test : Test, fail : Operation, zfail : Operation, zpass : Operation }
     -> { test : Test, fail : Operation, zfail : Operation, zpass : Operation }
     -> Setting
-testSeparate =
-    WebGLFix.Settings.StencilTest.testSeparate
+testSeparate { ref, mask, writeMask } options1 options2 =
+    let
+        expandTest (Test expandedTest) fn =
+            fn expandedTest
+
+        expandOp (Operation op) fn =
+            fn op
+
+        expand options =
+            expandTest options.test
+                >> expandOp options.fail
+                >> expandOp options.zfail
+                >> expandOp options.zpass
+    in
+    I.StencilTest ref mask writeMask
+        |> expand options1
+        |> expand options2

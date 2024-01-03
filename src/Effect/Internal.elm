@@ -15,7 +15,6 @@ module Effect.Internal exposing
     , Smaller(..)
     , Subscription(..)
     , Task(..)
-    , Texture(..)
     , Visibility(..)
     , Wrap(..)
     , andThen
@@ -32,7 +31,7 @@ import Http
 import Json.Decode
 import Json.Encode
 import Time
-import WebGL.Texture
+import WebGLFix.Texture
 
 
 type SessionId
@@ -121,12 +120,7 @@ type Task restriction x a
     | FileToString File (String -> Task restriction x a)
     | FileToBytes File (Bytes -> Task restriction x a)
     | FileToUrl File (String -> Task restriction x a)
-    | LoadTexture LoadTextureOptions String (Result WebGL.Texture.Error Texture -> Task restriction x a)
-
-
-type Texture
-    = RealTexture WebGL.Texture.Texture
-    | MockTexture Int Int
+    | LoadTexture LoadTextureOptions String (Result WebGLFix.Texture.Error WebGLFix.Texture.Texture -> Task restriction x a)
 
 
 type Bigger
@@ -158,6 +152,7 @@ type alias LoadTextureOptions =
     , horizontalWrap : Wrap
     , verticalWrap : Wrap
     , flipY : Bool
+    , premultiplyAlpha : Bool
     }
 
 
