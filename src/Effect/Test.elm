@@ -1263,7 +1263,6 @@ simulateStep frontendApp backendApp state =
                     let
                         ( newFrontendModel, newFrontendEffects ) =
                             getCompletedTimers frontend.timers
-                                |> Debug.log "timer"
                                 |> List.foldl
                                     (\( _, { msg } ) ( frontendModel, effects ) ->
                                         frontendApp.update
