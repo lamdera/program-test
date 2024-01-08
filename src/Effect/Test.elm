@@ -2570,6 +2570,7 @@ testOverlay testView_ currentStep =
         , Html.Attributes.style "color" "white"
         , Html.Attributes.style "position" "absolute"
         , Html.Attributes.style "background" "#424242ff"
+        , Html.Attributes.style "z-index" "9999"
         , case testView_.overlayPosition of
             Top ->
                 Html.Attributes.style "top" "0"
