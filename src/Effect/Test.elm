@@ -35,6 +35,7 @@ import AssocList as Dict exposing (Dict)
 import Base64
 import Browser exposing (UrlRequest(..))
 import Browser.Dom
+import Browser.Events
 import Browser.Navigation
 import Bytes exposing (Bytes, Endianness(..))
 import Bytes.Decode
@@ -2340,6 +2341,7 @@ type Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     | PressedHideModel
     | PressedExpandField (List PathNode)
     | PressedCollapseField (List PathNode)
+    | PressedArrowKey ArrowKey
 
 
 init :
@@ -2434,46 +2436,10 @@ update config msg model =
             ( model, Cmd.none )
 
         PressedStepForward ->
-            ( { model
-                | currentTest =
-                    case model.currentTest of
-                        Just currentTest ->
-                            case List.Nonempty.toList currentTest.steps |> listGet (currentTest.stepIndex + 1) of
-                                Just nextStep ->
-                                    { currentTest
-                                        | stepIndex = currentTest.stepIndex + 1
-                                        , clientId =
-                                            case currentTest.clientId of
-                                                Nothing ->
-                                                    Dict.keys nextStep.frontends |> List.head
-
-                                                Just clientId ->
-                                                    Just clientId
-                                    }
-                                        |> Just
-
-                                Nothing ->
-                                    Just currentTest
-
-                        Nothing ->
-                            Nothing
-              }
-            , Cmd.none
-            )
+            ( updateCurrentTest stepForward model, Cmd.none )
 
         PressedStepBackward ->
-            ( { model
-                | currentTest =
-                    case model.currentTest of
-                        Just currentTest ->
-                            { currentTest | stepIndex = max 0 (currentTest.stepIndex - 1) }
-                                |> Just
-
-                        Nothing ->
-                            Nothing
-              }
-            , Cmd.none
-            )
+            ( updateCurrentTest stepBackward model, Cmd.none )
 
         PressedBackToOverview ->
             ( { model | currentTest = Nothing }, Cmd.none )
@@ -2562,8 +2528,46 @@ update config msg model =
                 model
             , Cmd.none
             )
+
+        PressedArrowKey arrowKey ->
+            ( updateCurrentTest
+                (\currentTest ->
+                    case arrowKey of
+                        ArrowRight ->
+                            stepForward currentTest
+
+                        ArrowLeft ->
+                            stepBackward currentTest
+                )
+                model
+            , Cmd.none
+            )
     )
         |> checkCachedElmValue
+
+
+stepForward : TestView frontendModel -> TestView frontendModel
+stepForward currentTest =
+    case List.Nonempty.toList currentTest.steps |> listGet (currentTest.stepIndex + 1) of
+        Just nextStep ->
+            { currentTest
+                | stepIndex = currentTest.stepIndex + 1
+                , clientId =
+                    case currentTest.clientId of
+                        Nothing ->
+                            Dict.keys nextStep.frontends |> List.head
+
+                        Just clientId ->
+                            Just clientId
+            }
+
+        Nothing ->
+            currentTest
+
+
+stepBackward : TestView frontendModel -> TestView frontendModel
+stepBackward currentTest =
+    { currentTest | stepIndex = max 0 (currentTest.stepIndex - 1) }
 
 
 checkCachedElmValue :
@@ -3162,10 +3166,35 @@ startViewer viewerWith2 =
         { init = init
         , update = update viewerWith2
         , view = view
-        , subscriptions = \_ -> Sub.none
+        , subscriptions = viewerSubscriptions
         , onUrlRequest = UrlClicked
         , onUrlChange = UrlChanged
         }
+
+
+viewerSubscriptions :
+    Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Sub (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+viewerSubscriptions _ =
+    Browser.Events.onKeyDown
+        (Json.Decode.field "key" Json.Decode.string
+            |> Json.Decode.andThen
+                (\key ->
+                    if key == "ArrowLeft" then
+                        PressedArrowKey ArrowLeft |> Json.Decode.succeed
+
+                    else if key == "ArrowRight" then
+                        PressedArrowKey ArrowRight |> Json.Decode.succeed
+
+                    else
+                        Json.Decode.fail ""
+                )
+        )
+
+
+type ArrowKey
+    = ArrowLeft
+    | ArrowRight
 
 
 {-| View your end-to-end tests in a elm reactor style app.
@@ -3182,7 +3211,7 @@ viewer tests =
         { init = init
         , update = update { cmds = Task.succeed tests }
         , view = view
-        , subscriptions = \_ -> Sub.none
+        , subscriptions = viewerSubscriptions
         , onUrlRequest = UrlClicked
         , onUrlChange = UrlChanged
         }
