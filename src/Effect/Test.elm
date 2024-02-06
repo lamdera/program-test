@@ -64,6 +64,7 @@ import Json.Encode
 import List.Nonempty exposing (Nonempty)
 import Process
 import Quantity
+import Set
 import Task
 import Test exposing (Test)
 import Test.Html.Event
@@ -2677,7 +2678,7 @@ view :
 view model =
     { title = "Test viewer"
     , body =
-        [ case model.tests of
+        case model.tests of
             Just (Ok tests) ->
                 case model.currentTest of
                     Just testView_ ->
@@ -2686,13 +2687,13 @@ view model =
                                 testView instructions testView_
 
                             Nothing ->
-                                text "Invalid index for tests"
+                                [ text "Invalid index for tests" ]
 
                     Nothing ->
-                        overview tests model.testResults
+                        [ overview tests model.testResults ]
 
             Just (Err error) ->
-                "Failed to load \""
+                [ "Failed to load \""
                     ++ error.name
                     ++ "\" "
                     ++ (case error.error of
@@ -2718,10 +2719,10 @@ view model =
                                 "due to the texture being an invalid size (width: " ++ String.fromInt w ++ ", height: " ++ String.fromInt h ++ ")"
                        )
                     |> text
+                ]
 
             Nothing ->
-                text "Loading files for tests..."
-        ]
+                [ text "Loading files for tests..." ]
     }
 
 
@@ -2801,12 +2802,43 @@ overlayButton onPress text_ =
     Html.button
         [ Html.Events.onClick onPress
         , Html.Attributes.style "padding" "2px"
+        , Html.Attributes.style "margin" "0px"
         , Html.Attributes.style "color" "rgb(10,10,10)"
         , Html.Attributes.style "background-color" "rgb(240,240,240)"
         , Html.Attributes.style "border-color" "rgb(250,250,250)"
         , Html.Attributes.style "border-width" "1px"
         , Html.Attributes.style "border-radius" "4px"
         , Html.Attributes.style "border-style" "solid"
+        , Html.Attributes.style "font-family" "arial"
+        , Html.Attributes.style "font-size" "14px"
+        , Html.Attributes.style "font-weight" "regular"
+        , Html.Attributes.style "line-height" "1"
+        ]
+        [ Html.text text_ ]
+
+
+overlaySelectButton : Bool -> msg -> String -> Html msg
+overlaySelectButton isSelected onPress text_ =
+    Html.button
+        [ Html.Events.onClick onPress
+        , Html.Attributes.style "padding" "2px"
+        , Html.Attributes.style "color" "rgb(10,10,10)"
+        , Html.Attributes.style
+            "background-color"
+            (if isSelected then
+                "rgb(180,200,255)"
+
+             else
+                "rgb(240,240,240)"
+            )
+        , Html.Attributes.style "border-color" "rgb(250,250,250)"
+        , Html.Attributes.style "border-width" "1px"
+        , Html.Attributes.style "border-radius" "4px"
+        , Html.Attributes.style "border-style" "solid"
+        , Html.Attributes.style "font-family" "arial"
+        , Html.Attributes.style "font-size" "14px"
+        , Html.Attributes.style "font-weight" "regular"
+        , Html.Attributes.style "line-height" "1"
         ]
         [ Html.text text_ ]
 
@@ -2955,7 +2987,7 @@ modelDiffView collapsedFields frontend previousFrontend =
 testView :
     Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> TestView frontendModel
-    -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> List (Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
 testView instructions testView_ =
     let
         frontendApp : FrontendApp toBackend frontendMsg frontendModel toFrontend
@@ -2980,9 +3012,9 @@ testView instructions testView_ =
                 else
                     Nothing
         in
-        Html.div
+        [ Html.div
             [ Html.Attributes.style "width" "100%"
-            , Html.Attributes.style "height" "100%"
+            , Html.Attributes.style "min-height" "100vh"
             , darkBackground
             , defaultFontColor
             , Html.Attributes.style "font-family" "arial"
@@ -3010,15 +3042,10 @@ testView instructions testView_ =
                             )
                         ]
                     ]
-                , Dict.toList currentStep.frontends
-                    |> List.map
-                        (\( clientId, _ ) ->
-                            overlayButton (SelectedFrontend clientId) (Effect.Lamdera.clientIdToString clientId)
-                        )
-                    |> Html.div []
+                , frontendSelection currentStep testView_
                 ]
             , Html.div
-                [ Html.Attributes.style "font-size" "14px" ]
+                [ Html.Attributes.style "font-size" "14px", Html.Attributes.style "padding" "4px" ]
                 [ case Maybe.andThen (\clientId -> Dict.get clientId currentStep.frontends) testView_.clientId of
                     Just frontend ->
                         case maybePreviousFrontend of
@@ -3032,17 +3059,15 @@ testView instructions testView_ =
                         Html.text ""
                 ]
             ]
+        ]
 
     else
-        Html.div
-            []
-            (testOverlay testView_ currentStep
-                :: List.map
-                    (\( _, frontend ) ->
-                        frontendApp.view frontend.model |> .body |> Html.div [] |> Html.map (\_ -> NoOp)
-                    )
-                    (Dict.toList currentStep.frontends)
-            )
+        testOverlay testView_ currentStep
+            :: List.map
+                (\( _, frontend ) ->
+                    frontendApp.view frontend.model |> .body |> Html.div [] |> Html.map (\_ -> NoOp)
+                )
+                (Dict.toList currentStep.frontends)
 
 
 testOverlay : TestView frontendModel -> TestStep frontendModel -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
@@ -3052,7 +3077,7 @@ testOverlay testView_ currentStep =
         , Html.Attributes.style "font-family" "arial"
         , Html.Attributes.style "font-size" "14px"
         , defaultFontColor
-        , Html.Attributes.style "position" "absolute"
+        , Html.Attributes.style "position" "fixed"
         , darkBackground
         , Html.Attributes.style "z-index" "9999"
         , case testView_.overlayPosition of
@@ -3090,17 +3115,42 @@ testOverlay testView_ currentStep =
                     )
                 ]
             ]
-        , Dict.toList currentStep.frontends
-            |> List.map
-                (\( clientId, _ ) ->
-                    overlayButton (SelectedFrontend clientId) (Effect.Lamdera.clientIdToString clientId)
-                )
-            |> Html.div []
+        , frontendSelection currentStep testView_
         , Html.div
             [ Html.Attributes.style "color" "rgb(200, 10, 10)"
             ]
             (List.map (testErrorToString >> text) currentStep.errors)
         ]
+
+
+frontendSelection currentStep testView_ =
+    let
+        frontends =
+            Dict.toList currentStep.frontends
+    in
+    if List.isEmpty frontends then
+        text "No frontends have connected"
+
+    else
+        Html.div
+            [ Html.Attributes.style "padding" "4px"
+            , Html.Attributes.style "display" "inline-block"
+            ]
+            [ Html.text "Frontends:" ]
+            :: List.map
+                (\( clientId, _ ) ->
+                    Html.div
+                        [ Html.Attributes.style "padding-right" "4px"
+                        , Html.Attributes.style "display" "inline-block"
+                        ]
+                        [ overlaySelectButton
+                            (Just clientId == testView_.clientId)
+                            (SelectedFrontend clientId)
+                            (Effect.Lamdera.clientIdToString clientId)
+                        ]
+                )
+                frontends
+            |> Html.div []
 
 
 ellipsis : Int -> String -> Html msg

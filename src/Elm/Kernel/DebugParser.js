@@ -67,26 +67,24 @@ function _DebugParser_toAnsiString(value)
 
 		if (tag === 'Set_elm_builtin')
 		{
-            var listSet = __Set_toList(value);
+		    var value2 = __Set_toList(value);
 		    var output = [];
-            for (var k in listSet)
+            for (; value2.b; value2 = value2.b) // WHILE_CONS
             {
-                if (k === '$') continue;
-                output.push(_DebugParser_toAnsiString(value[k]));
+                output.push(_DebugParser_toAnsiString(value2.a));
             }
             return __DebugParser_Expandable(A2(__DebugParser_ElmSequence, __DebugParser_SeqSet, _List_fromArray(output)));
 		}
 
 		if (tag === 'RBNode_elm_builtin' || tag === 'RBEmpty_elm_builtin')
 		{
-            var listSet = __Dict_toList(value);
+            var value2 = __Dict_toList(value);
             var output = [];
-            for (var k in listSet)
+            for (; value2.b; value2 = value2.b) // WHILE_CONS
             {
-                if (k === '$') continue;
-                output.push(_DebugParser_toAnsiString(value[k]));
+                output.push(__Utils_Tuple2(_DebugParser_toAnsiString(value2.a.a), _DebugParser_toAnsiString(value2.a.b)));
             }
-            return __DebugParser_Expandable(A2(__DebugParser_ElmSequence, __DebugParser_SeqSet, _List_fromArray(output)));
+            return __DebugParser_Expandable(__DebugParser_ElmDict(_List_fromArray(output)));
 		}
 
 		if (tag === 'Array_elm_builtin')
