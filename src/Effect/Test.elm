@@ -918,38 +918,33 @@ connectFrontend sessionId url windowSize andThenFunc =
                 subscriptions =
                     state.frontendApp.subscriptions frontend
 
-                ( backend, backendEffects ) =
-                    getClientConnectSubs (state.backendApp.subscriptions state.model)
-                        |> List.foldl
-                            (\msg ( newBackend, newEffects ) ->
-                                state.backendApp.update (msg sessionId clientId) newBackend
-                                    |> Tuple.mapSecond (\a -> Effect.Command.batch [ newEffects, a ])
-                            )
-                            ( state.model, state.pendingEffects )
-
                 state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
                 state2 =
-                    { state
-                        | frontends =
-                            Dict.insert
-                                clientId
-                                { model = frontend
-                                , sessionId = sessionId
-                                , pendingEffects = effects
-                                , toFrontend = []
-                                , clipboard = ""
-                                , timers = getTimers subscriptions |> Dict.map (\_ _ -> { startTime = currentTime state })
-                                , url = url
-                                , windowSize = windowSize
-                                }
-                                state.frontends
-                        , counter = state.counter + 1
-                        , model = backend
-                        , pendingEffects = backendEffects
-                    }
+                    getClientConnectSubs (state.backendApp.subscriptions state.model)
+                        |> List.foldl
+                            (\msg state3 ->
+                                handleUpdate (currentTime state3) state3.backendApp (msg sessionId clientId) state3
+                            )
+                            state
             in
             andThenFunc
-                ( Start state2 |> NextStep "Connect new frontend" identity
+                ( { state2
+                    | frontends =
+                        Dict.insert
+                            clientId
+                            { model = frontend
+                            , sessionId = sessionId
+                            , pendingEffects = effects
+                            , toFrontend = []
+                            , clipboard = ""
+                            , timers = getTimers subscriptions |> Dict.map (\_ _ -> { startTime = currentTime state2 })
+                            , url = url
+                            , windowSize = windowSize
+                            }
+                            state2.frontends
+                    , counter = state2.counter + 1
+                  }
+                    |> Start
                 , { clientId = clientId
                   , keyDownEvent = keyDownEvent clientId
                   , clickButton = clickButton clientId
@@ -988,6 +983,72 @@ handleUpdate currentTime2 app msg state =
         , timers =
             Dict.merge
                 (\duration _ dict -> Dict.insert duration { startTime = currentTime2 } dict)
+                (\_ _ _ dict -> dict)
+                (\duration _ dict -> Dict.remove duration dict)
+                newTimers
+                state.timers
+                state.timers
+    }
+
+
+handleUpdateFromBackend :
+    Time.Posix
+    -> FrontendApp toBackend frontendMsg frontendModel toFrontend
+    -> toFrontend
+    -> FrontendState toBackend frontendMsg frontendModel toFrontend
+    -> FrontendState toBackend frontendMsg frontendModel toFrontend
+handleUpdateFromBackend currentTime2 app msg state =
+    let
+        ( newModel, cmd ) =
+            app.updateFromBackend msg state.model
+
+        subscriptions : Subscription FrontendOnly frontendMsg
+        subscriptions =
+            app.subscriptions newModel
+
+        newTimers : Dict Duration { msg : Nonempty (Time.Posix -> frontendMsg) }
+        newTimers =
+            getTimers subscriptions
+    in
+    { state
+        | model = newModel
+        , pendingEffects = Effect.Command.batch [ state.pendingEffects, cmd ]
+        , timers =
+            Dict.merge
+                (\duration _ dict -> Dict.insert duration { startTime = currentTime2 } dict)
+                (\_ _ _ dict -> dict)
+                (\duration _ dict -> Dict.remove duration dict)
+                newTimers
+                state.timers
+                state.timers
+    }
+
+
+handleUpdateFromFrontend :
+    SessionId
+    -> ClientId
+    -> toBackend
+    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+handleUpdateFromFrontend sessionId clientId msg state =
+    let
+        ( newModel, cmd ) =
+            state.backendApp.updateFromFrontend sessionId clientId msg state.model
+
+        subscriptions : Subscription BackendOnly backendMsg
+        subscriptions =
+            state.backendApp.subscriptions newModel
+
+        newTimers : Dict Duration { msg : Nonempty (Time.Posix -> backendMsg) }
+        newTimers =
+            getTimers subscriptions
+    in
+    { state
+        | model = newModel
+        , pendingEffects = Effect.Command.batch [ state.pendingEffects, cmd ]
+        , timers =
+            Dict.merge
+                (\duration _ dict -> Dict.insert duration { startTime = currentTime state } dict)
                 (\_ _ _ dict -> dict)
                 (\duration _ dict -> Dict.remove duration dict)
                 newTimers
@@ -1194,51 +1255,21 @@ disconnectFrontend backendApp clientId state =
     case Dict.get clientId state.frontends of
         Just frontend ->
             let
-                ( backend, effects ) =
+                state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                state2 =
                     getClientDisconnectSubs (backendApp.subscriptions state.model)
                         |> List.foldl
-                            (\msg ( newBackend, newEffects ) ->
-                                backendApp.update (msg frontend.sessionId clientId) newBackend
-                                    |> Tuple.mapSecond (\a -> Effect.Command.batch [ newEffects, a ])
+                            (\msg state3 ->
+                                handleUpdate (currentTime state3) state3.backendApp (msg frontend.sessionId clientId) state3
                             )
-                            ( state.model, state.pendingEffects )
+                            state
             in
-            ( { state | model = backend, pendingEffects = effects, frontends = Dict.remove clientId state.frontends }
+            ( { state2 | frontends = Dict.remove clientId state2.frontends }
             , Just { frontend | toFrontend = [] }
             )
 
         Nothing ->
             ( state, Nothing )
-
-
-{-| -}
-reconnectFrontend :
-    BackendApp toBackend toFrontend backendMsg backendModel
-    -> FrontendState toBackend frontendMsg frontendModel toFrontend
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> ( State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, ClientId )
-reconnectFrontend backendApp frontendState state =
-    let
-        clientId =
-            "clientId " ++ String.fromInt state.counter |> Effect.Lamdera.clientIdFromString
-
-        ( backend, effects ) =
-            getClientConnectSubs (backendApp.subscriptions state.model)
-                |> List.foldl
-                    (\msg ( newBackend, newEffects ) ->
-                        backendApp.update (msg frontendState.sessionId clientId) newBackend
-                            |> Tuple.mapSecond (\a -> Effect.Command.batch [ newEffects, a ])
-                    )
-                    ( state.model, state.pendingEffects )
-    in
-    ( { state
-        | frontends = Dict.insert clientId frontendState state.frontends
-        , model = backend
-        , pendingEffects = effects
-        , counter = state.counter + 1
-      }
-    , clientId
-    )
 
 
 {-| Normally you won't send data directly to the backend and instead use `connectFrontend` followed by things like `clickButton` or `inputText` to cause the frontend to send data to the backend.
@@ -1363,7 +1394,7 @@ simulateStep timeLeft state =
                     && (timeLeft |> Quantity.greaterThanOrEqualTo animationFrame)
                     && (delta |> Quantity.greaterThan animationFrame)
             then
-                runEffects state.frontendApp state.backendApp { state | elapsedTime = Quantity.plus animationFrame state.elapsedTime }
+                runEffects { state | elapsedTime = Quantity.plus animationFrame state.elapsedTime }
                     |> simulateStep (timeLeft |> Quantity.minus animationFrame)
 
             else if delta |> Quantity.lessThanOrEqualTo timeLeft then
@@ -1396,14 +1427,14 @@ simulateStep timeLeft state =
                                 )
                                 state.frontends
                     }
-                    |> runEffects state.frontendApp state.backendApp
+                    |> runEffects
 
             else
                 { state | elapsedTime = Quantity.plus state.elapsedTime timeLeft }
 
         Nothing ->
             if hasPendingEffects state && (timeLeft |> Quantity.greaterThanOrEqualTo animationFrame) then
-                runEffects state.frontendApp state.backendApp { state | elapsedTime = Quantity.plus animationFrame state.elapsedTime }
+                runEffects { state | elapsedTime = Quantity.plus animationFrame state.elapsedTime }
                     |> simulateStep (timeLeft |> Quantity.minus animationFrame)
 
             else
@@ -1501,22 +1532,19 @@ continueWith state =
 
 
 runEffects :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> BackendApp toBackend toFrontend backendMsg backendModel
+    State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-runEffects frontendApp backendApp state =
+runEffects state =
     let
         state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         state2 =
-            runBackendEffects frontendApp backendApp state.pendingEffects (clearBackendEffects state)
+            runBackendEffects state.pendingEffects (clearBackendEffects state)
 
         state4 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         state4 =
             Dict.foldl
                 (\clientId { sessionId, pendingEffects } state3 ->
                     runFrontendEffects
-                        frontendApp
                         sessionId
                         clientId
                         pendingEffects
@@ -1534,51 +1562,34 @@ runEffects frontendApp backendApp state =
                 )
                 state4.frontends
     }
-        |> runNetwork frontendApp backendApp
+        |> runNetwork
 
 
 runNetwork :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> BackendApp toBackend toFrontend backendMsg backendModel
+    State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-runNetwork frontendApp backendApp state =
+runNetwork state =
     let
-        ( backendModel, effects ) =
+        state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        state2 =
             List.foldl
-                (\( sessionId, clientId, toBackendMsg ) ( model, effects2 ) ->
-                    backendApp.updateFromFrontend sessionId clientId toBackendMsg model
-                        |> Tuple.mapSecond (\a -> Effect.Command.batch [ effects2, a ])
+                (\( sessionId, clientId, toBackendMsg ) state3 ->
+                    handleUpdateFromFrontend sessionId clientId toBackendMsg state3
                 )
-                ( state.model, state.pendingEffects )
+                state
                 state.toBackend
-
-        frontends =
+    in
+    { state2
+        | toBackend = []
+        , frontends =
             Dict.map
                 (\_ frontend ->
-                    let
-                        ( newModel, newEffects2 ) =
-                            List.foldl
-                                (\msg ( model, newEffects ) ->
-                                    frontendApp.updateFromBackend msg model
-                                        |> Tuple.mapSecond (\a -> Effect.Command.batch [ newEffects, a ])
-                                )
-                                ( frontend.model, frontend.pendingEffects )
-                                frontend.toFrontend
-                    in
-                    { frontend
-                        | model = newModel
-                        , pendingEffects = newEffects2
-                        , toFrontend = []
-                    }
+                    List.foldl
+                        (handleUpdateFromBackend (currentTime state2) state2.frontendApp)
+                        { frontend | toFrontend = [] }
+                        frontend.toFrontend
                 )
-                state.frontends
-    in
-    { state
-        | toBackend = []
-        , model = backendModel
-        , pendingEffects = flattenEffects effects |> Effect.Command.batch
-        , frontends = frontends
+                state2.frontends
     }
 
 
@@ -1604,28 +1615,27 @@ clearFrontendEffects clientId state =
 
 
 runFrontendEffects :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> SessionId
+    SessionId
     -> ClientId
     -> Command FrontendOnly toBackend frontendMsg
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
+runFrontendEffects sessionId clientId effectsToPerform state =
     case effectsToPerform of
         Batch nestedEffectsToPerform ->
-            List.foldl (runFrontendEffects frontendApp sessionId clientId) state nestedEffectsToPerform
+            List.foldl (runFrontendEffects sessionId clientId) state nestedEffectsToPerform
 
         SendToBackend toBackend ->
             { state | toBackend = state.toBackend ++ [ ( sessionId, clientId, toBackend ) ] }
 
         NavigationPushUrl _ urlText ->
-            handleUrlChange frontendApp urlText clientId state
+            handleUrlChange urlText clientId state
 
         NavigationReplaceUrl _ urlText ->
-            handleUrlChange frontendApp urlText clientId state
+            handleUrlChange urlText clientId state
 
         NavigationLoad urlText ->
-            handleUrlChange frontendApp urlText clientId state
+            handleUrlChange urlText clientId state
 
         NavigationBack _ _ ->
             -- TODO
@@ -1649,7 +1659,7 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
         Task task ->
             let
                 ( newState, msg ) =
-                    runTask (Just clientId) frontendApp state task
+                    runTask (Just clientId) state task
             in
             case Dict.get clientId newState.frontends of
                 Just frontend ->
@@ -1657,7 +1667,7 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
                         | frontends =
                             Dict.insert
                                 clientId
-                                (handleUpdate (currentTime newState) frontendApp msg frontend)
+                                (handleUpdate (currentTime newState) state.frontendApp msg frontend)
                                 newState.frontends
                     }
 
@@ -1684,7 +1694,7 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
                             let
                                 msgs : List frontendMsg
                                 msgs =
-                                    frontendApp.subscriptions frontend.model
+                                    state.frontendApp.subscriptions frontend.model
                                         |> getPortSubscriptions
                                         |> List.filterMap
                                             (\sub ->
@@ -1699,7 +1709,7 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
                                 | frontends =
                                     Dict.insert
                                         clientId
-                                        (List.foldl (handleUpdate (currentTime state) frontendApp) frontend msgs)
+                                        (List.foldl (handleUpdate (currentTime state) state.frontendApp) frontend msgs)
                                         newState.frontends
                             }
 
@@ -1735,7 +1745,7 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
                                         clientId
                                         (handleUpdate
                                             (currentTime state)
-                                            frontendApp
+                                            state.frontendApp
                                             (msg (Effect.Internal.MockFile file))
                                             frontend
                                         )
@@ -1759,7 +1769,7 @@ runFrontendEffects frontendApp sessionId clientId effectsToPerform state =
                                         clientId
                                         (handleUpdate
                                             (currentTime state)
-                                            frontendApp
+                                            state.frontendApp
                                             (msg
                                                 (Effect.Internal.MockFile file)
                                                 (List.map (\(FileUploadData a) -> Effect.Internal.MockFile a) files)
@@ -1802,12 +1812,11 @@ getPortSubscriptions subscription =
 
 
 handleUrlChange :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> String
+    String
     -> ClientId
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-handleUrlChange frontendApp urlText clientId state =
+handleUrlChange urlText clientId state =
     let
         urlText_ : String
         urlText_ =
@@ -1819,7 +1828,7 @@ handleUrlChange frontendApp urlText clientId state =
                 Just frontend ->
                     let
                         newFrontend =
-                            handleUpdate (currentTime state) frontendApp (frontendApp.onUrlChange url) frontend
+                            handleUpdate (currentTime state) state.frontendApp (state.frontendApp.onUrlChange url) frontend
                     in
                     { state | frontends = Dict.insert clientId { newFrontend | url = url } state.frontends }
 
@@ -1844,15 +1853,13 @@ flattenEffects effect =
 
 
 runBackendEffects :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> BackendApp toBackend toFrontend backendMsg backendModel
-    -> Command BackendOnly toFrontend backendMsg
+    Command BackendOnly toFrontend backendMsg
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-runBackendEffects frontendApp backendApp effect state =
+runBackendEffects effect state =
     case effect of
         Batch effects ->
-            List.foldl (runBackendEffects frontendApp backendApp) state effects
+            List.foldl runBackendEffects state effects
 
         SendToFrontend (Effect.Internal.ClientId clientId) toFrontend ->
             { state
@@ -1887,15 +1894,9 @@ runBackendEffects frontendApp backendApp effect state =
         Task task ->
             let
                 ( newState, msg ) =
-                    runTask Nothing frontendApp state task
-
-                ( model, effects ) =
-                    backendApp.update msg newState.model
+                    runTask Nothing state task
             in
-            { newState
-                | model = model
-                , pendingEffects = Effect.Command.batch [ newState.pendingEffects, effects ]
-            }
+            handleUpdate (currentTime newState) state.backendApp msg newState
 
         SendToBackend _ ->
             state
@@ -1957,11 +1958,10 @@ runBackendEffects frontendApp backendApp effect state =
 
 runTask :
     Maybe ClientId
-    -> FrontendApp toBackend frontendMsg frontendModel toFrontend
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Task restriction x x
     -> ( State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, x )
-runTask maybeClientId frontendApp state task =
+runTask maybeClientId state task =
     case task of
         Succeed value ->
             ( state, value )
@@ -2023,7 +2023,7 @@ runTask maybeClientId frontendApp state task =
                                     "Test error: Can't convert texture data to string"
                    )
                 |> httpRequest.onRequestComplete
-                |> runTask maybeClientId frontendApp { state | httpRequests = request :: state.httpRequests }
+                |> runTask maybeClientId { state | httpRequests = request :: state.httpRequests }
 
         HttpBytesTask httpRequest ->
             -- TODO: Implement actual delays to http requests
@@ -2076,20 +2076,20 @@ runTask maybeClientId frontendApp state task =
                                     (Bytes.Encode.string "Test error: Can't convert texture data to string" |> Bytes.Encode.encode)
                    )
                 |> httpRequest.onRequestComplete
-                |> runTask maybeClientId frontendApp { state | httpRequests = request :: state.httpRequests }
+                |> runTask maybeClientId { state | httpRequests = request :: state.httpRequests }
 
         SleepTask _ function ->
             -- TODO: Implement actual delays in tasks
-            runTask maybeClientId frontendApp state (function ())
+            runTask maybeClientId state (function ())
 
         TimeNow gotTime ->
-            gotTime (currentTime state) |> runTask maybeClientId frontendApp state
+            gotTime (currentTime state) |> runTask maybeClientId state
 
         TimeHere gotTimeZone ->
-            gotTimeZone Time.utc |> runTask maybeClientId frontendApp state
+            gotTimeZone Time.utc |> runTask maybeClientId state
 
         TimeGetZoneName getTimeZoneName ->
-            getTimeZoneName (Time.Offset 0) |> runTask maybeClientId frontendApp state
+            getTimeZoneName (Time.Offset 0) |> runTask maybeClientId state
 
         GetViewport function ->
             (case maybeClientId of
@@ -2115,14 +2115,13 @@ runTask maybeClientId frontendApp state task =
                 Nothing ->
                     function { scene = { width = 1920, height = 1080 }, viewport = { x = 0, y = 0, width = 1920, height = 1080 } }
             )
-                |> runTask maybeClientId frontendApp state
+                |> runTask maybeClientId state
 
         SetViewport _ _ function ->
-            function () |> runTask maybeClientId frontendApp state
+            function () |> runTask maybeClientId state
 
         GetElement htmlId function ->
             getDomTask
-                frontendApp
                 maybeClientId
                 state
                 htmlId
@@ -2135,7 +2134,7 @@ runTask maybeClientId frontendApp state task =
         FileToString file function ->
             case file of
                 Effect.Internal.RealFile _ ->
-                    function "" |> runTask maybeClientId frontendApp state
+                    function "" |> runTask maybeClientId state
 
                 Effect.Internal.MockFile { content } ->
                     (case content of
@@ -2147,13 +2146,13 @@ runTask maybeClientId frontendApp state task =
                                 |> Maybe.withDefault ""
                     )
                         |> function
-                        |> runTask maybeClientId frontendApp state
+                        |> runTask maybeClientId state
 
         FileToBytes file function ->
             case file of
                 Effect.Internal.RealFile _ ->
                     function (Bytes.Encode.encode (Bytes.Encode.sequence []))
-                        |> runTask maybeClientId frontendApp state
+                        |> runTask maybeClientId state
 
                 Effect.Internal.MockFile { content } ->
                     (case content of
@@ -2164,12 +2163,12 @@ runTask maybeClientId frontendApp state task =
                             a
                     )
                         |> function
-                        |> runTask maybeClientId frontendApp state
+                        |> runTask maybeClientId state
 
         FileToUrl file function ->
             case file of
                 Effect.Internal.RealFile _ ->
-                    function "" |> runTask maybeClientId frontendApp state
+                    function "" |> runTask maybeClientId state
 
                 Effect.Internal.MockFile { content } ->
                     (case content of
@@ -2180,17 +2179,16 @@ runTask maybeClientId frontendApp state task =
                             "data:*/*;base64," ++ Maybe.withDefault "" (Base64.fromBytes a)
                     )
                         |> function
-                        |> runTask maybeClientId frontendApp state
+                        |> runTask maybeClientId state
 
         Focus htmlId function ->
-            getDomTask frontendApp maybeClientId state htmlId function ()
+            getDomTask maybeClientId state htmlId function ()
 
         Blur htmlId function ->
-            getDomTask frontendApp maybeClientId state htmlId function ()
+            getDomTask maybeClientId state htmlId function ()
 
         GetViewportOf htmlId function ->
             getDomTask
-                frontendApp
                 maybeClientId
                 state
                 htmlId
@@ -2200,7 +2198,7 @@ runTask maybeClientId frontendApp state task =
                 }
 
         SetViewportOf htmlId _ _ function ->
-            getDomTask frontendApp maybeClientId state htmlId function ()
+            getDomTask maybeClientId state htmlId function ()
 
         LoadTexture _ url function ->
             let
@@ -2232,21 +2230,20 @@ runTask maybeClientId frontendApp state task =
                     Err WebGLFix.Texture.LoadError
             )
                 |> function
-                |> runTask maybeClientId frontendApp state
+                |> runTask maybeClientId state
 
 
 getDomTask :
-    FrontendApp toBackend frontendMsg frontendModel toFrontend
-    -> Maybe ClientId
+    Maybe ClientId
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> String
     -> (Result Effect.Internal.BrowserDomError value -> Task restriction x x)
     -> value
     -> ( State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, x )
-getDomTask frontendApp maybeClientId state htmlId function value =
+getDomTask maybeClientId state htmlId function value =
     (case Maybe.andThen (\clientId -> Dict.get clientId state.frontends) maybeClientId of
         Just frontend ->
-            frontendApp.view frontend.model
+            state.frontendApp.view frontend.model
                 |> .body
                 |> Html.div []
                 |> Test.Html.Query.fromHtml
@@ -2264,7 +2261,7 @@ getDomTask frontendApp maybeClientId state htmlId function value =
             Effect.Internal.BrowserDomNotFound htmlId |> Err
     )
         |> function
-        |> runTask maybeClientId frontendApp state
+        |> runTask maybeClientId state
 
 
 
@@ -2274,7 +2271,7 @@ getDomTask frontendApp maybeClientId state htmlId function value =
 {-| -}
 type alias Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
     { navigationKey : Browser.Navigation.Key
-    , currentTest : Maybe (TestView frontendModel)
+    , currentTest : Maybe (TestView frontendModel backendModel)
     , testResults : List (Result TestError ())
     , tests : Maybe (Result FileLoadError (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
     }
@@ -2291,11 +2288,11 @@ type FileLoadErrorType
     | TextureError WebGLFix.Texture.Error
 
 
-type alias TestView frontendModel =
+type alias TestView frontendModel backendModel =
     { index : Int
     , testName : String
     , stepIndex : Int
-    , steps : Nonempty (TestStep frontendModel)
+    , steps : Nonempty (TestStep frontendModel backendModel)
     , overlayPosition : OverlayPosition
     , clientId : Maybe ClientId
     , showModel : Bool
@@ -2308,10 +2305,11 @@ type OverlayPosition
     | Bottom
 
 
-type alias TestStep frontendModel =
+type alias TestStep frontendModel backendModel =
     { stepName : String
     , errors : List TestError
     , frontends : Dict ClientId (TestStepFrontend frontendModel)
+    , backendModel : backendModel
     }
 
 
@@ -2401,6 +2399,7 @@ update config msg model =
                                             (\( stepName, state_ ) ->
                                                 { stepName = stepName
                                                 , errors = state_.testErrors
+                                                , backendModel = state_.model
                                                 , frontends =
                                                     Dict.map
                                                         (\_ frontend ->
@@ -2547,7 +2546,7 @@ update config msg model =
         |> checkCachedElmValue
 
 
-stepForward : TestView frontendModel -> TestView frontendModel
+stepForward : TestView frontendModel backendModel -> TestView frontendModel backendModel
 stepForward currentTest =
     case List.Nonempty.toList currentTest.steps |> listGet (currentTest.stepIndex + 1) of
         Just nextStep ->
@@ -2566,7 +2565,7 @@ stepForward currentTest =
             currentTest
 
 
-stepBackward : TestView frontendModel -> TestView frontendModel
+stepBackward : TestView frontendModel backendModel -> TestView frontendModel backendModel
 stepBackward currentTest =
     { currentTest | stepIndex = max 0 (currentTest.stepIndex - 1) }
 
@@ -2601,10 +2600,10 @@ checkCachedElmValue ( model, cmd ) =
 checkCachedElmValueHelper :
     ClientId
     -> Int
-    -> TestView frontendModel
+    -> TestView frontendModel backendModel
     -> List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-    -> Nonempty (TestStep frontendModel)
-    -> Nonempty (TestStep frontendModel)
+    -> Nonempty (TestStep frontendModel backendModel)
+    -> Nonempty (TestStep frontendModel backendModel)
 checkCachedElmValueHelper clientId stepIndex currentTest tests steps =
     updateAt
         stepIndex
@@ -2620,7 +2619,15 @@ checkCachedElmValueHelper clientId stepIndex currentTest tests steps =
                                         case ( frontend.cachedElmValue, getAt currentTest.index tests ) of
                                             ( Nothing, Just instructions ) ->
                                                 if currentTest.showModel then
-                                                    toElmValue (getFrontendApp instructions) frontend
+                                                    let
+                                                        state =
+                                                            getState instructions
+                                                    in
+                                                    toElmValue
+                                                        state.frontendApp
+                                                        state.backendApp
+                                                        currentStep.backendModel
+                                                        frontend
 
                                                 else
                                                     Nothing
@@ -2652,7 +2659,7 @@ updateAt index mapFunc list =
 
 
 updateCurrentTest :
-    (TestView frontendModel -> TestView frontendModel)
+    (TestView frontendModel backendModel -> TestView frontendModel backendModel)
     -> Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 updateCurrentTest func model =
@@ -2865,19 +2872,19 @@ defaultFontColor =
     Html.Attributes.style "color" "rgb(240,240,240)"
 
 
-getFrontendApp :
+getState :
     Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> FrontendApp toBackend frontendMsg frontendModel toFrontend
-getFrontendApp instructions =
+    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+getState instructions =
     case instructions of
         NextStep _ _ instructions_ ->
-            getFrontendApp instructions_
+            getState instructions_
 
         AndThen _ instructions_ ->
-            getFrontendApp instructions_
+            getState instructions_
 
         Start state ->
-            state.frontendApp
+            state
 
 
 getTestName : Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> String
@@ -2913,12 +2920,19 @@ treeViewConfig =
     }
 
 
-toElmValue : FrontendApp toBackend frontendMsg frontendModel toFrontend -> TestStepFrontend frontendModel -> Maybe ElmValue
-toElmValue frontendApp testStep =
+toElmValue :
+    FrontendApp toBackend frontendMsg frontendModel toFrontend
+    -> BackendApp toBackend toFrontend backendMsg backendModel
+    -> backendModel
+    -> TestStepFrontend frontendModel
+    -> Maybe ElmValue
+toElmValue frontendApp backendApp backendModel testStep =
     { sessionId = Effect.Lamdera.sessionIdToString testStep.sessionId
     , url = Url.toString testStep.url
-    , subscriptions = frontendApp.subscriptions testStep.model
-    , model = testStep.model
+    , frontendSubscriptions = frontendApp.subscriptions testStep.model
+    , backendSubscriptions = backendApp.subscriptions backendModel
+    , frontendModel = testStep.model
+    , backendModel = backendModel
     }
         |> DebugParser.valueToElmValue
         |> Just
@@ -2986,15 +3000,15 @@ modelDiffView collapsedFields frontend previousFrontend =
 
 testView :
     Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> TestView frontendModel
+    -> TestView frontendModel backendModel
     -> List (Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
 testView instructions testView_ =
     let
-        frontendApp : FrontendApp toBackend frontendMsg frontendModel toFrontend
-        frontendApp =
-            getFrontendApp instructions
+        state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        state =
+            getState instructions
 
-        currentStep : TestStep frontendModel
+        currentStep : TestStep frontendModel backendModel
         currentStep =
             List.Nonempty.get testView_.stepIndex testView_.steps
     in
@@ -3067,7 +3081,7 @@ testView instructions testView_ =
             Just clientId ->
                 case Dict.get clientId currentStep.frontends of
                     Just frontend ->
-                        frontendApp.view frontend.model |> .body |> Html.div [] |> Html.map (\_ -> NoOp)
+                        state.frontendApp.view frontend.model |> .body |> Html.div [] |> Html.map (\_ -> NoOp)
 
                     Nothing ->
                         Html.div
@@ -3085,7 +3099,10 @@ testView instructions testView_ =
         ]
 
 
-testOverlay : TestView frontendModel -> TestStep frontendModel -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+testOverlay :
+    TestView frontendModel backendModel
+    -> TestStep frontendModel backendModel
+    -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 testOverlay testView_ currentStep =
     Html.div
         [ Html.Attributes.style "padding" "4px"
