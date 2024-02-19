@@ -1,6 +1,6 @@
 module Effect.Test exposing
     ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile
-    , FrontendActions, sendToBackend, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
+    , FrontendActions, sendToBackend, backendUpdate, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addBytesFile, addTexture, addTextureWithOptions
     )
@@ -15,7 +15,7 @@ module Effect.Test exposing
 
 ## Control the tests
 
-@docs FrontendActions, sendToBackend, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
+@docs FrontendActions, sendToBackend, backendUpdate, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
 
 
 ## Check the current state
@@ -829,6 +829,30 @@ getTimers backendSub =
 
         _ ->
             Dict.empty
+
+
+{-| Directly trigger an update on the backend. Normally you shouldn't need to do this as things like Time.every and completed tasks will generate updates automatically.
+-}
+backendUpdate :
+    backendMsg
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+backendUpdate backendMsg instructions =
+    let
+        msgString =
+            Debug.toString backendMsg
+    in
+    NextStep
+        ("Backend update: "
+            ++ (if String.length msgString < 100 then
+                    msgString
+
+                else
+                    String.left 97 msgString ++ "..."
+               )
+        )
+        (\state -> handleUpdate (currentTime state) state.backendApp backendMsg state)
+        instructions
 
 
 getClientDisconnectSubs : Effect.Internal.Subscription BackendOnly backendMsg -> List (SessionId -> ClientId -> backendMsg)
