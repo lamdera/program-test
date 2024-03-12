@@ -1,6 +1,6 @@
 module Effect.Test exposing
     ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile
-    , FrontendActions, sendToBackend, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
+    , FrontendActions, sendToBackend, backendUpdate, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addBytesFile, addTexture, addTextureWithOptions
     )
@@ -15,7 +15,7 @@ module Effect.Test exposing
 
 ## Control the tests
 
-@docs FrontendActions, sendToBackend, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
+@docs FrontendActions, sendToBackend, backendUpdate, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
 
 
 ## Check the current state
@@ -350,14 +350,13 @@ checkBackend :
 checkBackend checkFunc =
     NextStep
         (\state ->
-            (case checkFunc state.model of
+            case checkFunc state.model of
                 Ok () ->
-                    state
+                    state |> addEvent (CheckStateEvent { checkType = CheckBackend, isSuccessful = True })
 
                 Err error ->
                     addTestError (CustomError error) state
-            )
-                |> addEvent (TestEvent Nothing "Check backend")
+                        |> addEvent (CheckStateEvent { checkType = CheckBackend, isSuccessful = False })
         )
 
 
@@ -811,6 +810,24 @@ getTimers backendSub =
             Dict.empty
 
 
+{-| Directly trigger an update on the backend. Normally you shouldn't need to do this as things like Time.every and completed tasks will generate updates automatically.
+-}
+backendUpdate :
+    backendMsg
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+backendUpdate backendMsg instructions =
+    NextStep
+        (\state ->
+            handleBackendUpdate
+                (currentTime state)
+                state.backendApp
+                backendMsg
+                (addEvent (TestEvent Nothing ("Trigger BackendMsg: " ++ Debug.toString backendMsg)) state)
+        )
+        instructions
+
+
 getClientDisconnectSubs : Effect.Internal.Subscription BackendOnly backendMsg -> List (SessionId -> ClientId -> backendMsg)
 getClientDisconnectSubs backendSub =
     case backendSub of
@@ -975,6 +992,7 @@ type CheckType
     = CheckFrontendView ClientId
     | CheckFrontendState ClientId
     | CheckState
+    | CheckBackend
 
 
 handleFrontendUpdate :
@@ -1688,23 +1706,16 @@ runEffects state =
         state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         state2 =
             Array.foldl (\a state6 -> runBackendEffects a.stepIndex a.cmds state6) (clearBackendEffects state) state.pendingEffects
-
-        state4 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        state4 =
-            Dict.foldl
-                (\clientId { sessionId, pendingEffects } state3 ->
-                    Array.foldl
-                        (\a state6 -> runFrontendEffects sessionId clientId a.stepIndex a.cmds state6)
-                        (clearFrontendEffects clientId state3)
-                        pendingEffects
-                )
-                state2
-                state2.frontends
     in
-    { state4
-        | pendingEffects = state4.pendingEffects
-        , frontends = Dict.map (\_ frontend -> { frontend | pendingEffects = frontend.pendingEffects }) state4.frontends
-    }
+    Dict.foldl
+        (\clientId { sessionId, pendingEffects } state3 ->
+            Array.foldl
+                (\a state6 -> runFrontendEffects sessionId clientId a.stepIndex a.cmds state6)
+                (clearFrontendEffects clientId state3)
+                pendingEffects
+        )
+        state2
+        state2.frontends
         |> runNetwork
 
 
@@ -1917,12 +1928,7 @@ handleUrlChange :
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 handleUrlChange urlText clientId state =
-    let
-        urlText_ : String
-        urlText_ =
-            normalizeUrl state.domain urlText
-    in
-    case Url.fromString urlText_ of
+    case normalizeUrl state.domain urlText |> Url.fromString of
         Just url ->
             let
                 state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -1931,7 +1937,7 @@ handleUrlChange urlText clientId state =
             in
             { state2
                 | frontends =
-                    Dict.update clientId (Maybe.map (\newFrontend -> { newFrontend | url = url })) state.frontends
+                    Dict.update clientId (Maybe.map (\newFrontend -> { newFrontend | url = url })) state2.frontends
             }
 
         Nothing ->
@@ -2005,10 +2011,10 @@ runBackendEffects stepIndex effect state =
 
         Task task ->
             let
-                ( newState, msg ) =
+                ( state2, msg ) =
                     runTask Nothing state task
             in
-            handleBackendUpdate (currentTime newState) state.backendApp msg newState
+            handleBackendUpdate (currentTime state2) state2.backendApp msg state2
 
         SendToBackend _ ->
             state
@@ -2406,7 +2412,8 @@ type alias TestView toBackend frontendMsg frontendModel toFrontend backendMsg ba
     , testName : String
     , stepIndex : Int
     , steps : Array (Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-    , timelines : List CurrentTimeline
+    , timelines : Array CurrentTimeline
+    , timelineIndex : Int
     , overlayPosition : OverlayPosition
     , showModel : Bool
     , collapsedFields : RegularDict.Dict (List String) CollapsedField
@@ -2423,8 +2430,6 @@ type Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     = UrlClicked Browser.UrlRequest
     | UrlChanged Url
     | PressedViewTest Int
-    | PressedStepBackward
-    | PressedStepForward
     | PressedBackToOverview
     | ShortPauseFinished
     | NoOp
@@ -2438,6 +2443,7 @@ type Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     | ChangedEventSlider String
     | GotWindowSize Int Int
     | PressedTimelineEvent Int
+    | PressedTimeline CurrentTimeline
 
 
 init :
@@ -2502,8 +2508,8 @@ update config msg model =
                                     { index = index
                                     , testName = state.testName
                                     , steps = state.history
-                                    , timelines =
-                                        getTimelines { steps = state.history, stepIndex = 0 } |> List.map Tuple.first
+                                    , timelines = getTimelines2 state.history
+                                    , timelineIndex = 0
                                     , stepIndex = 0
                                     , overlayPosition = Bottom
                                     , showModel = False
@@ -2511,7 +2517,7 @@ update config msg model =
                                     }
                                         |> Just
                               }
-                            , Cmd.none
+                            , Browser.Dom.setViewportOf timelineContainerId 0 0 |> Task.attempt (\_ -> NoOp)
                             )
 
                         Nothing ->
@@ -2522,12 +2528,6 @@ update config msg model =
 
         NoOp ->
             ( model, Cmd.none )
-
-        PressedStepForward ->
-            updateCurrentTest (\currentTest -> stepTo (currentTest.stepIndex + 1) currentTest) model
-
-        PressedStepBackward ->
-            updateCurrentTest (\currentTest -> stepTo (currentTest.stepIndex - 1) currentTest) model
 
         PressedBackToOverview ->
             ( { model | currentTest = Nothing }, Cmd.none )
@@ -2617,14 +2617,9 @@ update config msg model =
         PressedArrowKey arrowKey ->
             updateCurrentTest
                 (\currentTest ->
-                    let
-                        currentTimeline2 : CurrentTimeline
-                        currentTimeline2 =
-                            currentTimeline currentTest
-                    in
                     case arrowKey of
                         ArrowRight ->
-                            case nextTimelineStep False currentTest.stepIndex currentTimeline2 currentTest of
+                            case nextTimelineStep False currentTest.stepIndex (currentTimeline currentTest) currentTest of
                                 Just ( nextIndex, _ ) ->
                                     stepTo nextIndex currentTest
 
@@ -2632,7 +2627,7 @@ update config msg model =
                                     ( currentTest, Cmd.none )
 
                         ArrowLeft ->
-                            case previousTimelineStep False currentTest.stepIndex currentTimeline2 currentTest of
+                            case previousTimelineStep False currentTest.stepIndex (currentTimeline currentTest) currentTest of
                                 Just ( previousIndex, _ ) ->
                                     stepTo previousIndex currentTest
 
@@ -2640,10 +2635,15 @@ update config msg model =
                                     ( currentTest, Cmd.none )
 
                         ArrowUp ->
-                            moveTimeline True currentTimeline2 currentTest
+                            ( { currentTest | timelineIndex = currentTest.timelineIndex - 1 |> max 0 }, Cmd.none )
 
                         ArrowDown ->
-                            moveTimeline False currentTimeline2 currentTest
+                            ( { currentTest
+                                | timelineIndex =
+                                    currentTest.timelineIndex + 1 |> min (Array.length currentTest.timelines - 1)
+                              }
+                            , Cmd.none
+                            )
                 )
                 model
 
@@ -2659,87 +2659,50 @@ update config msg model =
             ( { model | windowSize = ( width, height ) }, Cmd.none )
 
         PressedTimelineEvent stepIndex ->
-            updateCurrentTest (\currentTest -> stepTo stepIndex currentTest) model
+            updateCurrentTest (stepTo stepIndex) model
+
+        PressedTimeline timelineType ->
+            updateCurrentTest
+                (\currentTest ->
+                    case arrayFindIndex timelineType currentTest.timelines of
+                        Just timelineIndex ->
+                            ( { currentTest | timelineIndex = timelineIndex }, Cmd.none )
+
+                        Nothing ->
+                            ( currentTest, Cmd.none )
+                )
+                model
     )
         |> checkCachedElmValue
-
-
-moveTimeline :
-    Bool
-    -> CurrentTimeline
-    -> TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    ->
-        ( TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-        )
-moveTimeline moveUp currentTimeline2 currentTest =
-    let
-        timelines : List CurrentTimeline
-        timelines =
-            if moveUp then
-                currentTest.timelines
-
-            else
-                List.reverse currentTest.timelines
-    in
-    case dropWhile (\timeline -> timeline /= currentTimeline2) timelines |> List.drop 1 |> List.head of
-        Just nextTimeline ->
-            let
-                previousStep : Maybe ( Int, Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel )
-                previousStep =
-                    previousTimelineStep False currentTest.stepIndex nextTimeline currentTest
-
-                nextStep : Maybe ( Int, Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel )
-                nextStep =
-                    nextTimelineStep False currentTest.stepIndex nextTimeline currentTest
-            in
-            case ( previousStep, nextStep ) of
-                ( Just ( previousStepIndex, _ ), Just ( nextStepIndex, _ ) ) ->
-                    if moveUp then
-                        if nextStepIndex - currentTest.stepIndex > currentTest.stepIndex - previousStepIndex then
-                            stepTo previousStepIndex currentTest
-
-                        else
-                            stepTo nextStepIndex currentTest
-
-                    else if nextStepIndex - currentTest.stepIndex >= currentTest.stepIndex - previousStepIndex then
-                        stepTo previousStepIndex currentTest
-
-                    else
-                        stepTo nextStepIndex currentTest
-
-                ( Just ( previousStepIndex, _ ), Nothing ) ->
-                    stepTo previousStepIndex currentTest
-
-                ( Nothing, Just ( nextStepIndex, _ ) ) ->
-                    stepTo nextStepIndex currentTest
-
-                ( Nothing, Nothing ) ->
-                    ( currentTest, Cmd.none )
-
-        Nothing ->
-            ( currentTest, Cmd.none )
-
-
-{-| Drop elements in order as long as the predicate evaluates to `True`. Copied from elm-community/list-extra
--}
-dropWhile : (a -> Bool) -> List a -> List a
-dropWhile predicate list =
-    case list of
-        [] ->
-            []
-
-        x :: xs ->
-            if predicate x then
-                dropWhile predicate xs
-
-            else
-                list
 
 
 type CurrentTimeline
     = BackendTimeline
     | FrontendTimeline ClientId
+
+
+arrayFindIndex : a -> Array a -> Maybe Int
+arrayFindIndex item array =
+    Array.foldl
+        (\item2 ( index, found ) ->
+            if found then
+                ( index, found )
+
+            else if item2 == item then
+                ( index, True )
+
+            else
+                ( index + 1, False )
+        )
+        ( 0, False )
+        array
+        |> (\( index, found ) ->
+                if found then
+                    Just index
+
+                else
+                    Nothing
+           )
 
 
 stepTo :
@@ -2751,8 +2714,17 @@ stepTo :
         )
 stepTo stepIndex currentTest =
     case Array.get stepIndex currentTest.steps of
-        Just _ ->
-            ( { currentTest | stepIndex = stepIndex }
+        Just step ->
+            let
+                newTimeline : CurrentTimeline
+                newTimeline =
+                    eventTypeToTimelineType step.eventType
+            in
+            ( { currentTest
+                | stepIndex = stepIndex
+                , timelineIndex =
+                    arrayFindIndex newTimeline currentTest.timelines |> Maybe.withDefault currentTest.timelineIndex
+              }
             , Browser.Dom.getElement timelineContainerId
                 |> Task.andThen
                     (\container ->
@@ -2794,9 +2766,9 @@ checkCachedElmValue ( model, cmd ) =
             updateCurrentTest
                 (\currentTest ->
                     let
-                        maybePreviousStep : Maybe ( Int, Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel )
-                        maybePreviousStep =
-                            previousTimelineStep True currentTest.stepIndex (currentTimeline currentTest) currentTest
+                        currentAndPreviousStep : { previousStep : Maybe Int, currentStep : Maybe Int }
+                        currentAndPreviousStep =
+                            currentAndPreviousStepIndex currentTest
                     in
                     ( case ( currentTest.showModel, model.tests ) of
                         ( True, Just (Ok tests) ) ->
@@ -2807,23 +2779,29 @@ checkCachedElmValue ( model, cmd ) =
                                         state =
                                             getState test
 
+                                        steps2 : Array (Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
                                         steps2 =
-                                            updateAt
-                                                currentTest.stepIndex
-                                                (\event ->
-                                                    case event.cachedElmValue of
-                                                        Just _ ->
-                                                            event
+                                            case currentAndPreviousStep.currentStep of
+                                                Just currentIndex ->
+                                                    updateAt
+                                                        currentIndex
+                                                        (\event ->
+                                                            case event.cachedElmValue of
+                                                                Just _ ->
+                                                                    event
 
-                                                        Nothing ->
-                                                            checkCachedElmValueHelper event state
-                                                )
-                                                currentTest.steps
+                                                                Nothing ->
+                                                                    checkCachedElmValueHelper event state
+                                                        )
+                                                        currentTest.steps
+
+                                                Nothing ->
+                                                    currentTest.steps
                                     in
                                     { currentTest
                                         | steps =
-                                            case maybePreviousStep of
-                                                Just ( previousIndex, _ ) ->
+                                            case currentAndPreviousStep.previousStep of
+                                                Just previousIndex ->
                                                     updateAt
                                                         previousIndex
                                                         (\event ->
@@ -2891,6 +2869,9 @@ eventTypeToTimelineType eventType =
                     FrontendTimeline clientId
 
                 CheckState ->
+                    BackendTimeline
+
+                CheckBackend ->
                     BackendTimeline
 
 
@@ -2991,19 +2972,9 @@ type Fold c d
     | Done d
 
 
-currentTimeline :
-    { a
-        | stepIndex : Int
-        , steps : Array (Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-    }
-    -> CurrentTimeline
+currentTimeline : TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> CurrentTimeline
 currentTimeline currentTest =
-    case Array.get currentTest.stepIndex currentTest.steps of
-        Just step ->
-            eventTypeToTimelineType step.eventType
-
-        Nothing ->
-            BackendTimeline
+    Array.get currentTest.timelineIndex currentTest.timelines |> Maybe.withDefault BackendTimeline
 
 
 checkCachedElmValueHelper :
@@ -3257,7 +3228,7 @@ overview tests testResults_ =
 
 darkBackground : Html.Attribute msg
 darkBackground =
-    Html.Attributes.style "background-color" "rgba(0,0,0,0.8)"
+    Html.Attributes.style "background-color" "rgba(0,0,0,0.9)"
 
 
 button : msg -> String -> Html msg
@@ -3432,6 +3403,13 @@ refineElmValue value =
                 |> Expandable
 
 
+blockArrowKeys : List (Html.Attribute (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+blockArrowKeys =
+    [ Html.Events.preventDefaultOn "keydown" (decodeArrows |> Json.Decode.map (\_ -> ( NoOp, True )))
+    , Html.Attributes.tabindex -1
+    ]
+
+
 modelDiffView :
     RegularDict.Dict (List String) CollapsedField
     -> Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -3490,6 +3468,9 @@ currentStepText currentStep testView_ =
 
                         CheckState ->
                             "Check global state"
+
+                        CheckBackend ->
+                            "Check backend"
     in
     Html.div
         [ Html.Attributes.style "padding" "4px", Html.Attributes.title fullMsg ]
@@ -3519,9 +3500,13 @@ type alias TimelineViewData toBackend frontendMsg frontendModel toFrontend backe
     }
 
 
+unselectedTimelineColor =
+    "#626262"
+
+
 addTimelineEvent :
-    Maybe Int
-    -> Int
+    Int
+    -> { previousStep : Maybe Int, currentStep : Maybe Int }
     -> Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     ->
         { columnIndex : Int
@@ -3531,7 +3516,7 @@ addTimelineEvent :
         { columnIndex : Int
         , dict : Dict CurrentTimeline (TimelineViewData toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         }
-addTimelineEvent maybePreviousStepIndex currentStepIndex event state =
+addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state =
     let
         arrowHelper : Int -> Int -> Int -> List (Html msg)
         arrowHelper rowIndexStart rowIndexEnd stepIndex =
@@ -3553,8 +3538,16 @@ addTimelineEvent maybePreviousStepIndex currentStepIndex event state =
 
                 length2 =
                     (length - 4) / length
+
+                color2 : String
+                color2 =
+                    if currentTimelineIndex == rowIndexStart || currentTimelineIndex == rowIndexEnd then
+                        "white"
+
+                    else
+                        unselectedTimelineColor
             in
-            [ arrowSvg x0 y0 (length2 * (x1 - x0) + x0) (length2 * (y1 - y0) + y0) ]
+            [ arrowSvg color2 x0 y0 (length2 * (x1 - x0) + x0) (length2 * (y1 - y0) + y0) ]
 
         arrows : Int -> List (Html msg)
         arrows rowIndex =
@@ -3592,28 +3585,32 @@ addTimelineEvent maybePreviousStepIndex currentStepIndex event state =
 
                 CheckStateEvent _ ->
                     []
-
-        color : String
-        color =
-            if maybePreviousStepIndex == Just state.columnIndex then
-                "red"
-
-            else if currentStepIndex == state.columnIndex then
-                "green"
-
-            else
-                "white"
     in
     { columnIndex = state.columnIndex + 1
     , dict =
         Dict.update
             (eventTypeToTimelineType event.eventType)
             (\maybeTimeline ->
+                let
+                    color : Int -> String
+                    color rowIndex =
+                        if currentTimelineIndex /= rowIndex then
+                            unselectedTimelineColor
+
+                        else if previousStep == Just state.columnIndex then
+                            "red"
+
+                        else if currentStep == Just state.columnIndex then
+                            "green"
+
+                        else
+                            "white"
+                in
                 (case maybeTimeline of
                     Just timeline ->
                         { events =
                             arrows timeline.rowIndex
-                                ++ [ circle color event.eventType state.columnIndex timeline.rowIndex ]
+                                ++ [ eventIcon (color timeline.rowIndex) event.eventType state.columnIndex timeline.rowIndex ]
                                 ++ timeline.events
                         , columnStart = timeline.columnStart
                         , columnEnd = state.columnIndex
@@ -3626,7 +3623,8 @@ addTimelineEvent maybePreviousStepIndex currentStepIndex event state =
                             rowIndex =
                                 Dict.size state.dict
                         in
-                        { events = arrows rowIndex ++ [ circle color event.eventType state.columnIndex rowIndex ]
+                        { events =
+                            arrows rowIndex ++ [ eventIcon (color rowIndex) event.eventType state.columnIndex rowIndex ]
                         , columnStart = state.columnIndex
                         , columnEnd = state.columnIndex
                         , rowIndex = rowIndex
@@ -3638,8 +3636,8 @@ addTimelineEvent maybePreviousStepIndex currentStepIndex event state =
     }
 
 
-arrowSvg : Float -> Float -> Float -> Float -> Html msg
-arrowSvg x0 y0 x1 y1 =
+arrowSvg : String -> Float -> Float -> Float -> Float -> Html msg
+arrowSvg color x0 y0 x1 y1 =
     let
         length =
             (x1 - x0) ^ 2 + (y1 - y0) ^ 2 |> sqrt
@@ -3688,12 +3686,12 @@ arrowSvg x0 y0 x1 y1 =
             , Svg.Attributes.x2 (String.fromFloat x2)
             , Svg.Attributes.y2 (String.fromFloat y2)
             , Svg.Attributes.width "20"
-            , Html.Attributes.style "stroke" "white"
+            , Html.Attributes.style "stroke" color
             , Html.Attributes.style "stroke-width" "2"
             ]
             []
         , Svg.polygon
-            [ Html.Attributes.style "fill" "white"
+            [ Html.Attributes.style "fill" color
             , (String.fromFloat x3 ++ "," ++ String.fromFloat y3)
                 ++ " "
                 ++ (String.fromFloat x1 ++ "," ++ String.fromFloat y1)
@@ -3722,9 +3720,13 @@ timelineView windowWidth testView_ =
         leftPadding =
             4
 
+        currentTimeline_ : CurrentTimeline
+        currentTimeline_ =
+            currentTimeline testView_
+
         timelines : List ( CurrentTimeline, TimelineViewData toBackend frontendMsg frontendModel toFrontend backendMsg backendModel )
         timelines =
-            getTimelines testView_
+            getTimelines testView_.timelineIndex testView_
     in
     Html.div
         []
@@ -3735,12 +3737,26 @@ timelineView windowWidth testView_ =
             , Html.Attributes.style "height" (px (List.length timelines * timelineRowHeight))
             , Html.Attributes.style "padding-left" (px leftPadding)
             , Html.Attributes.style "font-size" "14px"
+            , Html.Attributes.style "box-sizing" "unset"
             ]
             (List.map
                 (\( timelineType, timeline ) ->
-                    Html.div
+                    Html.button
                         [ Html.Attributes.style "position" "absolute"
-                        , Html.Attributes.style "top" (px (timeline.rowIndex * timelineRowHeight))
+                        , Html.Attributes.style "top" (px (timeline.rowIndex * timelineRowHeight - 4))
+                        , Html.Attributes.style
+                            "color"
+                            (if currentTimeline_ == timelineType then
+                                "white"
+
+                             else
+                                unselectedTimelineColor
+                            )
+                        , darkBackground
+                        , Html.Attributes.style "border-width" "0"
+                        , Html.Attributes.style "margin" "0"
+                        , Html.Attributes.style "padding" "4px 0 4px 0"
+                        , Html.Events.onClick (PressedTimeline timelineType)
                         ]
                         [ Html.text
                             (case timelineType of
@@ -3754,44 +3770,50 @@ timelineView windowWidth testView_ =
                 )
                 timelines
             )
-        , timelineViewHelper (windowWidth - sideBarWidth) testView_.stepIndex testView_.steps timelines
+        , timelineViewHelper (windowWidth - sideBarWidth) testView_ timelines
         ]
 
 
 timelineViewHelper :
     Int
-    -> Int
-    -> Array (Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> List ( CurrentTimeline, TimelineViewData toBackend frontendMsg frontendModel toFrontend backendMsg backendModel )
     -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-timelineViewHelper width stepIndex events timelines =
+timelineViewHelper width testView_ timelines =
     let
         maxColumnEnd : Int
         maxColumnEnd =
             List.map (\( _, timeline ) -> timeline.columnEnd) timelines |> List.maximum |> Maybe.withDefault 0
     in
-    timelines
-        |> List.concatMap
-            (\( timelineType, timeline ) ->
-                Html.div
-                    [ Html.Attributes.style "position" "absolute"
-                    , Html.Attributes.style "left" (px (timeline.columnStart * timelineColumnWidth + timelineColumnWidth // 2))
-                    , Html.Attributes.style "top" (px (timeline.rowIndex * timelineRowHeight + 7))
-                    , Html.Attributes.style "height" "2px"
-                    , Html.Attributes.style
-                        "width"
-                        (case timelineType of
-                            FrontendTimeline _ ->
-                                px ((timeline.columnEnd - timeline.columnStart) * timelineColumnWidth + timelineColumnWidth // 4)
+    List.concatMap
+        (\( timelineType, timeline ) ->
+            Html.div
+                [ Html.Attributes.style "position" "absolute"
+                , Html.Attributes.style "left" (px (timeline.columnStart * timelineColumnWidth + timelineColumnWidth // 2))
+                , Html.Attributes.style "top" (px (timeline.rowIndex * timelineRowHeight + 7))
+                , Html.Attributes.style "height" "2px"
+                , Html.Attributes.style
+                    "width"
+                    (case timelineType of
+                        FrontendTimeline _ ->
+                            px ((timeline.columnEnd - timeline.columnStart) * timelineColumnWidth + timelineColumnWidth // 4)
 
-                            BackendTimeline ->
-                                px ((maxColumnEnd - timeline.columnStart) * timelineColumnWidth + timelineColumnWidth // 4)
-                        )
-                    , Html.Attributes.style "background-color" "white"
-                    ]
-                    []
-                    :: timeline.events
-            )
+                        BackendTimeline ->
+                            px ((maxColumnEnd - timeline.columnStart) * timelineColumnWidth + timelineColumnWidth // 4)
+                    )
+                , Html.Attributes.style
+                    "background-color"
+                    (if testView_.timelineIndex == timeline.rowIndex then
+                        "white"
+
+                     else
+                        unselectedTimelineColor
+                    )
+                ]
+                []
+                :: timeline.events
+        )
+        timelines
         |> (\a ->
                 timelineCss
                     :: List.map
@@ -3803,7 +3825,7 @@ timelineViewHelper width stepIndex events timelines =
                                  , Html.Attributes.style "position" "absolute"
                                  , Html.Events.onClick (PressedTimelineEvent index)
                                  ]
-                                    ++ (if index == stepIndex then
+                                    ++ (if index == testView_.stepIndex then
                                             [ Html.Attributes.id timelineEventId
                                             , Html.Attributes.style "background-color" "rgba(255,255,255,0.4)"
                                             ]
@@ -3814,7 +3836,7 @@ timelineViewHelper width stepIndex events timelines =
                                 )
                                 []
                         )
-                        (List.range 0 (Array.length events - 1))
+                        (List.range 0 (Array.length testView_.steps - 1))
                     ++ a
            )
         |> Html.div
@@ -3921,8 +3943,13 @@ timelineColumnWidth =
     14
 
 
-circle : String -> EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Int -> Int -> Html msg
-circle color eventType columnIndex rowIndex =
+eventIcon :
+    String
+    -> EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Int
+    -> Int
+    -> Html msg
+eventIcon color eventType columnIndex rowIndex =
     let
         circleHelper : String -> Html msg
         circleHelper class =
@@ -3957,19 +3984,20 @@ circle color eventType columnIndex rowIndex =
             circleHelper "circle"
 
         CheckStateEvent _ ->
-            magnifyingGlassSvg (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
+            magnifyingGlassSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
 
 
 {-| Original SVG from <https://upload.wikimedia.org/wikipedia/commons/5/55/Magnifying_glass_icon.svg>
 -}
-magnifyingGlassSvg : Int -> Int -> Svg msg
-magnifyingGlassSvg left top =
+magnifyingGlassSvg : String -> Int -> Int -> Svg msg
+magnifyingGlassSvg color left top =
     Svg.svg
         [ Svg.Attributes.width (String.fromInt timelineColumnWidth)
         , Html.Attributes.style "left" (px left)
         , Html.Attributes.style "top" (px top)
         , Html.Attributes.style "position" "absolute"
         , Svg.Attributes.viewBox "-60 -60 600 700"
+        , Html.Attributes.style "pointer-events" "none"
         ]
         [ Svg.path
             [ Svg.Attributes.fill "none"
@@ -3981,7 +4009,7 @@ magnifyingGlassSvg left top =
             []
         , Svg.path
             [ Svg.Attributes.fill "none"
-            , Svg.Attributes.stroke "white"
+            , Svg.Attributes.stroke color
             , Svg.Attributes.strokeWidth "80"
             , Svg.Attributes.strokeLinecap "round"
             , Svg.Attributes.d "m280,278a153,153 0 1,0-2,2l170,170m-91-117 110,110-26,26-110-110"
@@ -3990,24 +4018,73 @@ magnifyingGlassSvg left top =
         ]
 
 
+currentAndPreviousStepIndex :
+    TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> { previousStep : Maybe Int, currentStep : Maybe Int }
+currentAndPreviousStepIndex testView_ =
+    case previousTimelineStep True (testView_.stepIndex + 1) (currentTimeline testView_) testView_ of
+        Just ( currentIndex, _ ) ->
+            { currentStep = Just currentIndex
+            , previousStep =
+                previousTimelineStep True currentIndex (currentTimeline testView_) testView_ |> Maybe.map Tuple.first
+            }
+
+        Nothing ->
+            { previousStep = Nothing, currentStep = Nothing }
+
+
 getTimelines :
-    { a
-        | stepIndex : Int
-        , steps : Array (Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-    }
+    Int
+    -> TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> List ( CurrentTimeline, TimelineViewData toBackend frontendMsg frontendModel toFrontend backendMsg backendModel )
-getTimelines testView_ =
+getTimelines timelineIndex testView_ =
     let
-        previousStepIndex : Maybe Int
-        previousStepIndex =
-            previousTimelineStep True testView_.stepIndex (currentTimeline testView_) testView_ |> Maybe.map Tuple.first
+        currentAndPreviousStepIndex2 : { previousStep : Maybe Int, currentStep : Maybe Int }
+        currentAndPreviousStepIndex2 =
+            currentAndPreviousStepIndex testView_
     in
     Array.foldl
-        (addTimelineEvent previousStepIndex testView_.stepIndex)
+        (addTimelineEvent
+            timelineIndex
+            { currentAndPreviousStepIndex2
+                | previousStep =
+                    if testView_.showModel then
+                        currentAndPreviousStepIndex2.previousStep
+
+                    else
+                        Nothing
+            }
+        )
         { columnIndex = 0, dict = Dict.singleton BackendTimeline { events = [], columnStart = 0, columnEnd = 0, rowIndex = 0 } }
         testView_.steps
         |> .dict
         |> Dict.toList
+
+
+getTimelines2 :
+    Array (Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> Array CurrentTimeline
+getTimelines2 steps =
+    Array.foldl
+        (\event dict ->
+            Dict.update
+                (eventTypeToTimelineType event.eventType)
+                (\maybe ->
+                    case maybe of
+                        Just _ ->
+                            maybe
+
+                        Nothing ->
+                            Dict.size dict |> Just
+                )
+                dict
+        )
+        Dict.empty
+        steps
+        |> Dict.toList
+        |> List.sortBy Tuple.second
+        |> List.map Tuple.first
+        |> Array.fromList
 
 
 testView :
@@ -4016,17 +4093,18 @@ testView :
     -> TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> List (Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
 testView windowWidth instructions testView_ =
+    let
+        currentAndPreviousStep : { previousStep : Maybe Int, currentStep : Maybe Int }
+        currentAndPreviousStep =
+            currentAndPreviousStepIndex testView_
+    in
     case Array.get testView_.stepIndex testView_.steps of
         Just currentStep ->
             if testView_.showModel then
                 let
-                    maybeStep : Maybe ( Int, Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel )
-                    maybeStep =
-                        previousTimelineStep True testView_.stepIndex (currentTimeline testView_) testView_
-
                     overlayHeight : Int
                     overlayHeight =
-                        90 + List.length testView_.timelines * timelineRowHeight
+                        90 + Array.length testView_.timelines * timelineRowHeight
                 in
                 [ testOverlay windowWidth testView_ currentStep
                 , Html.div
@@ -4046,12 +4124,19 @@ testView windowWidth instructions testView_ =
                     , Html.Attributes.style "white-space" "pre"
                     , Html.Attributes.style "min-height" "100vh"
                     ]
-                    [ case maybeStep of
-                        Just ( _, previousStep ) ->
-                            Html.Lazy.lazy3 modelDiffView testView_.collapsedFields currentStep previousStep
+                    [ case
+                        ( Maybe.andThen (\a -> Array.get a testView_.steps) currentAndPreviousStep.currentStep
+                        , Maybe.andThen (\a -> Array.get a testView_.steps) currentAndPreviousStep.previousStep
+                        )
+                      of
+                        ( Just currentStep2, Just previousStep ) ->
+                            Html.Lazy.lazy3 modelDiffView testView_.collapsedFields currentStep2 previousStep
 
-                        Nothing ->
-                            Html.Lazy.lazy2 modelView testView_.collapsedFields currentStep
+                        ( Just currentStep2, Nothing ) ->
+                            Html.Lazy.lazy2 modelView testView_.collapsedFields currentStep2
+
+                        _ ->
+                            centeredText "No model to show"
                     ]
                 ]
 
@@ -4064,25 +4149,33 @@ testView windowWidth instructions testView_ =
                 testOverlay windowWidth testView_ currentStep
                     :: (case currentTimeline testView_ of
                             FrontendTimeline clientId ->
-                                case Dict.get clientId currentStep.frontends of
-                                    Just frontend ->
-                                        state.frontendApp.view frontend.model |> .body |> List.map (Html.map (\_ -> NoOp))
+                                case Maybe.andThen (\a -> Array.get a testView_.steps) currentAndPreviousStep.currentStep of
+                                    Just currentStep2 ->
+                                        case Dict.get clientId currentStep2.frontends of
+                                            Just frontend ->
+                                                state.frontendApp.view frontend.model |> .body |> List.map (Html.map (\_ -> NoOp))
+
+                                            Nothing ->
+                                                []
 
                                     Nothing ->
-                                        []
+                                        [ centeredText "Frontend not connected" ]
 
                             BackendTimeline ->
-                                [ Html.div
-                                    [ Html.Attributes.style "position" "absolute"
-                                    , Html.Attributes.style "left" "45%"
-                                    , Html.Attributes.style "top" "400px"
-                                    ]
-                                    [ Html.text "There is no view to display for the backend" ]
-                                ]
+                                [ centeredText "There is no view to display for the backend" ]
                        )
 
         Nothing ->
-            [ Html.text "Step not found" ]
+            []
+
+
+centeredText text2 =
+    Html.div
+        [ Html.Attributes.style "position" "absolute"
+        , Html.Attributes.style "left" "45%"
+        , Html.Attributes.style "top" "400px"
+        ]
+        [ Html.text text2 ]
 
 
 testOverlay :
