@@ -3,7 +3,7 @@ module Tests exposing (..)
 import Effect.Command as Command exposing (BackendOnly, Command, FrontendOnly)
 import Effect.Http exposing (Response(..))
 import Effect.Subscription as Subscription
-import Effect.Test
+import Effect.Test exposing (FileUpload(..), HttpResponse(..), MultipleFilesUpload(..))
 import Html
 import Url
 
@@ -42,9 +42,10 @@ config : Effect.Test.Config {} {} {} {} {} {}
 config =
     { frontendApp = frontendApp
     , backendApp = backendApp
-    , handleHttpRequest = always NetworkError_
+    , handleHttpRequest = always NetworkErrorResponse
     , handlePortToJs = always Nothing
-    , handleFileRequest = always Nothing
+    , handleFileUpload = always CancelFileUpload
+    , handleMultipleFilesUpload = always CancelMultipleFilesUpload
     , domain = unsafeUrl
     }
 
@@ -53,6 +54,6 @@ test =
     Effect.Test.start config "A test"
 
 
-main : Program () (Effect.Test.Model {}) Effect.Test.Msg
+main : Program () (Effect.Test.Model {} {} {} {} {} {}) (Effect.Test.Msg {} {} {} {} {} {})
 main =
     Effect.Test.viewer [ test ]
