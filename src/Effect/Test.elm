@@ -3,6 +3,7 @@ module Effect.Test exposing
     , FrontendActions, sendToBackend, backendUpdate, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addBytesFile, addTexture, addTextureWithOptions
+    , startHeadless, HeadlessMsg
     )
 
 {-|
@@ -28,6 +29,13 @@ module Effect.Test exposing
 Sometimes it's hard to tell what's going on in an end to end test. One way to make this easier to use the `viewer` function. It's like a test runner for your browser that also lets you see the frontend of an app as simulated inputs are being triggered.
 
 @docs fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addBytesFile, addTexture, addTextureWithOptions
+
+
+## Test runner
+
+If you want to just run the end to end tests to make sure they work, or automatically check that they pass in your CI pipeline then you can setup a headless test runner with this function:
+
+@docs startHeadless, HeadlessMsg
 
 -}
 
@@ -2740,18 +2748,6 @@ stepTo stepIndex currentTest =
             ( currentTest, Cmd.none )
 
 
-abc =
-    ( { scene = { width = 1076, height = 870 }
-      , viewport = { x = 0, y = 0, width = 1076, height = 870 }
-      , element = { x = 68, y = 24, width = 500, height = 64 }
-      }
-    , { scene = { width = 1076, height = 870 }
-      , viewport = { x = 0, y = 0, width = 1076, height = 870 }
-      , element = { x = 293, y = 24, width = 16, height = 64 }
-      }
-    )
-
-
 checkCachedElmValue :
     ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
@@ -3140,37 +3136,40 @@ view model =
                         [ overview tests model.testResults ]
 
             Just (Err error) ->
-                [ "Failed to load \""
-                    ++ error.name
-                    ++ "\" "
-                    ++ (case error.error of
-                            HttpError Http.NetworkError ->
-                                "due to a network error"
-
-                            HttpError (Http.BadUrl _) ->
-                                "because the path is invalid"
-
-                            HttpError Http.Timeout ->
-                                "due to a network timeout"
-
-                            HttpError (Http.BadStatus code) ->
-                                "and instead got a " ++ String.fromInt code ++ " error"
-
-                            HttpError (Http.BadBody _) ->
-                                "due to a bad response body"
-
-                            TextureError WebGLFix.Texture.LoadError ->
-                                "due to the file not being found or a network error"
-
-                            TextureError (WebGLFix.Texture.SizeError w h) ->
-                                "due to the texture being an invalid size (width: " ++ String.fromInt w ++ ", height: " ++ String.fromInt h ++ ")"
-                       )
-                    |> text
-                ]
+                [ fileLoadErrorToString error |> text ]
 
             Nothing ->
                 [ text "Loading files for tests..." ]
     }
+
+
+fileLoadErrorToString : FileLoadError -> String
+fileLoadErrorToString error =
+    "Failed to load \""
+        ++ error.name
+        ++ "\" "
+        ++ (case error.error of
+                HttpError Http.NetworkError ->
+                    "due to a network error"
+
+                HttpError (Http.BadUrl _) ->
+                    "because the path is invalid"
+
+                HttpError Http.Timeout ->
+                    "due to a network timeout"
+
+                HttpError (Http.BadStatus code) ->
+                    "and instead got a " ++ String.fromInt code ++ " error"
+
+                HttpError (Http.BadBody _) ->
+                    "due to a bad response body"
+
+                TextureError WebGLFix.Texture.LoadError ->
+                    "due to the file not being found or a network error"
+
+                TextureError (WebGLFix.Texture.SizeError w h) ->
+                    "due to the texture being an invalid size (width: " ++ String.fromInt w ++ ", height: " ++ String.fromInt h ++ ")"
+           )
 
 
 getAt : Int -> List a -> Maybe a
@@ -4281,6 +4280,77 @@ startViewer viewerWith2 =
         , onUrlRequest = UrlClicked
         , onUrlChange = UrlChanged
         }
+
+
+{-| Msg type for a headless end to end test runner.
+-}
+type HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    = HeadlessMsg (Result FileLoadError (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
+
+
+{-| Create a headless test runner.
+
+    import Effect.Test
+
+    main =
+        Effect.Test.viewerWith
+            (\image jsonData ->
+                [{- End to end tests go here -}]
+            )
+            |> Effect.Test.addBytesFile "/test.png"
+            |> Effect.Test.addBytesFile "/data.json"
+            |> Effect.Test.startHeadless
+
+-}
+startHeadless :
+    (Json.Encode.Value -> Cmd (HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+    -> ViewerWith (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+    -> Program () () (HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+startHeadless outputResults viewerWith2 =
+    Platform.worker
+        { init = \_ -> ( (), Task.attempt HeadlessMsg viewerWith2.cmds )
+        , update = headlessUpdate outputResults
+        , subscriptions = \_ -> Sub.none
+        }
+
+
+headlessUpdate :
+    (Json.Encode.Value -> Cmd (HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+    -> HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> ()
+    -> ( (), Cmd (HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) )
+headlessUpdate outputResults (HeadlessMsg result) () =
+    case result of
+        Ok tests ->
+            let
+                errors : List String
+                errors =
+                    List.filterMap
+                        (\test ->
+                            let
+                                state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                                state =
+                                    instructionsToState test
+                            in
+                            case state.testErrors of
+                                [] ->
+                                    Nothing
+
+                                firstError :: _ ->
+                                    " - " ++ state.testName ++ ": " ++ testErrorToString firstError |> Just
+                        )
+                        tests
+            in
+            if List.isEmpty errors then
+                ( (), outputResults Json.Encode.null )
+
+            else
+                ( (), "The following tests failed:\n" ++ String.join "\n" errors |> Json.Encode.string |> outputResults )
+
+        Err error ->
+            ( ()
+            , "Test setup failed: " ++ fileLoadErrorToString error |> Json.Encode.string |> outputResults
+            )
 
 
 viewerSubscriptions :
