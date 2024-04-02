@@ -993,7 +993,16 @@ type EventType toBackend frontendMsg frontendModel toFrontend backendMsg backend
     | BackendInitEvent (Command BackendOnly toFrontend backendMsg)
     | FrontendInitEvent ClientId (Command FrontendOnly toBackend frontendMsg)
     | CheckStateEvent { checkType : CheckType, isSuccessful : Bool }
+    | UserInputEvent { clientId : ClientId, inputType : UserInputType, isSuccessful : Bool }
     | TestEvent (Maybe ClientId) String
+    | SnapshotEvent { clientId : ClientId, name : String, isSuccessful : Bool }
+
+
+type UserInputType
+    = UserClicksButton HtmlId
+    | UserInputsText HtmlId String
+    | UserPressesKey HtmlId { keyCode : Int }
+    | UserClicksLink { href : String }
 
 
 type CheckType
@@ -1216,25 +1225,25 @@ snapshotView :
     -> { name : String }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-snapshotView clientId { name } instructions =
+snapshotView clientId data instructions =
     NextStep
         (\state ->
-            (case Dict.get clientId state.frontends of
+            case Dict.get clientId state.frontends of
                 Just frontend ->
                     { state
                         | snapshots =
-                            { name = name
+                            { name = data.name
                             , body = state.frontendApp.view frontend.model |> .body
                             , width = frontend.windowSize.width
                             , height = frontend.windowSize.height
                             }
                                 :: state.snapshots
                     }
+                        |> addEvent (SnapshotEvent { clientId = clientId, name = data.name, isSuccessful = True })
 
                 Nothing ->
                     addTestError (ClientIdNotFound clientId) state
-            )
-                |> addEvent (TestEvent (Just clientId) ("Snapshot: " ++ name))
+                        |> addEvent (SnapshotEvent { clientId = clientId, name = data.name, isSuccessful = False })
         )
         instructions
 
@@ -1246,12 +1255,12 @@ keyDownEvent :
     -> { keyCode : Int }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-keyDownEvent clientId htmlId { keyCode } =
+keyDownEvent clientId htmlId keyCode =
     userEvent
-        ("Key down " ++ String.fromInt keyCode)
+        (UserPressesKey htmlId keyCode)
         clientId
         htmlId
-        ( "keydown", Json.Encode.object [ ( "keyCode", Json.Encode.int keyCode ) ] )
+        ( "keydown", Json.Encode.object [ ( "keyCode", Json.Encode.int keyCode.keyCode ) ] )
 
 
 {-| -}
@@ -1261,7 +1270,7 @@ clickButton :
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 clickButton clientId htmlId =
-    userEvent "Click button" clientId htmlId Test.Html.Event.click
+    userEvent (UserClicksButton htmlId) clientId htmlId Test.Html.Event.click
 
 
 {-| -}
@@ -1272,7 +1281,7 @@ inputText :
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 inputText clientId htmlId text_ =
-    userEvent ("Input text \"" ++ text_ ++ "\"") clientId htmlId (Test.Html.Event.input text_)
+    userEvent (UserInputsText htmlId text_) clientId htmlId (Test.Html.Event.input text_)
 
 
 normalizeUrl : Url -> String -> String
@@ -1298,10 +1307,10 @@ clickLink :
     -> { href : String }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickLink clientId { href } =
+clickLink clientId data =
     let
-        event =
-            TestEvent (Just clientId) ("Click link " ++ href)
+        event isSuccessful =
+            UserInputEvent { clientId = clientId, inputType = UserClicksLink data, isSuccessful = isSuccessful }
     in
     NextStep
         (\state ->
@@ -1312,54 +1321,56 @@ clickLink clientId { href } =
                             |> .body
                             |> Html.div []
                             |> Test.Html.Query.fromHtml
-                            |> Test.Html.Query.findAll [ Test.Html.Selector.attribute (Html.Attributes.href href) ]
+                            |> Test.Html.Query.findAll [ Test.Html.Selector.attribute (Html.Attributes.href data.href) ]
                             |> Test.Html.Query.count
                                 (\count ->
                                     if count > 0 then
                                         Expect.pass
 
                                     else
-                                        Expect.fail ("Expected at least one link pointing to " ++ href)
+                                        Expect.fail ("Expected at least one link pointing to " ++ data.href)
                                 )
                             |> Test.Runner.getFailureReason
                     of
                         Nothing ->
-                            case Url.fromString (normalizeUrl state.domain href) of
+                            case Url.fromString (normalizeUrl state.domain data.href) of
                                 Just url ->
                                     handleFrontendUpdate
                                         clientId
                                         (currentTime state)
                                         (state.frontendApp.onUrlRequest (Internal url))
-                                        (addEvent event state)
+                                        (addEvent (event True) state)
 
                                 Nothing ->
-                                    addTestError (InvalidUrl href) state |> addEvent event
+                                    addTestError (InvalidUrl data.href) state |> addEvent (event False)
 
                         Just _ ->
                             addTestError
-                                (CustomError ("Clicking link failed for " ++ href))
+                                (CustomError ("Clicking link failed for " ++ data.href))
                                 state
-                                |> addEvent event
+                                |> addEvent (event False)
 
                 Nothing ->
-                    addTestError (ClientIdNotFound clientId) state |> addEvent event
+                    addTestError (ClientIdNotFound clientId) state |> addEvent (event False)
         )
 
 
 userEvent :
-    String
+    UserInputType
     -> ClientId
     -> HtmlId
     -> ( String, Json.Encode.Value )
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userEvent name clientId htmlId event =
+userEvent userInputType clientId htmlId event =
     let
+        htmlIdString : String
         htmlIdString =
             Effect.Browser.Dom.idToString htmlId
 
-        eventType =
-            TestEvent (Just clientId) ("User event: " ++ name ++ " for " ++ htmlIdString)
+        eventType : Bool -> EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        eventType isSuccessful =
+            UserInputEvent { clientId = clientId, inputType = userInputType, isSuccessful = isSuccessful }
     in
     NextStep
         (\state ->
@@ -1375,7 +1386,7 @@ userEvent name clientId htmlId event =
                     in
                     case Test.Html.Event.simulate event query |> Test.Html.Event.toResult of
                         Ok msg ->
-                            handleFrontendUpdate clientId (currentTime state) msg (addEvent eventType state)
+                            handleFrontendUpdate clientId (currentTime state) msg (addEvent (eventType True) state)
 
                         Err _ ->
                             case Test.Runner.getFailureReason (Test.Html.Query.has [] query) of
@@ -1383,16 +1394,16 @@ userEvent name clientId htmlId event =
                                     addTestError
                                         (CustomError ("User event failed for element with id " ++ htmlIdString))
                                         state
-                                        |> addEvent eventType
+                                        |> addEvent (eventType False)
 
                                 Nothing ->
                                     addTestError
                                         (CustomError ("Unable to find element with id " ++ htmlIdString))
                                         state
-                                        |> addEvent eventType
+                                        |> addEvent (eventType False)
 
                 Nothing ->
-                    addTestError (ClientIdNotFound clientId) state |> addEvent eventType
+                    addTestError (ClientIdNotFound clientId) state |> addEvent (eventType False)
         )
 
 
@@ -2870,6 +2881,46 @@ eventTypeToTimelineType eventType =
                 CheckBackend ->
                     BackendTimeline
 
+        UserInputEvent data ->
+            FrontendTimeline data.clientId
+
+        SnapshotEvent data ->
+            FrontendTimeline data.clientId
+
+
+isSkippable : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Bool
+isSkippable eventType =
+    case eventType of
+        TestEvent _ _ ->
+            True
+
+        UserInputEvent _ ->
+            True
+
+        CheckStateEvent _ ->
+            True
+
+        UpdateFromFrontendEvent _ ->
+            False
+
+        UpdateFromBackendEvent _ ->
+            False
+
+        BackendUpdateEvent _ _ ->
+            False
+
+        FrontendUpdateEvent _ _ _ ->
+            False
+
+        BackendInitEvent _ ->
+            False
+
+        FrontendInitEvent _ _ ->
+            False
+
+        SnapshotEvent _ ->
+            True
+
 
 nextTimelineStep :
     Bool
@@ -2890,19 +2941,14 @@ nextTimelineStep skipTestEvents stepIndex timeline test =
                             state
 
                         Continue index ->
-                            case ( skipTestEvents, step.eventType ) of
-                                ( True, TestEvent _ _ ) ->
-                                    Continue (index + 1)
+                            if skipTestEvents && isSkippable step.eventType then
+                                Continue (index + 1)
 
-                                ( True, CheckStateEvent _ ) ->
-                                    Continue (index + 1)
+                            else if eventTypeToTimelineType step.eventType == timeline then
+                                Done ( index, step )
 
-                                _ ->
-                                    if eventTypeToTimelineType step.eventType == timeline then
-                                        Done ( index, step )
-
-                                    else
-                                        Continue (index + 1)
+                            else
+                                Continue (index + 1)
                 )
                 (Continue (stepIndex + 1))
             |> (\a ->
@@ -2938,19 +2984,14 @@ previousTimelineStep skipTestEvents stepIndex timeline test =
                             state
 
                         Continue index ->
-                            case ( skipTestEvents, step.eventType ) of
-                                ( True, TestEvent _ _ ) ->
-                                    Continue (index - 1)
+                            if skipTestEvents && isSkippable step.eventType then
+                                Continue (index - 1)
 
-                                ( True, CheckStateEvent _ ) ->
-                                    Continue (index - 1)
+                            else if eventTypeToTimelineType step.eventType == timeline then
+                                Done ( index, step )
 
-                                _ ->
-                                    if eventTypeToTimelineType step.eventType == timeline then
-                                        Done ( index, step )
-
-                                    else
-                                        Continue (index - 1)
+                            else
+                                Continue (index - 1)
                 )
                 (Continue (stepIndex - 1))
             |> (\a ->
@@ -3076,6 +3117,12 @@ checkCachedElmValueHelper event state =
                     Nothing
 
                 CheckStateEvent _ ->
+                    Nothing
+
+                UserInputEvent _ ->
+                    Nothing
+
+                SnapshotEvent _ ->
                     Nothing
     }
 
@@ -3470,6 +3517,23 @@ currentStepText currentStep testView_ =
 
                         CheckBackend ->
                             "Check backend"
+
+                UserInputEvent data ->
+                    case data.inputType of
+                        UserClicksButton htmlId ->
+                            "Click \"" ++ Effect.Browser.Dom.idToString htmlId ++ "\" button"
+
+                        UserInputsText htmlId text2 ->
+                            "Type \"" ++ text2 ++ "\" into \"" ++ Effect.Browser.Dom.idToString htmlId ++ "\" input"
+
+                        UserPressesKey htmlId { keyCode } ->
+                            "Press key with key code " ++ String.fromInt keyCode ++ " into \"" ++ Effect.Browser.Dom.idToString htmlId ++ "\" input"
+
+                        UserClicksLink { href } ->
+                            "Press link leading to " ++ href
+
+                SnapshotEvent data ->
+                    "Snapshot view with name " ++ data.name
     in
     Html.div
         [ Html.Attributes.style "padding" "4px", Html.Attributes.title fullMsg ]
@@ -3584,6 +3648,12 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
 
                 CheckStateEvent _ ->
                     []
+
+                UserInputEvent _ ->
+                    []
+
+                SnapshotEvent _ ->
+                    []
     in
     { columnIndex = state.columnIndex + 1
     , dict =
@@ -3609,7 +3679,7 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                     Just timeline ->
                         { events =
                             arrows timeline.rowIndex
-                                ++ [ eventIcon (color timeline.rowIndex) event.eventType state.columnIndex timeline.rowIndex ]
+                                ++ eventIcon (color timeline.rowIndex) event.eventType state.columnIndex timeline.rowIndex
                                 ++ timeline.events
                         , columnStart = timeline.columnStart
                         , columnEnd = state.columnIndex
@@ -3623,7 +3693,7 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                                 Dict.size state.dict
                         in
                         { events =
-                            arrows rowIndex ++ [ eventIcon (color rowIndex) event.eventType state.columnIndex rowIndex ]
+                            arrows rowIndex ++ eventIcon (color rowIndex) event.eventType state.columnIndex rowIndex
                         , columnStart = state.columnIndex
                         , columnEnd = state.columnIndex
                         , rowIndex = rowIndex
@@ -3769,7 +3839,10 @@ timelineView windowWidth testView_ =
                 )
                 timelines
             )
-        , timelineViewHelper (windowWidth - sideBarWidth) testView_ timelines
+        , timelineViewHelper
+            (windowWidth - sideBarWidth - 1 {- The extra minus 1 is to account for rounding errors -})
+            testView_
+            timelines
         ]
 
 
@@ -3947,7 +4020,7 @@ eventIcon :
     -> EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Int
     -> Int
-    -> Html msg
+    -> List (Html msg)
 eventIcon color eventType columnIndex rowIndex =
     let
         circleHelper : String -> Html msg
@@ -3962,28 +4035,166 @@ eventIcon color eventType columnIndex rowIndex =
     in
     case eventType of
         FrontendUpdateEvent _ _ _ ->
-            circleHelper "circle"
+            [ circleHelper "circle" ]
 
         UpdateFromFrontendEvent _ ->
-            circleHelper "circle"
+            [ circleHelper "circle" ]
 
         UpdateFromBackendEvent _ ->
-            circleHelper "circle"
+            [ circleHelper "circle" ]
 
         BackendUpdateEvent _ _ ->
-            circleHelper "circle"
+            [ circleHelper "circle" ]
 
         TestEvent _ _ ->
-            circleHelper "big-circle"
+            [ circleHelper "big-circle" ]
 
         BackendInitEvent _ ->
-            circleHelper "circle"
+            [ circleHelper "circle" ]
 
         FrontendInitEvent _ _ ->
-            circleHelper "circle"
+            [ circleHelper "circle" ]
 
-        CheckStateEvent _ ->
-            magnifyingGlassSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
+        CheckStateEvent { isSuccessful } ->
+            [ magnifyingGlassSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
+            ]
+                ++ (if isSuccessful then
+                        []
+
+                    else
+                        [ xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                   )
+
+        UserInputEvent data ->
+            (case data.inputType of
+                UserClicksButton _ ->
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+
+                UserInputsText _ _ ->
+                    [ cursorTextSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+
+                UserPressesKey _ { keyCode } ->
+                    [ circleHelper "big-circle" ]
+
+                UserClicksLink _ ->
+                    [ simpleLinkSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+            )
+                ++ (if data.isSuccessful then
+                        []
+
+                    else
+                        [ xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                   )
+
+        SnapshotEvent data ->
+            [ cameraSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                ++ (if data.isSuccessful then
+                        []
+
+                    else
+                        [ xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                   )
+
+
+cameraSvg : String -> Int -> Int -> Html msg
+cameraSvg color left top =
+    Svg.svg
+        [ Svg.Attributes.width (String.fromInt timelineColumnWidth)
+        , Html.Attributes.style "left" (px left)
+        , Html.Attributes.style "top" (px top)
+        , Html.Attributes.style "position" "absolute"
+        , Svg.Attributes.viewBox "0 -10 250 400"
+        , Html.Attributes.style "pointer-events" "none"
+        ]
+        [ Svg.path
+            [ Svg.Attributes.fill "none"
+            , Svg.Attributes.stroke "black"
+            , Svg.Attributes.strokeWidth "60"
+            , Svg.Attributes.d "M208,52H182.42L170,33.34A12,12,0,0,0,160,28H96a12,12,0,0,0-10,5.34L73.57,52H48A28,28,0,0,0,20,80V192a28,28,0,0,0,28,28H208a28,28,0,0,0,28-28V80A28,28,0,0,0,208,52Zm4,140a4,4,0,0,1-4,4H48a4,4,0,0,1-4-4V80a4,4,0,0,1,4-4H80a12,12,0,0,0,10-5.34L102.42,52h51.15L166,70.66A12,12,0,0,0,176,76h32a4,4,0,0,1,4,4ZM128,84a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,84Zm0,72a24,24,0,1,1,24-24A24,24,0,0,1,128,156Z"
+            ]
+            []
+        , Svg.path
+            [ Svg.Attributes.fill color
+            , Svg.Attributes.d "M208,52H182.42L170,33.34A12,12,0,0,0,160,28H96a12,12,0,0,0-10,5.34L73.57,52H48A28,28,0,0,0,20,80V192a28,28,0,0,0,28,28H208a28,28,0,0,0,28-28V80A28,28,0,0,0,208,52Zm4,140a4,4,0,0,1-4,4H48a4,4,0,0,1-4-4V80a4,4,0,0,1,4-4H80a12,12,0,0,0,10-5.34L102.42,52h51.15L166,70.66A12,12,0,0,0,176,76h32a4,4,0,0,1,4,4ZM128,84a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,84Zm0,72a24,24,0,1,1,24-24A24,24,0,0,1,128,156Z"
+            ]
+            []
+        ]
+
+
+simpleLinkSvg : String -> Int -> Int -> Svg msg
+simpleLinkSvg color left top =
+    Svg.svg
+        [ Svg.Attributes.width (String.fromInt timelineColumnWidth)
+        , Html.Attributes.style "left" (px left)
+        , Html.Attributes.style "top" (px top)
+        , Html.Attributes.style "position" "absolute"
+        , Svg.Attributes.viewBox "10 0 240 400"
+        , Html.Attributes.style "pointer-events" "none"
+        , Html.Attributes.style "transform" "scale(-1, 1)"
+        ]
+        [ Svg.path
+            [ Svg.Attributes.fill "none"
+            , Svg.Attributes.stroke "black"
+            , Svg.Attributes.strokeWidth "60"
+            , Svg.Attributes.d "M87.5,151.52l64-64a12,12,0,0,1,17,17l-64,64a12,12,0,0,1-17-17Zm131-114a60.08,60.08,0,0,0-84.87,0L103.51,67.61a12,12,0,0,0,17,17l30.07-30.06a36,36,0,0,1,50.93,50.92L171.4,135.52a12,12,0,1,0,17,17l30.08-30.06A60.09,60.09,0,0,0,218.45,37.55ZM135.52,171.4l-30.07,30.08a36,36,0,0,1-50.92-50.93l30.06-30.07a12,12,0,0,0-17-17L37.55,133.58a60,60,0,0,0,84.88,84.87l30.06-30.07a12,12,0,0,0-17-17Z"
+            ]
+            []
+        , Svg.path
+            [ Svg.Attributes.fill color
+            , Svg.Attributes.d "M87.5,151.52l64-64a12,12,0,0,1,17,17l-64,64a12,12,0,0,1-17-17Zm131-114a60.08,60.08,0,0,0-84.87,0L103.51,67.61a12,12,0,0,0,17,17l30.07-30.06a36,36,0,0,1,50.93,50.92L171.4,135.52a12,12,0,1,0,17,17l30.08-30.06A60.09,60.09,0,0,0,218.45,37.55ZM135.52,171.4l-30.07,30.08a36,36,0,0,1-50.92-50.93l30.06-30.07a12,12,0,0,0-17-17L37.55,133.58a60,60,0,0,0,84.88,84.87l30.06-30.07a12,12,0,0,0-17-17Z"
+            ]
+            []
+        ]
+
+
+cursorTextSvg : String -> Int -> Int -> Svg msg
+cursorTextSvg color left top =
+    Svg.svg
+        [ Svg.Attributes.width (String.fromInt timelineColumnWidth)
+        , Html.Attributes.style "left" (px left)
+        , Html.Attributes.style "top" (px top)
+        , Html.Attributes.style "position" "absolute"
+        , Svg.Attributes.viewBox "10 -10 240 400"
+        , Html.Attributes.style "pointer-events" "none"
+        ]
+        [ Svg.path
+            [ Svg.Attributes.fill "none"
+            , Svg.Attributes.stroke "black"
+            , Svg.Attributes.strokeWidth "60"
+            , Svg.Attributes.d "M188,208a12,12,0,0,1-12,12H160a43.86,43.86,0,0,1-32-13.85A43.86,43.86,0,0,1,96,220H80a12,12,0,0,1,0-24H96a20,20,0,0,0,20-20V140H104a12,12,0,0,1,0-24h12V80A20,20,0,0,0,96,60H80a12,12,0,0,1,0-24H96a43.86,43.86,0,0,1,32,13.85A43.86,43.86,0,0,1,160,36h16a12,12,0,0,1,0,24H160a20,20,0,0,0-20,20v36h12a12,12,0,0,1,0,24H140v36a20,20,0,0,0,20,20h16A12,12,0,0,1,188,208Z"
+            ]
+            []
+        , Svg.path
+            [ Svg.Attributes.fill color
+            , Svg.Attributes.d "M188,208a12,12,0,0,1-12,12H160a43.86,43.86,0,0,1-32-13.85A43.86,43.86,0,0,1,96,220H80a12,12,0,0,1,0-24H96a20,20,0,0,0,20-20V140H104a12,12,0,0,1,0-24h12V80A20,20,0,0,0,96,60H80a12,12,0,0,1,0-24H96a43.86,43.86,0,0,1,32,13.85A43.86,43.86,0,0,1,160,36h16a12,12,0,0,1,0,24H160a20,20,0,0,0-20,20v36h12a12,12,0,0,1,0,24H140v36a20,20,0,0,0,20,20h16A12,12,0,0,1,188,208Z"
+            ]
+            []
+        ]
+
+
+cursorSvg : String -> Int -> Int -> Svg msg
+cursorSvg color left top =
+    Svg.svg
+        [ Svg.Attributes.width (String.fromInt timelineColumnWidth)
+        , Html.Attributes.style "left" (px left)
+        , Html.Attributes.style "top" (px top)
+        , Html.Attributes.style "position" "absolute"
+        , Svg.Attributes.viewBox "10 0 240 400"
+        , Html.Attributes.style "pointer-events" "none"
+        ]
+        [ Svg.path
+            [ Svg.Attributes.fill "none"
+            , Svg.Attributes.stroke "black"
+            , Svg.Attributes.strokeWidth "60"
+            , Svg.Attributes.d "M224.15,179.17l-46.83-46.82,37.93-13.51.76-.3a20,20,0,0,0-1.76-37.27L54.16,29A20,20,0,0,0,29,54.16L81.27,214.24A20,20,0,0,0,118.54,216c.11-.25.21-.5.3-.76l13.51-37.92,46.83,46.82a20,20,0,0,0,28.28,0l16.69-16.68A20,20,0,0,0,224.15,179.17Zm-30.83,25.17-48.48-48.48A20,20,0,0,0,130.7,150a20.66,20.66,0,0,0-3.74.35A20,20,0,0,0,112.35,162c-.11.25-.21.5-.3.76L100.4,195.5,54.29,54.29l141.21,46.1-32.71,11.66c-.26.09-.51.19-.76.3a20,20,0,0,0-6.17,32.48h0l48.49,48.48Z"
+            ]
+            []
+        , Svg.path
+            [ Svg.Attributes.fill color
+            , Svg.Attributes.d "M224.15,179.17l-46.83-46.82,37.93-13.51.76-.3a20,20,0,0,0-1.76-37.27L54.16,29A20,20,0,0,0,29,54.16L81.27,214.24A20,20,0,0,0,118.54,216c.11-.25.21-.5.3-.76l13.51-37.92,46.83,46.82a20,20,0,0,0,28.28,0l16.69-16.68A20,20,0,0,0,224.15,179.17Zm-30.83,25.17-48.48-48.48A20,20,0,0,0,130.7,150a20.66,20.66,0,0,0-3.74.35A20,20,0,0,0,112.35,162c-.11.25-.21.5-.3.76L100.4,195.5,54.29,54.29l141.21,46.1-32.71,11.66c-.26.09-.51.19-.76.3a20,20,0,0,0-6.17,32.48h0l48.49,48.48Z"
+            ]
+            []
+        ]
 
 
 {-| Original SVG from <https://upload.wikimedia.org/wikipedia/commons/5/55/Magnifying_glass_icon.svg>
@@ -4001,7 +4212,7 @@ magnifyingGlassSvg color left top =
         [ Svg.path
             [ Svg.Attributes.fill "none"
             , Svg.Attributes.stroke "black"
-            , Svg.Attributes.strokeWidth "120"
+            , Svg.Attributes.strokeWidth "200"
             , Svg.Attributes.strokeLinecap "round"
             , Svg.Attributes.d "m280,278a153,153 0 1,0-2,2l170,170m-91-117 110,110-26,26-110-110"
             ]
@@ -4012,6 +4223,25 @@ magnifyingGlassSvg color left top =
             , Svg.Attributes.strokeWidth "80"
             , Svg.Attributes.strokeLinecap "round"
             , Svg.Attributes.d "m280,278a153,153 0 1,0-2,2l170,170m-91-117 110,110-26,26-110-110"
+            ]
+            []
+        ]
+
+
+xSvg : String -> Int -> Int -> Svg msg
+xSvg color left top =
+    Svg.svg
+        [ Svg.Attributes.width (String.fromInt timelineColumnWidth)
+        , Html.Attributes.style "left" (px left)
+        , Html.Attributes.style "top" (px top)
+        , Html.Attributes.style "position" "absolute"
+        , Svg.Attributes.viewBox "-70 10 300 300"
+        , Html.Attributes.style "pointer-events" "none"
+        ]
+        [ Svg.path
+            [ Svg.Attributes.stroke color
+            , Svg.Attributes.strokeWidth "30"
+            , Svg.Attributes.d "M208.49,191.51a12,12,0,0,1-17,17L128,145,64.49,208.49a12,12,0,0,1-17-17L111,128,47.51,64.49a12,12,0,0,1,17-17L128,111l63.51-63.52a12,12,0,0,1,17,17L145,128Z"
             ]
             []
         ]
@@ -4200,7 +4430,7 @@ testOverlay windowWidth testView_ currentStep =
         ]
         [ Html.div
             [ Html.Attributes.style "padding" "4px" ]
-            [ overlayButton PressedBackToOverview "Close"
+            [ overlayButton PressedBackToOverview "Close test"
             , Html.div [ Html.Attributes.style "display" "inline-block", Html.Attributes.style "padding" "4px" ] []
             , overlayButton PressedToggleOverlayPosition "Move"
             , Html.div [ Html.Attributes.style "display" "inline-block", Html.Attributes.style "padding" "4px" ] []
@@ -4209,6 +4439,9 @@ testOverlay windowWidth testView_ currentStep =
 
               else
                 overlayButton PressedShowModel "Show model"
+            , Html.div
+                [ Html.Attributes.style "display" "inline-block", Html.Attributes.style "padding" "4px" ]
+                [ Html.text testView_.testName ]
             ]
         , timelineView windowWidth testView_
         , currentStepText currentStep testView_
