@@ -1,6 +1,6 @@
 module Effect.Test exposing
-    ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile
-    , FrontendActions, sendToBackend, backendUpdate, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody(..), HttpPart(..)
+    ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile, Data, FileContents(..)
+    , FrontendActions, sendToBackend, backendUpdate, simulateTime, fastForward, andThen, Instructions, startTime, HttpBody(..), HttpPart(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addBytesFile, addTexture, addTextureWithOptions
     , startHeadless, HeadlessMsg
@@ -11,12 +11,12 @@ module Effect.Test exposing
 
 ## Setting up end to end tests
 
-@docs start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse, RequestedBy, PortToJs, FileData, FileUpload, MultipleFilesUpload, uploadBytesFile, uploadStringFile
+@docs start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse, RequestedBy, PortToJs, FileData, FileUpload, MultipleFilesUpload, uploadBytesFile, uploadStringFile, Data, FileContents
 
 
 ## Control the tests
 
-@docs FrontendActions, sendToBackend, backendUpdate, simulateTime, fastForward, andThen, continueWith, Instructions, State, startTime, HttpBody, HttpPart
+@docs FrontendActions, sendToBackend, backendUpdate, simulateTime, fastForward, andThen, Instructions, startTime, HttpBody, HttpPart
 
 
 ## Check the current state
@@ -93,14 +93,15 @@ import WebGLFix.Texture
     import Effect.Test
     import Frontend
     import Test exposing (Test)
+    import Url
 
     config =
         { frontendApp = Frontend.appFunctions
         , backendApp = Backend.appFunctions
-        , handleHttpRequest = always Effect.Test.NetworkErrorResponse
+        , handleHttpRequest = always Effect.Test.UnhandledHttpRequest
         , handlePortToJs = always Nothing
-        , handleFileUpload = always Effect.Test.CancelFileUpload
-        , handleMultipleFilesUpload = always Effect.Test.CancelMultiFileUpload
+        , handleFileUpload = always Effect.Test.UnhandledFileUpload
+        , handleMultipleFilesUpload = always Effect.Test.UnhandledMultiFileUpload
         , domain = unsafeUrl "https://my-app.lamdera.app"
         }
 
@@ -117,14 +118,23 @@ import WebGLFix.Texture
                 )
             |> Effect.Test.toTest
 
+    unsafeUrl : String -> Url
+    unsafeUrl urlText =
+        case Url.fromString urlText of
+            Just url ->
+                url
+
+            Nothing ->
+                unsafeUrl urlText
+
 -}
 type alias Config toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
     { frontendApp : FrontendApp toBackend frontendMsg frontendModel toFrontend
     , backendApp : BackendApp toBackend toFrontend backendMsg backendModel
-    , handleHttpRequest : { currentRequest : HttpRequest, pastRequests : List HttpRequest } -> HttpResponse
-    , handlePortToJs : { currentRequest : PortToJs, pastRequests : List PortToJs } -> Maybe ( String, Json.Decode.Value )
-    , handleFileUpload : { mimeTypes : List String } -> FileUpload
-    , handleMultipleFilesUpload : { mimeTypes : List String } -> MultipleFilesUpload
+    , handleHttpRequest : { data : Data frontendModel backendModel, currentRequest : HttpRequest } -> HttpResponse
+    , handlePortToJs : { data : Data frontendModel backendModel, currentRequest : PortToJs } -> Maybe ( String, Json.Decode.Value )
+    , handleFileUpload : { data : Data frontendModel backendModel, mimeTypes : List String } -> FileUpload
+    , handleMultipleFilesUpload : { data : Data frontendModel backendModel, mimeTypes : List String } -> MultipleFilesUpload
     , domain : Url
     }
 
@@ -134,6 +144,7 @@ type alias Config toBackend frontendMsg frontendModel toFrontend backendMsg back
 type FileUpload
     = CancelFileUpload
     | UploadFile FileData
+    | UnhandledFileUpload
 
 
 {-| File data for when simulating a user uploading a file via `Effect.File.Select.file` or `Effect.File.Select.files`
@@ -171,6 +182,7 @@ uploadBytesFile name mimeType content lastModified =
 type MultipleFilesUpload
     = CancelMultipleFilesUpload
     | UploadMultipleFiles FileData (List FileData)
+    | UnhandledMultiFileUpload
 
 
 type alias ToBackendData toBackend =
@@ -193,7 +205,6 @@ type alias FrontendPendingEffect toBackend frontendMsg =
     }
 
 
-{-| -}
 type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
     { testName : String
     , frontendApp : FrontendApp toBackend frontendMsg frontendModel toFrontend
@@ -208,16 +219,45 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
     , timers : Dict Duration { startTime : Time.Posix }
     , testErrors : List TestError
     , httpRequests : List HttpRequest
-    , handleHttpRequest : { currentRequest : HttpRequest, pastRequests : List HttpRequest } -> HttpResponse
+    , handleHttpRequest : { data : Data frontendModel backendModel, currentRequest : HttpRequest } -> HttpResponse
     , handlePortToJs :
-        { currentRequest : PortToJs, pastRequests : List PortToJs }
+        { currentRequest : PortToJs, data : Data frontendModel backendModel }
         -> Maybe ( String, Json.Decode.Value )
     , portRequests : List PortToJs
-    , handleFileUpload : { mimeTypes : List String } -> FileUpload
-    , handleMultipleFilesUpload : { mimeTypes : List String } -> MultipleFilesUpload
+    , handleFileUpload : { data : Data frontendModel backendModel, mimeTypes : List String } -> FileUpload
+    , handleMultipleFilesUpload : { data : Data frontendModel backendModel, mimeTypes : List String } -> MultipleFilesUpload
     , domain : Url
     , snapshots : List { name : String, body : List (Html frontendMsg), width : Int, height : Int }
+    , downloads : List { filename : String, mimeType : String, content : FileContents, downloadedAt : Time.Posix }
     }
+
+
+{-| -}
+type alias Data frontendModel backendModel =
+    { httpRequests : List HttpRequest
+    , portRequests : List PortToJs
+    , time : Time.Posix
+    , backend : backendModel
+    , frontends : Dict ClientId frontendModel
+    , downloads : List { filename : String, mimeType : String, content : FileContents, downloadedAt : Time.Posix }
+    }
+
+
+stateToData : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Data frontendModel backendModel
+stateToData state =
+    { httpRequests = state.httpRequests
+    , portRequests = state.portRequests
+    , time = currentTime state
+    , backend = state.model
+    , frontends = Dict.map (\_ frontend -> frontend.model) state.frontends
+    , downloads = state.downloads
+    }
+
+
+{-| -}
+type FileContents
+    = StringFile String
+    | BytesFile Bytes
 
 
 {-| -}
@@ -250,6 +290,7 @@ type HttpResponse
     | StringHttpResponse Effect.Http.Metadata String
     | JsonHttpResponse Effect.Http.Metadata Json.Encode.Value
     | TextureHttpResponse Effect.Http.Metadata Effect.WebGL.Texture.Texture
+    | UnhandledHttpRequest
 
 
 {-| Who made this http request?
@@ -315,6 +356,11 @@ type TestError
     | ClientIdNotFound ClientId
     | ViewTestError String
     | InvalidUrl String
+    | FileUploadNotHandled
+    | MultipleFilesUploadNotHandled
+    | HttpResponseContainsBytesThatCantConvertToString HttpRequest
+    | HttpResponseCantConvertTextureToString HttpRequest
+    | HttpRequestNotHandled HttpRequest
 
 
 {-| -}
@@ -331,15 +377,16 @@ type Instructions toBackend frontendMsg frontendModel toFrontend backendMsg back
     | Start (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 
 
-{-| -}
+{-| Make the test fail if it doesn't seem some condition.
+-}
 checkState :
-    (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Result String ())
+    (Data frontendModel backendModel -> Result String ())
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 checkState checkFunc =
     NextStep
         (\state ->
-            case checkFunc state of
+            case checkFunc (stateToData state) of
                 Ok () ->
                     state
                         |> addEvent (CheckStateEvent { checkType = CheckState, isSuccessful = True })
@@ -350,7 +397,8 @@ checkState checkFunc =
         )
 
 
-{-| -}
+{-| Make the test fail if the backend model doesn't seem some condition.
+-}
 checkBackend :
     (backendModel -> Result String ())
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -474,6 +522,21 @@ testErrorToString error =
 
         InvalidUrl string ->
             string ++ " is not a valid url"
+
+        FileUploadNotHandled ->
+            "A client tried uploading a file but it wasn't handled by Config.handleFileUpload"
+
+        MultipleFilesUploadNotHandled ->
+            "A client tried uploading multiple files but it wasn't handled by Config.multipleFilesUpload"
+
+        HttpResponseContainsBytesThatCantConvertToString httpRequest ->
+            "Config.handleHttpRequest returned Bytes to " ++ httpRequest.url ++ " but a String was expected and the Bytes couldn't be converted into a valid UTF-8 string"
+
+        HttpResponseCantConvertTextureToString httpRequest ->
+            "Config.handleHttpRequest returned a Texture to " ++ httpRequest.url ++ " but a String was expected"
+
+        HttpRequestNotHandled httpRequest ->
+            "A client tried making an http request to " ++ httpRequest.url ++ " but it wasn't handled by Config.handleHttpRequest"
 
 
 {-| -}
@@ -611,7 +674,6 @@ type alias FrontendState toBackend frontendMsg frontendModel toFrontend =
     , sessionId : SessionId
     , pendingEffects : Array (FrontendPendingEffect toBackend frontendMsg)
     , toFrontend : List (ToFrontendData toFrontend)
-    , clipboard : String
     , timers : Dict Duration { startTime : Time.Posix }
     , url : Url
     , windowSize : { width : Int, height : Int }
@@ -649,19 +711,21 @@ type alias BackendApp toBackend toFrontend backendMsg backendModel =
 
     import Effect.Test
     import Test exposing (Test)
+    import Url
 
-    testApp =
-        Effect.Test.testApp
-            Frontend.appFunctions
-            Backend.appFunctions
-            (always NetworkError_)
-            (always Nothing)
-            (always Nothing)
-            (unsafeUrl "https://my-app.lamdera.app")
+    config =
+        { frontendApp = Frontend.appFunctions
+        , backendApp = Backend.appFunctions
+        , handleHttpRequest = always Effect.Test.UnhandledHttpRequest
+        , handlePortToJs = always Nothing
+        , handleFileUpload = always Effect.Test.UnhandledFileUpload
+        , handleMultipleFilesUpload = always Effect.Test.UnhandledMultiFileUpload
+        , domain = unsafeUrl "https://my-app.lamdera.app"
+        }
 
     test : Test
     test =
-        testApp "myButton is clickable"
+        Effect.Test.start "myButton is clickable"
             |> Effect.Test.connectFrontend
                 sessionId0
                 myDomain
@@ -672,6 +736,15 @@ type alias BackendApp toBackend toFrontend backendMsg backendModel =
                         |> frontendActions.clickButton { htmlId = "myButton" }
                 )
             |> Effect.Test.toTest
+
+    unsafeUrl : String -> Url
+    unsafeUrl urlText =
+        case Url.fromString urlText of
+            Just url ->
+                url
+
+            Nothing ->
+                unsafeUrl urlText
 
 -}
 type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
@@ -715,14 +788,15 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
     import Effect.Test
     import Frontend
     import Test exposing (Test)
+    import Url
 
     config =
         { frontendApp = Frontend.appFunctions
         , backendApp = Backend.appFunctions
         , handleHttpRequest = always Effect.Test.NetworkErrorResponse
         , handlePortToJs = always Nothing
-        , handleFileUpload = always Effect.Test.CancelFileUpload
-        , handleMultipleFilesUpload = always Effect.Test.CancelMultiFileUpload
+        , handleFileUpload = always Effect.Test.UnhandledFileUpload
+        , handleMultipleFilesUpload = always Effect.Test.UnhandledMultiFileUpload
         , domain = unsafeUrl "https://my-app.lamdera.app"
         }
 
@@ -738,6 +812,15 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
                         |> frontendActions.clickButton { htmlId = "myButton" }
                 )
             |> Effect.Test.toTest
+
+    unsafeUrl : String -> Url
+    unsafeUrl urlText =
+        case Url.fromString urlText of
+            Just url ->
+                url
+
+            Nothing ->
+                unsafeUrl urlText
 
 -}
 start :
@@ -771,6 +854,7 @@ start config testName =
             , handleMultipleFilesUpload = config.handleMultipleFilesUpload
             , domain = config.domain
             , snapshots = []
+            , downloads = []
             }
                 |> addEvent (BackendInitEvent cmd)
     in
@@ -874,6 +958,7 @@ getClientConnectSubs backendSub =
 
     import Effect.Test
     import Test exposing (Test)
+    import Url
 
     testApp =
         Effect.Test.testApp
@@ -897,6 +982,15 @@ getClientConnectSubs backendSub =
                 )
             |> Effect.Test.toTest
 
+    unsafeUrl : String -> Url
+    unsafeUrl urlText =
+        case Url.fromString urlText of
+            Just url ->
+                url
+
+            Nothing ->
+                unsafeUrl urlText
+
 -}
 connectFrontend :
     SessionId
@@ -910,7 +1004,7 @@ connectFrontend :
         )
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-connectFrontend sessionId url windowSize andThenFunc =
+connectFrontend sessionId url windowSize andThenFunc instructions =
     AndThen
         (\state ->
             let
@@ -924,7 +1018,6 @@ connectFrontend sessionId url windowSize andThenFunc =
                                 , sessionId = sessionId
                                 , pendingEffects = Array.fromList [ { cmds = cmd, stepIndex = Array.length state.history } ]
                                 , toFrontend = []
-                                , clipboard = ""
                                 , timers = getTimers subscriptions |> Dict.map (\_ _ -> { startTime = currentTime state })
                                 , url = url
                                 , windowSize = windowSize
@@ -953,6 +1046,7 @@ connectFrontend sessionId url windowSize andThenFunc =
                         )
                         state2
                     |> Start
+                    |> shortWait
                 , { clientId = clientId
                   , keyDownEvent = keyDownEvent clientId
                   , clickButton = clickButton clientId
@@ -964,6 +1058,7 @@ connectFrontend sessionId url windowSize andThenFunc =
                   }
                 )
         )
+        instructions
 
 
 type alias Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
@@ -979,7 +1074,6 @@ type alias Event toBackend frontendMsg frontendModel toFrontend backendMsg backe
 type alias EventFrontend frontendModel =
     { model : frontendModel
     , sessionId : SessionId
-    , clipboard : String
     , url : Url
     , windowSize : { width : Int, height : Int }
     }
@@ -1206,7 +1300,6 @@ addEvent eventType state =
                         (\_ a ->
                             { model = a.model
                             , sessionId = a.sessionId
-                            , clipboard = a.clipboard
                             , url = a.url
                             , windowSize = a.windowSize
                             }
@@ -1307,7 +1400,7 @@ clickLink :
     -> { href : String }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickLink clientId data =
+clickLink clientId data instructions =
     let
         event isSuccessful =
             UserInputEvent { clientId = clientId, inputType = UserClicksLink data, isSuccessful = isSuccessful }
@@ -1353,6 +1446,15 @@ clickLink clientId data =
                 Nothing ->
                     addTestError (ClientIdNotFound clientId) state |> addEvent (event False)
         )
+        instructions
+        |> shortWait
+
+
+shortWait :
+    Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+shortWait instructions =
+    simulateTime (Duration.milliseconds 100) instructions
 
 
 userEvent :
@@ -1362,7 +1464,7 @@ userEvent :
     -> ( String, Json.Encode.Value )
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userEvent userInputType clientId htmlId event =
+userEvent userInputType clientId htmlId event instructions =
     let
         htmlIdString : String
         htmlIdString =
@@ -1405,6 +1507,8 @@ userEvent userInputType clientId htmlId event =
                 Nothing ->
                     addTestError (ClientIdNotFound clientId) state |> addEvent (eventType False)
         )
+        instructions
+        |> shortWait
 
 
 {-| -}
@@ -1682,39 +1786,11 @@ In order to do that you can write something like this:
 
 -}
 andThen :
-    (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    (Data frontendModel backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-andThen =
-    AndThen
-
-
-{-| Sometimes you need to decide what should happen next based on some current state.
-In order to do that you can write something like this:
-
-    import Effect.Test
-
-    state
-        |> Effect.Test.andThen
-            (\state2 ->
-                case List.filterMap isLoginEmail state2.httpRequests |> List.head of
-                    Just loginEmail ->
-                        Effect.Test.continueWith state2
-                                |> testApp.connectFrontend
-                                    sessionIdFromEmail
-                                    (loginEmail.loginUrl)
-                                    (\( state3, clientIdFromEmail ) ->
-                                        ...
-                                    )
-
-                    Nothing ->
-                        Effect.Test.continueWith state2 |> Effect.Test.checkState (\_ -> Err "Should have gotten a login email")
-            )
-
--}
-continueWith : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-continueWith state =
-    Start state
+andThen andThenFunc instructions =
+    AndThen (\state -> andThenFunc (stateToData state) (Start state)) instructions
 
 
 runEffects :
@@ -1849,7 +1925,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
             case
                 newState.handlePortToJs
                     { currentRequest = portRequest
-                    , pastRequests = state.portRequests
+                    , data = stateToData state
                     }
             of
                 Just ( responsePortName, responseValue ) ->
@@ -1886,22 +1962,41 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
         FileDownloadUrl _ ->
             state
 
-        FileDownloadString _ ->
-            state
+        FileDownloadString data ->
+            { state
+                | downloads =
+                    { filename = data.name
+                    , mimeType = data.mimeType
+                    , content = StringFile data.content
+                    , downloadedAt = currentTime state
+                    }
+                        :: state.downloads
+            }
 
-        FileDownloadBytes _ ->
-            state
+        FileDownloadBytes data ->
+            { state
+                | downloads =
+                    { filename = data.name
+                    , mimeType = data.mimeType
+                    , content = BytesFile data.content
+                    , downloadedAt = currentTime state
+                    }
+                        :: state.downloads
+            }
 
         FileSelectFile mimeTypes msg ->
-            case state.handleFileUpload { mimeTypes = mimeTypes } of
+            case state.handleFileUpload { mimeTypes = mimeTypes, data = stateToData state } of
                 UploadFile (FileUploadData file) ->
                     handleFrontendUpdate clientId (currentTime state) (msg (Effect.Internal.MockFile file)) state
 
                 CancelFileUpload ->
                     state
 
+                UnhandledFileUpload ->
+                    addTestError FileUploadNotHandled state
+
         FileSelectFiles mimeTypes msg ->
-            case state.handleMultipleFilesUpload { mimeTypes = mimeTypes } of
+            case state.handleMultipleFilesUpload { mimeTypes = mimeTypes, data = stateToData state } of
                 UploadMultipleFiles (FileUploadData file) files ->
                     handleFrontendUpdate
                         clientId
@@ -1914,6 +2009,9 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
 
                 CancelMultipleFilesUpload ->
                     state
+
+                UnhandledMultiFileUpload ->
+                    addTestError MultipleFilesUploadNotHandled state
 
         Broadcast _ ->
             state
@@ -2124,43 +2222,44 @@ runTask maybeClientId state task =
                     , headers = httpRequest.headers
                     , sentAt = currentTime state
                     }
+
+                handleResponse : Http.Response String -> ( State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, x )
+                handleResponse a =
+                    httpRequest.onRequestComplete a
+                        |> runTask maybeClientId { state | httpRequests = request :: state.httpRequests }
             in
-            state.handleHttpRequest { currentRequest = request, pastRequests = state.httpRequests }
-                |> (\a ->
-                        case a of
-                            BadUrlResponse url ->
-                                Http.BadUrl_ url
+            case state.handleHttpRequest { currentRequest = request, data = stateToData state } of
+                BadUrlResponse url ->
+                    Http.BadUrl_ url |> handleResponse
 
-                            TimeoutResponse ->
-                                Http.Timeout_
+                TimeoutResponse ->
+                    handleResponse Http.Timeout_
 
-                            NetworkErrorResponse ->
-                                Http.NetworkError_
+                NetworkErrorResponse ->
+                    handleResponse Http.NetworkError_
 
-                            BadStatusResponse metadata text2 ->
-                                Http.BadStatus_ metadata text2
+                BadStatusResponse metadata text2 ->
+                    Http.BadStatus_ metadata text2 |> handleResponse
 
-                            BytesHttpResponse metadata body ->
-                                case Bytes.Decode.decode (Bytes.Decode.string (Bytes.width body)) body of
-                                    Just text2 ->
-                                        Http.GoodStatus_ metadata text2
+                BytesHttpResponse metadata body ->
+                    case Bytes.Decode.decode (Bytes.Decode.string (Bytes.width body)) body of
+                        Just text2 ->
+                            Http.GoodStatus_ metadata text2 |> handleResponse
 
-                                    Nothing ->
-                                        Http.BadStatus_ metadata "Test error: Response contains bytes that aren't valid a valid string"
+                        Nothing ->
+                            handleHttpResponseWithTestError maybeClientId request httpRequest HttpResponseContainsBytesThatCantConvertToString state
 
-                            StringHttpResponse metadata text2 ->
-                                Http.GoodStatus_ metadata text2
+                StringHttpResponse metadata text2 ->
+                    Http.GoodStatus_ metadata text2 |> handleResponse
 
-                            JsonHttpResponse metadata body ->
-                                Http.GoodStatus_ metadata (Json.Encode.encode 0 body)
+                JsonHttpResponse metadata body ->
+                    Http.GoodStatus_ metadata (Json.Encode.encode 0 body) |> handleResponse
 
-                            TextureHttpResponse metadata _ ->
-                                Http.BadStatus_
-                                    metadata
-                                    "Test error: Can't convert texture data to string"
-                   )
-                |> httpRequest.onRequestComplete
-                |> runTask maybeClientId { state | httpRequests = request :: state.httpRequests }
+                TextureHttpResponse _ _ ->
+                    handleHttpResponseWithTestError maybeClientId request httpRequest HttpResponseCantConvertTextureToString state
+
+                UnhandledHttpRequest ->
+                    handleHttpResponseWithTestError maybeClientId request httpRequest HttpRequestNotHandled state
 
         HttpBytesTask httpRequest ->
             -- TODO: Implement actual delays to http requests
@@ -2180,40 +2279,41 @@ runTask maybeClientId state task =
                     , headers = httpRequest.headers
                     , sentAt = currentTime state
                     }
+
+                handleResponse a =
+                    httpRequest.onRequestComplete a
+                        |> runTask maybeClientId { state | httpRequests = request :: state.httpRequests }
             in
-            state.handleHttpRequest { currentRequest = request, pastRequests = state.httpRequests }
-                |> (\a ->
-                        case a of
-                            BadUrlResponse url ->
-                                Http.BadUrl_ url
+            case state.handleHttpRequest { currentRequest = request, data = stateToData state } of
+                BadUrlResponse url ->
+                    Http.BadUrl_ url |> handleResponse
 
-                            TimeoutResponse ->
-                                Http.Timeout_
+                TimeoutResponse ->
+                    handleResponse Http.Timeout_
 
-                            NetworkErrorResponse ->
-                                Http.NetworkError_
+                NetworkErrorResponse ->
+                    handleResponse Http.NetworkError_
 
-                            BadStatusResponse metadata text2 ->
-                                Http.BadStatus_ metadata (Bytes.Encode.string text2 |> Bytes.Encode.encode)
+                BadStatusResponse metadata text2 ->
+                    Http.BadStatus_ metadata (Bytes.Encode.string text2 |> Bytes.Encode.encode) |> handleResponse
 
-                            BytesHttpResponse metadata body ->
-                                Http.GoodStatus_ metadata body
+                BytesHttpResponse metadata body ->
+                    Http.GoodStatus_ metadata body |> handleResponse
 
-                            StringHttpResponse metadata text2 ->
-                                Http.GoodStatus_ metadata (Bytes.Encode.string text2 |> Bytes.Encode.encode)
+                StringHttpResponse metadata text2 ->
+                    Http.GoodStatus_ metadata (Bytes.Encode.string text2 |> Bytes.Encode.encode) |> handleResponse
 
-                            JsonHttpResponse metadata body ->
-                                Http.GoodStatus_
-                                    metadata
-                                    (Json.Encode.encode 0 body |> Bytes.Encode.string |> Bytes.Encode.encode)
+                JsonHttpResponse metadata body ->
+                    Http.GoodStatus_
+                        metadata
+                        (Json.Encode.encode 0 body |> Bytes.Encode.string |> Bytes.Encode.encode)
+                        |> handleResponse
 
-                            TextureHttpResponse metadata _ ->
-                                Http.BadStatus_
-                                    metadata
-                                    (Bytes.Encode.string "Test error: Can't convert texture data to string" |> Bytes.Encode.encode)
-                   )
-                |> httpRequest.onRequestComplete
-                |> runTask maybeClientId { state | httpRequests = request :: state.httpRequests }
+                TextureHttpResponse _ _ ->
+                    handleHttpResponseWithTestError maybeClientId request httpRequest HttpResponseCantConvertTextureToString state
+
+                UnhandledHttpRequest ->
+                    handleHttpResponseWithTestError maybeClientId request httpRequest HttpRequestNotHandled state
 
         SleepTask _ function ->
             -- TODO: Implement actual delays in tasks
@@ -2356,7 +2456,7 @@ runTask maybeClientId state task =
                             , headers = []
                             , sentAt = currentTime state
                             }
-                        , pastRequests = state.httpRequests
+                        , data = stateToData state
                         }
             in
             (case response of
@@ -2368,6 +2468,20 @@ runTask maybeClientId state task =
             )
                 |> function
                 |> runTask maybeClientId state
+
+
+handleHttpResponseWithTestError :
+    Maybe ClientId
+    -> HttpRequest
+    -> Effect.Internal.HttpRequest a restriction x x
+    -> (HttpRequest -> TestError)
+    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> ( State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, x )
+handleHttpResponseWithTestError maybeClientId request httpRequest error state =
+    runTask
+        maybeClientId
+        (addTestError (error request) { state | httpRequests = request :: state.httpRequests })
+        (httpRequest.onRequestComplete Http.NetworkError_)
 
 
 getDomTask :
