@@ -3978,6 +3978,7 @@ timelineViewHelper width testView_ timelines =
                 , Html.Attributes.style "left" (px (timeline.columnStart * timelineColumnWidth + timelineColumnWidth // 2))
                 , Html.Attributes.style "top" (px (timeline.rowIndex * timelineRowHeight + 7))
                 , Html.Attributes.style "height" "2px"
+                , Html.Attributes.style "pointer-events" "none"
                 , Html.Attributes.style
                     "width"
                     (case timelineType of

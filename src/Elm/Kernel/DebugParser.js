@@ -89,12 +89,11 @@ function _DebugParser_toAnsiString(value)
 
 		if (tag === 'Array_elm_builtin')
 		{
-            var listSet = __Array_toList(value);
+            var value2 = __Array_toList(value);
             var output = [];
-            for (var k in listSet)
+            for (; value2.b; value2 = value2.b) // WHILE_CONS
             {
-                if (k === '$') continue;
-                output.push(_DebugParser_toAnsiString(value[k]));
+                output.push(_DebugParser_toAnsiString(value2.a));
             }
             return __DebugParser_Expandable(A2(__DebugParser_ElmSequence, __DebugParser_SeqArray, _List_fromArray(output)));
 		}
