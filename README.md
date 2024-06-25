@@ -10,7 +10,6 @@ In order for this package to work, all `Cmd`s and `Sub`s need to be replaced wit
 
 Additionally, the following modules
 ```
-Browser
 Browser.Dom
 Browser.Events
 Browser.Navigation
@@ -25,7 +24,6 @@ Time
 ```
 need to be replaced with
 ```
-Effect.Browser
 Effect.Browser.Dom
 Effect.Browser.Events
 Effect.Browser.Navigation
