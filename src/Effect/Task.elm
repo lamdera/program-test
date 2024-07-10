@@ -429,3 +429,9 @@ onError f task =
 
         LoadTexture loadTextureOptions string function ->
             LoadTexture loadTextureOptions string (function >> onError f)
+
+        RequestXrStart options function ->
+            RequestXrStart options (function >> onError f)
+
+        RenderXrFrame entities function ->
+            RenderXrFrame entities (function >> onError f)

@@ -27,6 +27,7 @@ import Effect.Browser.Navigation
 import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
 import Effect.Internal exposing (File(..), NavigationKey(..))
 import Effect.Subscription exposing (Subscription)
+import Effect.WebGL
 import File
 import File.Download
 import File.Select
@@ -36,6 +37,7 @@ import Process
 import Task
 import Time
 import Url
+import WebGLFix
 import WebGLFix.Texture
 
 
@@ -513,6 +515,18 @@ toTask simulatedTask =
                 , premultiplyAlpha = options.premultiplyAlpha
                 }
                 string
+                |> Task.map Ok
+                |> Task.onError (Err >> Task.succeed)
+                |> Task.andThen (\result -> toTask (function result))
+
+        Effect.Internal.RequestXrStart options function ->
+            WebGLFix.requestXrStart options
+                |> Task.map Ok
+                |> Task.onError (Err >> Task.succeed)
+                |> Task.andThen (\result -> toTask (function result))
+
+        Effect.Internal.RenderXrFrame entities function ->
+            WebGLFix.renderXrFrame entities
                 |> Task.map Ok
                 |> Task.onError (Err >> Task.succeed)
                 |> Task.andThen (\result -> toTask (function result))

@@ -4,6 +4,7 @@ module WebGLFix exposing
     , toHtml
     , entityWith, toHtmlWith, Option, alpha, depth, stencil, antialias
     , clearColor, preserveDrawingBuffer
+    , renderXrFrame, requestXrStart
     )
 
 {-| The WebGL API is for high performance rendering. Definitely read about
@@ -34,8 +35,11 @@ before trying to do too much with just the documentation provided here.
 
 -}
 
+import Effect.Internal exposing (XrPose, XrRenderError, XrStartError)
+import Effect.Time
 import Elm.Kernel.WebGLFix
 import Html exposing (Attribute, Html)
+import Task exposing (Task)
 import WebGL
 import WebGL.Settings exposing (Setting)
 import WebGL.Settings.DepthTest as DepthTest
@@ -234,3 +238,13 @@ to worry about synchronization between frames.
 preserveDrawingBuffer : Option
 preserveDrawingBuffer =
     I.PreserveDrawingBuffer
+
+
+requestXrStart : List Option -> Task XrStartError Int
+requestXrStart options =
+    Elm.Kernel.WebGLFix.requestXrStart options
+
+
+renderXrFrame : ({ time : Float, xrView : Effect.Internal.XrView } -> List Entity) -> Task XrRenderError XrPose
+renderXrFrame entities =
+    Elm.Kernel.WebGLFix.renderXrFrame entities

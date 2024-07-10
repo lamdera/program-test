@@ -18,6 +18,11 @@ module Effect.Internal exposing
     , Task(..)
     , Visibility(..)
     , Wrap(..)
+    , XrEyeType(..)
+    , XrPose
+    , XrRenderError(..)
+    , XrStartError(..)
+    , XrView
     , andThen
     , taskMap
     , taskMapError
@@ -31,7 +36,10 @@ import File
 import Http
 import Json.Decode
 import Json.Encode
+import Math.Matrix4 exposing (Mat4)
 import Time
+import WebGL
+import WebGLFix.Internal
 import WebGLFix.Texture
 
 
@@ -122,6 +130,34 @@ type Task restriction x a
     | FileToBytes File (Bytes -> Task restriction x a)
     | FileToUrl File (String -> Task restriction x a)
     | LoadTexture LoadTextureOptions String (Result WebGLFix.Texture.Error WebGLFix.Texture.Texture -> Task restriction x a)
+    | RequestXrStart (List WebGLFix.Internal.Option) (Result XrStartError Int -> Task restriction x a)
+    | RenderXrFrame ({ time : Float, xrView : XrView } -> List WebGL.Entity) (Result XrRenderError XrPose -> Task restriction x a)
+
+
+type alias XrPose =
+    { transform : Mat4
+    , views : List XrView
+    , time : Float
+    }
+
+
+type alias XrView =
+    { eye : XrEyeType, viewMatrix : Mat4, viewMatrixInverse : Mat4, projectionMatrix : Mat4 }
+
+
+type XrEyeType
+    = LeftEye
+    | RightEye
+    | OtherEye
+
+
+type XrStartError
+    = AlreadyStarted
+    | NotSupported
+
+
+type XrRenderError
+    = XrSessionNotStarted
 
 
 type Bigger
@@ -288,6 +324,12 @@ andThen f task =
         LoadTexture loadTextureOptions string function ->
             LoadTexture loadTextureOptions string (function >> andThen f)
 
+        RequestXrStart options function ->
+            RequestXrStart options (function >> andThen f)
+
+        RenderXrFrame entities function ->
+            RenderXrFrame entities (function >> andThen f)
+
 
 taskMapError : (x -> y) -> Task restriction x a -> Task restriction y a
 taskMapError f task =
@@ -364,3 +406,9 @@ taskMapError f task =
 
         LoadTexture loadTextureOptions string function ->
             LoadTexture loadTextureOptions string (function >> taskMapError f)
+
+        RequestXrStart options function ->
+            RequestXrStart options (function >> taskMapError f)
+
+        RenderXrFrame entities function ->
+            RenderXrFrame entities (function >> taskMapError f)

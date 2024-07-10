@@ -2,6 +2,9 @@
 
 import Elm.Kernel.VirtualDom exposing (custom, doc)
 import WebGLFix.Internal as WI exposing (enableSetting, enableOption)
+import Elm.Kernel.Scheduler exposing (binding, succeed, fail)
+import Effect.Internal as EI exposing (NotSupported, AlreadyStarted, XrSessionNotStarted, LeftEye, RightEye, OtherEye)
+import Elm.Kernel.List exposing (fromArray)
 
 */
 
@@ -844,4 +847,327 @@ function _WebGLFix_render(model) {
 function _WebGLFix_diff(oldModel, newModel) {
   newModel.__cache = oldModel.__cache;
   return _WebGLFix_drawGL(newModel);
+}
+
+var xrSession = null;
+var xrGl = null;
+var xrReferenceSpace = null;
+var xrModel = null;
+
+function _WebGLFix_requestXrStart(options) {
+    return __Scheduler_binding(function (callback) {
+        if (xrSession) {
+            callback(__Scheduler_fail(__EI_AlreadyStarted));
+        }
+        else {
+            console.log(navigator.xr);
+            if (navigator.xr) {
+                navigator.xr.requestSession('immersive-vr').then((session) => {
+                    xrSession = session;
+                    // Listen for the sessions 'end' event so we can respond if the user
+                    // or UA ends the session for any reason.
+                    //session.addEventListener('end', onSessionEnded);
+
+                    // Create a WebGL context to render with, initialized to be compatible
+                    // with the XRDisplay we're presenting to.
+                    var xrCanvas = document.createElement('canvas');
+                    xrGl = xrCanvas.getContext('webgl', { xrCompatible: true });
+                    console.log("3");
+                    // Use the new WebGL context to create a XRWebGLLayer and set it as the
+                    // sessions baseLayer. This allows any content rendered to the layer to
+                    // be displayed on the XRDevice.
+                    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, xrGl) });
+                    console.log("5");
+                    // Get a reference space, which is required for querying poses. In this
+                    // case an 'local' reference space means that all poses will be relative
+                    // to the location where the XRDevice was first detected.
+                    session.requestReferenceSpace('local').then((refSpace) => {
+                      xrReferenceSpace = refSpace;
+                      var baseMatrix = refSpace._baseMatrix;
+                      console.log(refSpace);
+
+                      xrModel = { __entities: [], __cache: {}, __options: options };
+
+                      xrRender(xrModel);
+
+                      callback(__Scheduler_succeed(1));
+                      // Inform the session that we're ready to begin drawing.
+                      //session.requestAnimationFrame(onXRFrame);
+
+                    });
+
+
+                });
+            }
+            else {
+                callback(__Scheduler_fail(__EI_NotSupported));
+            }
+        }
+    });
+}
+
+function _WebGLFix_renderXrFrame(entities) {
+    return __Scheduler_binding(function (callback) {
+        if (xrSession) {
+
+
+            xrSession.requestAnimationFrame((time, frame) => {
+                let pose = frame.getViewerPose(xrReferenceSpace);
+
+                let err = xrGl.getError();
+                if (err) {
+                    console.error(`WebGL error returned: ${err}`);
+                }
+
+                let poseData = { __$transform : new Float64Array(pose.transform.matrix)
+                    , __$views : __List_fromArray(pose.views.map((view) => jsViewToElm(view)))
+                    , __$time : time
+                    };
+
+                if (pose) {
+                    let glLayer = frame.session.renderState.baseLayer;
+
+                    xrGl.bindFramebuffer(xrGl.FRAMEBUFFER, glLayer.framebuffer);
+                    xrGl.clear(xrGl.COLOR_BUFFER_BIT | xrGl.DEPTH_BUFFER_BIT | xrGl.STENCIL_BUFFER_BIT);
+
+
+                    for (let view of pose.views) {
+                        let viewport = glLayer.getViewport(view);
+
+                        xrModel.__entities = entities({ __$time : time, __$xrView : jsViewToElm(view) });
+                        xrGl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+                        xrDrawGL(xrModel);
+                    }
+                }
+
+                callback(__Scheduler_succeed(poseData));
+            });
+        }
+        else {
+            callback(__Scheduler_fail(__EI_XrSessionNotStarted));
+        }
+    });
+}
+
+function jsViewToElm(view) {
+    return { __$eye :
+        view.eye === "left"
+            ? __EI_LeftEye
+            : view.eye === "right"
+                ? __EI_RightEye
+                : __EI_OtherEye
+        , __$projectionMatrix : new Float64Array(view.projectionMatrix)
+        , __$viewMatrix : new Float64Array(view.transform.matrix)
+        , __$viewMatrixInverse : new Float64Array(view.transform.inverse.matrix)
+        };
+}
+
+/**
+ *  Creates canvas and schedules initial _WebGLFix_drawGL
+ *  @param {Object} model
+ *  @param {Object} model.__cache that may contain the following properties:
+           gl, shaders, programs, buffers, textures
+ *  @param {List<Option>} model.__options list of options coming from Elm
+ *  @param {List<Entity>} model.__entities list of entities coming from Elm
+ */
+function xrRender(model) {
+  var options = {
+    contextAttributes: {
+      alpha: false,
+      depth: false,
+      stencil: false,
+      antialias: false,
+      premultipliedAlpha: false,
+      preserveDrawingBuffer: false
+    },
+    sceneSettings: []
+  };
+
+  _WebGLFix_listEach(function (option) {
+    return A2(__WI_enableOption, options, option);
+  }, model.__options);
+
+  var gl = xrGl;
+
+  // Activate extensions
+  gl.getExtension('OES_standard_derivatives');
+  gl.getExtension('OES_element_index_uint');
+  gl.getExtension("EXT_frag_depth");
+
+  if (gl && typeof WeakMap !== 'undefined') {
+    options.sceneSettings.forEach(function (sceneSetting) {
+      sceneSetting(gl);
+    });
+
+    model.__cache.gl = gl;
+
+    // Cache the current settings in order to diff them to avoid redundant calls
+    // https://emscripten.org/docs/optimizing/Optimizing-WebGL.html#avoid-redundant-calls
+    model.__cache.toggle = false; // used to diff the settings from the previous and current draw calls
+    model.__cache.blend = { enabled: false, toggle: false };
+    model.__cache.depthTest = { enabled: false, toggle: false };
+    model.__cache.stencilTest = { enabled: false, toggle: false };
+    model.__cache.scissor = { enabled: false, toggle: false };
+    model.__cache.colorMask = { enabled: false, toggle: false };
+    model.__cache.cullFace = { enabled: false, toggle: false };
+    model.__cache.polygonOffset = { enabled: false, toggle: false };
+    model.__cache.sampleCoverage = { enabled: false, toggle: false };
+    model.__cache.sampleAlphaToCoverage = { enabled: false, toggle: false };
+
+    model.__cache.shaders = [];
+    model.__cache.programs = {};
+    model.__cache.lastProgId = null;
+    model.__cache.buffers = new WeakMap();
+    model.__cache.textures = new WeakMap();
+    // Memorize the initial stencil write mask, because
+    // browsers may have different number of stencil bits
+    model.__cache.STENCIL_WRITEMASK = gl.getParameter(gl.STENCIL_WRITEMASK);
+  }
+}
+
+var xrDrawGL = function (model) {
+  var cache = model.__cache;
+  var gl = cache.gl;
+
+  if (!cache.depthTest.b) {
+    gl.depthMask(true);
+    cache.depthTest.b = true;
+  }
+  if (cache.stencilTest.c !== cache.STENCIL_WRITEMASK) {
+    gl.stencilMask(cache.STENCIL_WRITEMASK);
+    cache.stencilTest.c = cache.STENCIL_WRITEMASK;
+  }
+  _WebGLFix_disableScissor(cache);
+  _WebGLFix_disableColorMask(cache);
+
+
+  function drawEntity(entity) {
+    if (!entity.__mesh.b.b) {
+      return; // Empty list
+    }
+
+    var progid;
+    var program;
+    var i;
+
+    if (entity.__vert.id && entity.__frag.id) {
+      progid = _WebGLFix_getProgID(entity.__vert.id, entity.__frag.id);
+      program = cache.programs[progid];
+    }
+
+    if (!program) {
+
+      var vshader;
+      if (entity.__vert.id) {
+        vshader = cache.shaders[entity.__vert.id];
+      } else {
+        entity.__vert.id = _WebGLFix_guid++;
+      }
+
+      if (!vshader) {
+        vshader = _WebGLFix_doCompile(gl, entity.__vert.src, gl.VERTEX_SHADER);
+        cache.shaders[entity.__vert.id] = vshader;
+      }
+
+      var fshader;
+      if (entity.__frag.id) {
+        fshader = cache.shaders[entity.__frag.id];
+      } else {
+        entity.__frag.id = _WebGLFix_guid++;
+      }
+
+      if (!fshader) {
+        fshader = _WebGLFix_doCompile(gl, entity.__frag.src, gl.FRAGMENT_SHADER);
+        cache.shaders[entity.__frag.id] = fshader;
+      }
+
+      var glProgram = _WebGLFix_doLink(gl, vshader, fshader);
+
+      program = {
+        glProgram: glProgram,
+        attributes: Object.assign({}, entity.__vert.attributes, entity.__frag.attributes),
+        currentUniforms: {},
+        activeAttributes: [],
+        activeAttributeLocations: []
+      };
+
+      program.uniformSetters = _WebGLFix_createUniformSetters(
+        gl,
+        model,
+        program,
+        Object.assign({}, entity.__vert.uniforms, entity.__frag.uniforms)
+      );
+
+      var numActiveAttributes = gl.getProgramParameter(glProgram, gl.ACTIVE_ATTRIBUTES);
+      for (i = 0; i < numActiveAttributes; i++) {
+        var attribute = gl.getActiveAttrib(glProgram, i);
+        var attribLocation = gl.getAttribLocation(glProgram, attribute.name);
+        program.activeAttributes.push(attribute);
+        program.activeAttributeLocations.push(attribLocation);
+      }
+
+      progid = _WebGLFix_getProgID(entity.__vert.id, entity.__frag.id);
+      cache.programs[progid] = program;
+    }
+
+    if (cache.lastProgId !== progid) {
+      gl.useProgram(program.glProgram);
+      cache.lastProgId = progid;
+    }
+
+    _WebGLFix_setUniforms(program.uniformSetters, entity.__uniforms);
+
+    var buffer = cache.buffers.get(entity.__mesh);
+
+    if (!buffer) {
+      buffer = _WebGLFix_doBindSetup(gl, entity.__mesh);
+      cache.buffers.set(entity.__mesh, buffer);
+    }
+
+    for (i = 0; i < program.activeAttributes.length; i++) {
+      attribute = program.activeAttributes[i];
+      attribLocation = program.activeAttributeLocations[i];
+
+      if (buffer.buffers[attribute.name] === undefined) {
+        buffer.buffers[attribute.name] = _WebGLFix_doBindAttribute(gl, attribute, entity.__mesh, program.attributes);
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer.buffers[attribute.name]);
+
+      var attributeInfo = _WebGLFix_getAttributeInfo(gl, attribute.type);
+      if (attributeInfo.arraySize === 1) {
+        gl.enableVertexAttribArray(attribLocation);
+        gl.vertexAttribPointer(attribLocation, attributeInfo.size, attributeInfo.baseType, false, 0, 0);
+      } else {
+        // Point to four vec4 in case of mat4
+        var offset = attributeInfo.size * 4; // float32 takes 4 bytes
+        var stride = offset * attributeInfo.arraySize;
+        for (var m = 0; m < attributeInfo.arraySize; m++) {
+          gl.enableVertexAttribArray(attribLocation + m);
+          gl.vertexAttribPointer(attribLocation + m, attributeInfo.size, attributeInfo.baseType, false, stride, offset * m);
+        }
+      }
+    }
+
+    // Apply all the new settings
+    cache.toggle = !cache.toggle;
+    _WebGLFix_listEach(__WI_enableSetting(cache), entity.__settings);
+    // Disable the settings that were applied in the previous draw call
+    for (i = 0; i < _WebGLFix_settings.length; i++) {
+      var setting = cache[_WebGLFix_settings[i]];
+      if (setting.toggle !== cache.toggle && setting.enabled) {
+        _WebGLFix_disableFunctions[i](cache);
+        setting.enabled = false;
+        setting.toggle = cache.toggle;
+      }
+    }
+
+    if (buffer.indexBuffer) {
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffer.indexBuffer);
+      gl.drawElements(entity.__mesh.a.__$mode, buffer.numIndices, gl.UNSIGNED_INT, 0);
+    } else {
+      gl.drawArrays(entity.__mesh.a.__$mode, 0, buffer.numIndices);
+    }
+  }
+
+  _WebGLFix_listEach(drawEntity, model.__entities);
 }

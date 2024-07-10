@@ -7,6 +7,7 @@ module Effect.WebGL exposing
     , clearColor, preserveDrawingBuffer
     , indexedTriangles, lines, lineStrip, lineLoop, points, triangleFan
     , triangleStrip
+    , XrPose, XrRenderError(..), XrStartError(..), XrView, renderXrFrame, requestXrStart
     )
 
 {-| The WebGL API is for high performance rendering. Definitely read about
@@ -48,7 +49,12 @@ before trying to do too much with just the documentation provided here.
 
 -}
 
+import Effect.Command exposing (FrontendOnly)
+import Effect.Internal
+import Effect.Task
+import Effect.Time
 import Html exposing (Attribute, Html)
+import Math.Matrix4 exposing (Mat4)
 import WebGL
 import WebGL.Settings exposing (Setting)
 import WebGLFix
@@ -352,3 +358,103 @@ to worry about synchronization between frames.
 preserveDrawingBuffer : Option
 preserveDrawingBuffer =
     WebGLFix.preserveDrawingBuffer
+
+
+type XrStartError
+    = AlreadyStarted
+    | NotSupported
+
+
+requestXrStart : List WebGLFix.Option -> Effect.Task.Task FrontendOnly XrStartError Int
+requestXrStart options =
+    Effect.Internal.RequestXrStart
+        options
+        (\result ->
+            case result of
+                Ok ok ->
+                    Effect.Internal.Succeed ok
+
+                Err Effect.Internal.AlreadyStarted ->
+                    Effect.Internal.Fail AlreadyStarted
+
+                Err Effect.Internal.NotSupported ->
+                    Effect.Internal.Fail NotSupported
+        )
+
+
+type XrRenderError
+    = XrSessionNotStarted
+
+
+type alias XrPose =
+    { transform : Mat4
+    , views : List XrView
+    , time : Effect.Time.Posix
+    }
+
+
+type alias XrView =
+    { eye : XrEyeType, viewMatrix : Mat4, viewMatrixInverse : Mat4, projectionMatrix : Mat4 }
+
+
+type XrEyeType
+    = LeftEye
+    | RightEye
+    | OtherEye
+
+
+renderXrFrame :
+    ({ time : Effect.Time.Posix, xrView : XrView } -> List Entity)
+    -> Effect.Task.Task FrontendOnly XrRenderError XrPose
+renderXrFrame entities =
+    Effect.Internal.RenderXrFrame
+        (\{ time, xrView } ->
+            entities
+                { time = round time |> Effect.Time.millisToPosix
+                , xrView =
+                    { eye =
+                        case xrView.eye of
+                            Effect.Internal.LeftEye ->
+                                LeftEye
+
+                            Effect.Internal.RightEye ->
+                                RightEye
+
+                            Effect.Internal.OtherEye ->
+                                OtherEye
+                    , projectionMatrix = xrView.projectionMatrix
+                    , viewMatrix = xrView.viewMatrix
+                    , viewMatrixInverse = xrView.viewMatrixInverse
+                    }
+                }
+        )
+        (\result ->
+            case result of
+                Ok ok ->
+                    Effect.Internal.Succeed
+                        { transform = ok.transform
+                        , views =
+                            List.map
+                                (\view ->
+                                    { eye =
+                                        case view.eye of
+                                            Effect.Internal.LeftEye ->
+                                                LeftEye
+
+                                            Effect.Internal.RightEye ->
+                                                RightEye
+
+                                            Effect.Internal.OtherEye ->
+                                                OtherEye
+                                    , projectionMatrix = view.projectionMatrix
+                                    , viewMatrix = view.viewMatrix
+                                    , viewMatrixInverse = view.viewMatrixInverse
+                                    }
+                                )
+                                ok.views
+                        , time = round ok.time |> Effect.Time.millisToPosix
+                        }
+
+                Err Effect.Internal.XrSessionNotStarted ->
+                    Effect.Internal.Fail XrSessionNotStarted
+        )

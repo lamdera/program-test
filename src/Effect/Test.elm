@@ -71,6 +71,7 @@ import Http
 import Json.Decode
 import Json.Encode
 import List.Nonempty exposing (Nonempty)
+import Math.Matrix4 as Mat4
 import Process
 import Quantity
 import Set exposing (Set)
@@ -2467,6 +2468,22 @@ runTask maybeClientId state task =
                     Err WebGLFix.Texture.LoadError
             )
                 |> function
+                |> runTask maybeClientId state
+
+        RequestXrStart _ function ->
+            function (Err Effect.Internal.NotSupported) |> runTask maybeClientId state
+
+        RenderXrFrame _ function ->
+            function
+                (Ok
+                    { transform = Mat4.identity
+                    , views = []
+                    , time =
+                        currentTime state
+                            |> Time.posixToMillis
+                            |> toFloat
+                    }
+                )
                 |> runTask maybeClientId state
 
 
