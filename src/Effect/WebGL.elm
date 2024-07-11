@@ -7,7 +7,7 @@ module Effect.WebGL exposing
     , clearColor, preserveDrawingBuffer
     , indexedTriangles, lines, lineStrip, lineLoop, points, triangleFan
     , triangleStrip
-    , XrPose, XrRenderError(..), XrStartError(..), XrView, renderXrFrame, requestXrStart
+    , renderXrFrame, requestXrStart, XrPose, XrRenderError(..), XrStartError(..), XrView
     )
 
 {-| The WebGL API is for high performance rendering. Definitely read about
@@ -46,6 +46,11 @@ before trying to do too much with just the documentation provided here.
 
 @docs indexedTriangles, lines, lineStrip, lineLoop, points, triangleFan
 @docs triangleStrip
+
+
+# Virtual Reality (aka webxr)
+
+@docs renderXrFrame, requestXrStart, XrPose, XrRenderError, XrStartError, XrView
 
 -}
 
@@ -360,11 +365,13 @@ preserveDrawingBuffer =
     WebGLFix.preserveDrawingBuffer
 
 
+{-| -}
 type XrStartError
     = AlreadyStarted
     | NotSupported
 
 
+{-| -}
 requestXrStart : List WebGLFix.Option -> Effect.Task.Task FrontendOnly XrStartError Int
 requestXrStart options =
     Effect.Internal.RequestXrStart
@@ -382,10 +389,12 @@ requestXrStart options =
         )
 
 
+{-| -}
 type XrRenderError
     = XrSessionNotStarted
 
 
+{-| -}
 type alias XrPose =
     { transform : Mat4
     , views : List XrView
@@ -393,16 +402,19 @@ type alias XrPose =
     }
 
 
+{-| -}
 type alias XrView =
     { eye : XrEyeType, viewMatrix : Mat4, viewMatrixInverse : Mat4, projectionMatrix : Mat4 }
 
 
+{-| -}
 type XrEyeType
     = LeftEye
     | RightEye
     | OtherEye
 
 
+{-| -}
 renderXrFrame :
     ({ time : Effect.Time.Posix, xrView : XrView } -> List Entity)
     -> Effect.Task.Task FrontendOnly XrRenderError XrPose
