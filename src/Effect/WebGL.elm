@@ -7,7 +7,7 @@ module Effect.WebGL exposing
     , clearColor, preserveDrawingBuffer
     , indexedTriangles, lines, lineStrip, lineLoop, points, triangleFan
     , triangleStrip
-    , renderXrFrame, requestXrStart, XrPose, XrRenderError(..), XrStartError(..), XrView
+    , renderXrFrame, requestXrStart, XrPose, XrRenderError(..), XrStartError(..), XrView, XrEyeType(..)
     )
 
 {-| The WebGL API is for high performance rendering. Definitely read about
@@ -50,7 +50,7 @@ before trying to do too much with just the documentation provided here.
 
 # Virtual Reality (aka webxr)
 
-@docs renderXrFrame, requestXrStart, XrPose, XrRenderError, XrStartError, XrView
+@docs renderXrFrame, requestXrStart, XrPose, XrRenderError, XrStartError, XrView, XrEyeType
 
 -}
 
