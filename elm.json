@@ -3,7 +3,7 @@
     "name": "lamdera/program-test",
     "summary": "Create end-to-end tests for your Lamdera app",
     "license": "MIT",
-    "version": "2.0.0",
+    "version": "3.0.0",
     "exposed-modules": [
         "Effect.Command",
         "Effect.Http",
