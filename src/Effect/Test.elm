@@ -1,6 +1,6 @@
 module Effect.Test exposing
     ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile, Data, FileContents(..)
-    , FrontendActions, sendToBackend, backendUpdate, fastForward, andThen, Instructions, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
+    , FrontendActions, sendToBackend, backendUpdate, fastForward, group, andThen, Instructions, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions
     , startHeadless, HeadlessMsg
@@ -16,7 +16,7 @@ module Effect.Test exposing
 
 ## Control the tests
 
-@docs FrontendActions, sendToBackend, backendUpdate, fastForward, andThen, Instructions, HttpBody, HttpPart, DelayInMs, KeyEvent, KeyOptions, PointerEvent, PointerOptions
+@docs FrontendActions, sendToBackend, backendUpdate, fastForward, group, andThen, Instructions, HttpBody, HttpPart, DelayInMs, KeyEvent, KeyOptions, PointerEvent, PointerOptions
 
 
 ## Check the current state
@@ -115,7 +115,7 @@ import WebGLFix.Texture
                 { width = 1920, height = 1080 }
                 (\( state, frontendActions ) ->
                     state
-                        |> frontendActions.clickButton { htmlId = "myButton" }
+                        |> frontendActions.click { htmlId = "myButton" }
                 )
             |> Effect.Test.toTest
 
@@ -395,8 +395,8 @@ checkState :
     -> (Data frontendModel backendModel -> Result String ())
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-checkState millisecondsWaitBefore checkFunc instructions =
-    wait (Duration.milliseconds millisecondsWaitBefore) instructions
+checkState delay checkFunc instructions =
+    wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
                 case checkFunc (stateToData state) of
@@ -418,8 +418,8 @@ checkBackend :
     -> (backendModel -> Result String ())
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-checkBackend millisecondsWaitBefore checkFunc instructions =
-    wait (Duration.milliseconds millisecondsWaitBefore) instructions
+checkBackend delay checkFunc instructions =
+    wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
                 case checkFunc state.model of
@@ -436,13 +436,13 @@ checkBackend millisecondsWaitBefore checkFunc instructions =
 
 {-| -}
 checkFrontend :
-    DelayInMs
-    -> ClientId
+    ClientId
+    -> DelayInMs
     -> (frontendModel -> Result String ())
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-checkFrontend millisecondsWaitBefore clientId checkFunc instructions =
-    wait (Duration.milliseconds millisecondsWaitBefore) instructions
+checkFrontend clientId delay checkFunc instructions =
+    wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
                 case SeqDict.get clientId state.frontends of
@@ -475,8 +475,8 @@ checkView :
     -> (Test.Html.Query.Single frontendMsg -> Expectation)
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-checkView clientId millisecondsWaitBefore query instructions =
-    wait (Duration.milliseconds millisecondsWaitBefore) instructions
+checkView clientId delay query instructions =
+    wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
                 case SeqDict.get clientId state.frontends of
@@ -516,13 +516,13 @@ frontendUpdate :
     -> frontendMsg
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-frontendUpdate clientId millisecondsWaitBefore msg instructions =
+frontendUpdate clientId delay msg instructions =
     let
         event : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         event =
             TestEvent (Just clientId) ("Trigger frontend update: " ++ Debug.toString msg)
     in
-    wait (Duration.milliseconds millisecondsWaitBefore) instructions
+    wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
                 if SeqDict.member clientId state.frontends then
@@ -765,7 +765,7 @@ type alias DelayInMs =
                 (\( state, frontendActions ) ->
                     -- frontendActions is a record we can use on this specific frontend we just connected
                     state
-                        |> frontendActions.clickButton { htmlId = "myButton" }
+                        |> frontendActions.click { htmlId = "myButton" }
                 )
             |> Effect.Test.toTest
 
@@ -924,6 +924,15 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         -> List PointerOptions
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , wheel :
+        DelayInMs
+        -> HtmlId
+        -> Float
+        -> ( Float, Float )
+        -> List WheelOptions
+        -> List PointerOptions
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , focus :
         DelayInMs
         -> HtmlId
@@ -934,12 +943,12 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         -> HtmlId
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    , clickButton :
+    , click :
         DelayInMs
         -> HtmlId
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    , inputText :
+    , input :
         DelayInMs
         -> HtmlId
         -> String
@@ -970,6 +979,18 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         -> { name : String }
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , checkModel :
+        DelayInMs
+        -> (frontendModel -> Result String ())
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , custom :
+        DelayInMs
+        -> HtmlId
+        -> String
+        -> Json.Encode.Value
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     }
 
 
@@ -979,6 +1000,21 @@ type KeyOptions
     | Key_CtrlHeld
     | Key_MetaHeld
     | Key_AltHeld
+
+
+{-| <https://developer.mozilla.org/en-US/docs/Web/API/Element/wheel_event>
+-}
+type WheelOptions
+    = DeltaX Float
+    | DeltaZ Float
+    | DeltaMode DeltaMode
+
+
+{-| <https://developer.mozilla.org/en-US/docs/Web/API/WheelEvent/deltaMode>. The default is DeltaPixels so it's not included here
+-}
+type DeltaMode
+    = DeltaLines
+    | DeltaPages
 
 
 {-| -}
@@ -1027,7 +1063,7 @@ type PointerOptions
                 { width = 1920, height = 1080 }
                 (\( state, frontendActions ) ->
                     state
-                        |> frontendActions.clickButton { htmlId = "myButton" }
+                        |> frontendActions.click { htmlId = "myButton" }
                 )
             |> Effect.Test.toTest
 
@@ -1045,8 +1081,9 @@ start :
     String
     -> Time.Posix
     -> Config toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-start testName startTime2 config =
+start testName startTime2 config instructions =
     let
         ( backend, cmd ) =
             config.backendApp.init
@@ -1078,7 +1115,16 @@ start testName startTime2 config =
             }
                 |> addEvent (BackendInitEvent cmd) Nothing
     in
-    Start state
+    foldList instructions (Start state)
+
+
+{-| -}
+group :
+    List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+group list instructions =
+    AndThen (\state -> foldList list (Start state)) instructions
 
 
 {-| -}
@@ -1202,7 +1248,7 @@ getClientConnectSubs backendSub =
                 { width = 1920, height = 1080 }
                 (\( state, frontendActions ) ->
                     state
-                        |> frontendActions.clickButton { htmlId = "myButton" }
+                        |> frontendActions.click { htmlId = "myButton" }
                 )
             |> Effect.Test.toTest
 
@@ -1222,15 +1268,17 @@ connectFrontend :
     -> Url
     -> { width : Int, height : Int }
     ->
-        (( Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-         , FrontendActions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-         )
-         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        (FrontendActions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+         ->
+            List
+                (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                 -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                )
         )
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-connectFrontend millisecondsWaitBefore sessionId url windowSize andThenFunc instructions =
-    wait (Duration.milliseconds millisecondsWaitBefore) instructions
+connectFrontend delay sessionId url windowSize andThenFunc instructions =
+    wait (Duration.milliseconds delay) instructions
         |> AndThen
             (\state ->
                 let
@@ -1263,48 +1311,58 @@ connectFrontend millisecondsWaitBefore sessionId url windowSize andThenFunc inst
                     subscriptions : Subscription FrontendOnly frontendMsg
                     subscriptions =
                         state.frontendApp.subscriptions frontend
-                in
-                andThenFunc
-                    ( getClientConnectSubs (state2.backendApp.subscriptions state2.model)
-                        |> List.foldl
-                            (\msg state3 ->
-                                handleBackendUpdate (currentTime state3) state3.backendApp (msg sessionId clientId) state3
+
+                    list :
+                        List
+                            (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                             -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
                             )
-                            state2
-                        |> Start
-                    , { clientId = clientId
-                      , keyDown = keyDown clientId
-                      , keyUp = keyUp clientId
-                      , pointerDown = userPointerEvent "pointerdown" UserPointerDownEvent clientId
-                      , pointerUp = userPointerEvent "pointerup" UserPointerUpEvent clientId
-                      , pointerEnter = userPointerEvent "pointerenter" UserPointerEnterEvent clientId
-                      , pointerOut = userPointerEvent "pointerout" UserPointerOutEvent clientId
-                      , pointerCancel = userPointerEvent "pointercancel" UserPointerCancelEvent clientId
-                      , pointerMove = userPointerEvent "pointermove" UserPointerMoveEvent clientId
-                      , pointerLeave = userPointerEvent "pointerleave" UserPointerLeaveEvent clientId
-                      , pointerOver = userPointerEvent "pointerover" UserPointerOverEvent clientId
-                      , touchCancel = userTouchEvent "touchcancel" UserTouchCancelEvent clientId
-                      , touchStart = userTouchEvent "touchstart" UserTouchStartEvent clientId
-                      , touchEnd = userTouchEvent "touchend" UserTouchEndEvent clientId
-                      , touchMove = userTouchEvent "touchmove" UserTouchMoveEvent clientId
-                      , mouseEnter = userMouseEvent "mouseenter" UserMouseEnterEvent clientId
-                      , mouseLeave = userMouseEvent "mouseleave" UserMouseLeaveEvent clientId
-                      , mouseUp = userMouseEvent "mouseup" UserMouseUpEvent clientId
-                      , mouseDown = userMouseEvent "mousedown" UserMouseDownEvent clientId
-                      , mouseMove = userMouseEvent "mousemove" UserMouseMoveEvent clientId
-                      , mouseOut = userMouseEvent "mouseout" UserMouseOutEvent clientId
-                      , mouseOver = userMouseEvent "mouseover" UserMouseOverEvent clientId
-                      , focus = focusEvent clientId
-                      , blur = blurEvent clientId
-                      , clickButton = clickButton clientId
-                      , inputText = inputText clientId
-                      , clickLink = clickLink clientId
-                      , resizeWindow = resizeWindow clientId
-                      , checkView = checkView clientId
-                      , update = frontendUpdate clientId
-                      , snapshotView = snapshotView clientId
-                      }
-                    )
+                    list =
+                        andThenFunc
+                            { clientId = clientId
+                            , keyDown = keyDown clientId
+                            , keyUp = keyUp clientId
+                            , pointerDown = userPointerEvent "pointerdown" UserPointerDownEvent clientId
+                            , pointerUp = userPointerEvent "pointerup" UserPointerUpEvent clientId
+                            , pointerEnter = userPointerEvent "pointerenter" UserPointerEnterEvent clientId
+                            , pointerOut = userPointerEvent "pointerout" UserPointerOutEvent clientId
+                            , pointerCancel = userPointerEvent "pointercancel" UserPointerCancelEvent clientId
+                            , pointerMove = userPointerEvent "pointermove" UserPointerMoveEvent clientId
+                            , pointerLeave = userPointerEvent "pointerleave" UserPointerLeaveEvent clientId
+                            , pointerOver = userPointerEvent "pointerover" UserPointerOverEvent clientId
+                            , touchCancel = userTouchEvent "touchcancel" UserTouchCancelEvent clientId
+                            , touchStart = userTouchEvent "touchstart" UserTouchStartEvent clientId
+                            , touchEnd = userTouchEvent "touchend" UserTouchEndEvent clientId
+                            , touchMove = userTouchEvent "touchmove" UserTouchMoveEvent clientId
+                            , mouseEnter = userMouseEvent "mouseenter" UserMouseEnterEvent clientId
+                            , mouseLeave = userMouseEvent "mouseleave" UserMouseLeaveEvent clientId
+                            , mouseUp = userMouseEvent "mouseup" UserMouseUpEvent clientId
+                            , mouseDown = userMouseEvent "mousedown" UserMouseDownEvent clientId
+                            , mouseMove = userMouseEvent "mousemove" UserMouseMoveEvent clientId
+                            , mouseOut = userMouseEvent "mouseout" UserMouseOutEvent clientId
+                            , mouseOver = userMouseEvent "mouseover" UserMouseOverEvent clientId
+                            , wheel = userWheelEvent clientId
+                            , focus = focusEvent clientId
+                            , blur = blurEvent clientId
+                            , click = click clientId
+                            , input = input clientId
+                            , clickLink = clickLink clientId
+                            , resizeWindow = resizeWindow clientId
+                            , checkView = checkView clientId
+                            , update = frontendUpdate clientId
+                            , snapshotView = snapshotView clientId
+                            , checkModel = checkFrontend clientId
+                            , custom = custom clientId
+                            }
+                in
+                getClientConnectSubs (state2.backendApp.subscriptions state2.model)
+                    |> List.foldl
+                        (\msg state3 ->
+                            handleBackendUpdate (currentTime state3) state3.backendApp (msg sessionId clientId) state3
+                        )
+                        state2
+                    |> Start
+                    |> foldList list
             )
 
 
@@ -1370,6 +1428,8 @@ type UserInputType
     | UserMouseDownEvent HtmlId PointerEvent
     | UserFocusEvent HtmlId
     | UserBlurEvent HtmlId
+    | UserWheelEvent HtmlId
+    | UserCustomEvent HtmlId Json.Encode.Value
 
 
 {-| -}
@@ -1616,8 +1676,8 @@ snapshotView :
     -> { name : String }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-snapshotView clientId millisecondsWaitBefore data instructions =
-    wait (Duration.milliseconds millisecondsWaitBefore) instructions
+snapshotView clientId delay data instructions =
+    wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
                 case SeqDict.get clientId state.frontends of
@@ -1683,7 +1743,7 @@ keyDown :
     -> List KeyOptions
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-keyDown clientId millisecondsWaitBefore htmlId key options instructions =
+keyDown clientId delay htmlId key options instructions =
     let
         event2 =
             List.foldl
@@ -1705,7 +1765,7 @@ keyDown clientId millisecondsWaitBefore htmlId key options instructions =
                 options
     in
     userEvent
-        millisecondsWaitBefore
+        delay
         (UserPressesKey htmlId key options)
         clientId
         htmlId
@@ -1730,7 +1790,7 @@ keyUp :
     -> List KeyOptions
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-keyUp clientId millisecondsWaitBefore htmlId key options instructions =
+keyUp clientId delay htmlId key options instructions =
     let
         event2 =
             List.foldl
@@ -1752,7 +1812,7 @@ keyUp clientId millisecondsWaitBefore htmlId key options instructions =
                 options
     in
     userEvent
-        millisecondsWaitBefore
+        delay
         (UserPressesKey htmlId key options)
         clientId
         htmlId
@@ -1787,7 +1847,7 @@ userTouchEvent :
     -> TouchEvent
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userTouchEvent eventName userEvent2 clientId millisecondsWaitBefore htmlId event instructions =
+userTouchEvent eventName userEvent2 clientId delay htmlId event instructions =
     let
         touchJson : Touch -> Json.Encode.Value
         touchJson event2 =
@@ -1802,7 +1862,7 @@ userTouchEvent eventName userEvent2 clientId millisecondsWaitBefore htmlId event
                 ]
     in
     userEvent
-        millisecondsWaitBefore
+        delay
         (userEvent2 htmlId event)
         clientId
         htmlId
@@ -1838,81 +1898,13 @@ userPointerEvent :
     -> List PointerOptions
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userPointerEvent eventName userEvent2 clientId millisecondsWaitBefore htmlId event options instructions =
+userPointerEvent eventName userEvent2 clientId delay htmlId event options instructions =
     let
         event2 =
-            List.foldl
-                (\option state ->
-                    case option of
-                        PointerType a ->
-                            { state | pointerType = a }
-
-                        PointerId int ->
-                            { state | pointerId = int }
-
-                        ScreenXY x y ->
-                            { state | screenX = x, screenY = y }
-
-                        PageXY x y ->
-                            { state | pageX = x, pageY = y }
-
-                        ClientXY x y ->
-                            { state | clientX = x, clientY = y }
-
-                        ShiftHeld ->
-                            { state | shiftKey = True }
-
-                        CtrlHeld ->
-                            { state | ctrlKey = True }
-
-                        MetaHeld ->
-                            { state | metaKey = True }
-
-                        AltHeld ->
-                            { state | altKey = True }
-
-                        IsNotPrimary ->
-                            { state | isPrimary = False }
-
-                        PointerWidth float ->
-                            { state | width = float }
-
-                        PointerHeight float ->
-                            { state | height = float }
-
-                        PointerPressure float ->
-                            { state | pressure = float }
-
-                        PointerTilt x y ->
-                            { state | tiltX = x, tiltY = y }
-
-                        PointerButton button2 ->
-                            { state | button = button2 }
-                )
-                { ctrlKey = False
-                , shiftKey = False
-                , metaKey = False
-                , altKey = False
-                , clientX = Tuple.first event
-                , clientY = Tuple.second event
-                , pageX = Tuple.first event
-                , pageY = Tuple.second event
-                , screenX = Tuple.first event
-                , screenY = Tuple.second event
-                , pointerId = 0
-                , pointerType = ""
-                , width = 1
-                , height = 1
-                , tiltX = 0
-                , tiltY = 0
-                , pressure = 1
-                , isPrimary = True
-                , button = MainButton
-                }
-                options
+            projectPointerEventOptions event options
     in
     userEvent
-        millisecondsWaitBefore
+        delay
         (userEvent2 htmlId event)
         clientId
         htmlId
@@ -1964,6 +1956,202 @@ userPointerEvent eventName userEvent2 clientId millisecondsWaitBefore htmlId eve
         instructions
 
 
+projectPointerEventOptions :
+    ( Float, Float )
+    -> List PointerOptions
+    ->
+        { ctrlKey : Bool
+        , shiftKey : Bool
+        , metaKey : Bool
+        , altKey : Bool
+        , clientX : Float
+        , clientY : Float
+        , pageX : Float
+        , pageY : Float
+        , screenX : Float
+        , screenY : Float
+        , pointerId : Int
+        , pointerType : String
+        , width : Float
+        , height : Float
+        , tiltX : Float
+        , tiltY : Float
+        , pressure : Float
+        , isPrimary : Bool
+        , button : Button
+        }
+projectPointerEventOptions offsetPos options =
+    List.foldl
+        (\option state ->
+            case option of
+                PointerType a ->
+                    { state | pointerType = a }
+
+                PointerId int ->
+                    { state | pointerId = int }
+
+                ScreenXY x y ->
+                    { state | screenX = x, screenY = y }
+
+                PageXY x y ->
+                    { state | pageX = x, pageY = y }
+
+                ClientXY x y ->
+                    { state | clientX = x, clientY = y }
+
+                ShiftHeld ->
+                    { state | shiftKey = True }
+
+                CtrlHeld ->
+                    { state | ctrlKey = True }
+
+                MetaHeld ->
+                    { state | metaKey = True }
+
+                AltHeld ->
+                    { state | altKey = True }
+
+                IsNotPrimary ->
+                    { state | isPrimary = False }
+
+                PointerWidth float ->
+                    { state | width = float }
+
+                PointerHeight float ->
+                    { state | height = float }
+
+                PointerPressure float ->
+                    { state | pressure = float }
+
+                PointerTilt x y ->
+                    { state | tiltX = x, tiltY = y }
+
+                PointerButton button2 ->
+                    { state | button = button2 }
+        )
+        { ctrlKey = False
+        , shiftKey = False
+        , metaKey = False
+        , altKey = False
+        , clientX = Tuple.first offsetPos
+        , clientY = Tuple.second offsetPos
+        , pageX = Tuple.first offsetPos
+        , pageY = Tuple.second offsetPos
+        , screenX = Tuple.first offsetPos
+        , screenY = Tuple.second offsetPos
+        , pointerId = 0
+        , pointerType = ""
+        , width = 1
+        , height = 1
+        , tiltX = 0
+        , tiltY = 0
+        , pressure = 1
+        , isPrimary = True
+        , button = MainButton
+        }
+        options
+
+
+userWheelEvent :
+    ClientId
+    -> DelayInMs
+    -> HtmlId
+    -> Float
+    -> ( Float, Float )
+    -> List WheelOptions
+    -> List PointerOptions
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+userWheelEvent clientId delay htmlId deltaY offsetPos wheelOptions options instructions =
+    let
+        event2 =
+            projectPointerEventOptions offsetPos options
+
+        event3 =
+            List.foldl
+                (\option state ->
+                    case option of
+                        DeltaX a ->
+                            { state | deltaX = a }
+
+                        DeltaZ a ->
+                            { state | deltaZ = a }
+
+                        DeltaMode deltaMode ->
+                            { state
+                                | deltaMode =
+                                    case deltaMode of
+                                        DeltaLines ->
+                                            1
+
+                                        DeltaPages ->
+                                            2
+                            }
+                )
+                { deltaX = 0, deltaZ = 0, deltaMode = 0 }
+                wheelOptions
+    in
+    userEvent
+        delay
+        (UserWheelEvent htmlId)
+        clientId
+        htmlId
+        ( "wheel"
+        , Json.Encode.object
+            [ ( "deltaX", Json.Encode.float event3.deltaX )
+            , ( "deltaY", Json.Encode.float deltaY )
+            , ( "deltaZ", Json.Encode.float event3.deltaZ )
+            , ( "deltaMode", Json.Encode.float event3.deltaMode )
+            , ( "ctrlKey", Json.Encode.bool event2.ctrlKey )
+            , ( "shiftKey", Json.Encode.bool event2.shiftKey )
+            , ( "metaKey", Json.Encode.bool event2.metaKey )
+            , ( "altKey", Json.Encode.bool event2.altKey )
+            , ( "clientX", Json.Encode.float event2.clientX )
+            , ( "clientY", Json.Encode.float event2.clientY )
+            , ( "x", Json.Encode.float event2.clientX )
+            , ( "y", Json.Encode.float event2.clientY )
+            , ( "offsetX", Json.Encode.float (Tuple.first offsetPos) )
+            , ( "offsetY", Json.Encode.float (Tuple.second offsetPos) )
+            , ( "pageX", Json.Encode.float event2.pageX )
+            , ( "pageY", Json.Encode.float event2.pageY )
+            , ( "screenX", Json.Encode.float event2.screenX )
+            , ( "screenY", Json.Encode.float event2.screenY )
+            , ( "button"
+              , Json.Encode.int
+                    (case event2.button of
+                        MainButton ->
+                            0
+
+                        MiddleButton ->
+                            1
+
+                        SecondButton ->
+                            2
+
+                        BackButton ->
+                            3
+
+                        ForwardButton ->
+                            4
+                    )
+              )
+            ]
+        )
+        instructions
+
+
+custom :
+    ClientId
+    -> DelayInMs
+    -> HtmlId
+    -> String
+    -> Json.Encode.Value
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+custom clientId delay htmlId eventName value instructions =
+    userEvent delay (UserCustomEvent htmlId value) clientId htmlId ( eventName, value ) instructions
+
+
 {-| -}
 userMouseEvent :
     String
@@ -1975,81 +2163,13 @@ userMouseEvent :
     -> List PointerOptions
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userMouseEvent eventName userEvent2 clientId millisecondsWaitBefore htmlId event options instructions =
+userMouseEvent eventName userEvent2 clientId delay htmlId event options instructions =
     let
         event2 =
-            List.foldl
-                (\option state ->
-                    case option of
-                        PointerType a ->
-                            { state | pointerType = a }
-
-                        PointerId int ->
-                            { state | pointerId = int }
-
-                        ScreenXY x y ->
-                            { state | screenX = x, screenY = y }
-
-                        PageXY x y ->
-                            { state | pageX = x, pageY = y }
-
-                        ClientXY x y ->
-                            { state | clientX = x, clientY = y }
-
-                        ShiftHeld ->
-                            { state | shiftKey = True }
-
-                        CtrlHeld ->
-                            { state | ctrlKey = True }
-
-                        MetaHeld ->
-                            { state | metaKey = True }
-
-                        AltHeld ->
-                            { state | altKey = True }
-
-                        IsNotPrimary ->
-                            { state | isPrimary = False }
-
-                        PointerWidth float ->
-                            { state | width = float }
-
-                        PointerHeight float ->
-                            { state | height = float }
-
-                        PointerPressure float ->
-                            { state | pressure = float }
-
-                        PointerTilt x y ->
-                            { state | tiltX = x, tiltY = y }
-
-                        PointerButton button2 ->
-                            { state | button = button2 }
-                )
-                { ctrlKey = False
-                , shiftKey = False
-                , metaKey = False
-                , altKey = False
-                , clientX = Tuple.first event
-                , clientY = Tuple.second event
-                , pageX = Tuple.first event
-                , pageY = Tuple.second event
-                , screenX = Tuple.first event
-                , screenY = Tuple.second event
-                , pointerId = 0
-                , pointerType = ""
-                , width = 1
-                , height = 1
-                , tiltX = 0
-                , tiltY = 0
-                , pressure = 1
-                , isPrimary = True
-                , button = MainButton
-                }
-                options
+            projectPointerEventOptions event options
     in
     userEvent
-        millisecondsWaitBefore
+        delay
         (userEvent2 htmlId event)
         clientId
         htmlId
@@ -2100,8 +2220,8 @@ focusEvent :
     -> HtmlId
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-focusEvent clientId millisecondsWaitBefore htmlId =
-    userEvent millisecondsWaitBefore (UserFocusEvent htmlId) clientId htmlId Test.Html.Event.focus
+focusEvent clientId delay htmlId =
+    userEvent delay (UserFocusEvent htmlId) clientId htmlId Test.Html.Event.focus
 
 
 {-| -}
@@ -2111,31 +2231,31 @@ blurEvent :
     -> HtmlId
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-blurEvent clientId millisecondsWaitBefore htmlId =
-    userEvent millisecondsWaitBefore (UserBlurEvent htmlId) clientId htmlId Test.Html.Event.blur
+blurEvent clientId delay htmlId =
+    userEvent delay (UserBlurEvent htmlId) clientId htmlId Test.Html.Event.blur
 
 
 {-| -}
-clickButton :
+click :
     ClientId
     -> DelayInMs
     -> HtmlId
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickButton clientId millisecondsWaitBefore htmlId =
-    userEvent millisecondsWaitBefore (UserClicksButton htmlId) clientId htmlId Test.Html.Event.click
+click clientId delay htmlId =
+    userEvent delay (UserClicksButton htmlId) clientId htmlId Test.Html.Event.click
 
 
 {-| -}
-inputText :
+input :
     ClientId
     -> DelayInMs
     -> HtmlId
     -> String
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-inputText clientId millisecondsWaitBefore htmlId text_ =
-    userEvent millisecondsWaitBefore (UserInputsText htmlId text_) clientId htmlId (Test.Html.Event.input text_)
+input clientId delay htmlId text_ =
+    userEvent delay (UserInputsText htmlId text_) clientId htmlId (Test.Html.Event.input text_)
 
 
 {-| -}
@@ -2163,12 +2283,12 @@ clickLink :
     -> { href : String }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickLink clientId millisecondsWaitBefore data instructions =
+clickLink clientId delay data instructions =
     let
         event isSuccessful =
             UserInputEvent { clientId = clientId, inputType = UserClicksLink data, isSuccessful = isSuccessful }
     in
-    wait (Duration.milliseconds millisecondsWaitBefore) instructions
+    wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
                 case SeqDict.get clientId state.frontends of
@@ -2219,12 +2339,12 @@ resizeWindow :
     -> { width : Int, height : Int }
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-resizeWindow clientId millisecondsWaitBefore windowSize instructions =
+resizeWindow clientId delay windowSize instructions =
     let
         event isSuccessful =
             UserInputEvent { clientId = clientId, inputType = UserResizesWindow windowSize, isSuccessful = isSuccessful }
     in
-    wait (Duration.milliseconds millisecondsWaitBefore) instructions
+    wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
                 case SeqDict.get clientId state.frontends of
@@ -2265,7 +2385,7 @@ userEvent :
     -> ( String, Json.Encode.Value )
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userEvent millisecondsWaitBefore userInputType clientId htmlId event instructions =
+userEvent delay userInputType clientId htmlId event instructions =
     let
         htmlIdString : String
         htmlIdString =
@@ -2275,7 +2395,7 @@ userEvent millisecondsWaitBefore userInputType clientId htmlId event instruction
         eventType isSuccessful =
             UserInputEvent { clientId = clientId, inputType = userInputType, isSuccessful = isSuccessful }
     in
-    wait (Duration.milliseconds millisecondsWaitBefore) instructions
+    wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
                 case SeqDict.get clientId state.frontends of
@@ -2331,7 +2451,7 @@ disconnectFrontend backendApp clientId state =
             ( state, Nothing )
 
 
-{-| Normally you won't send data directly to the backend and instead use `connectFrontend` followed by things like `clickButton` or `inputText` to cause the frontend to send data to the backend.
+{-| Normally you won't send data directly to the backend and instead use `connectFrontend` followed by things like `click` or `input` to cause the frontend to send data to the backend.
 If you do need to send data directly, then you can use this though.
 -}
 sendToBackend :
@@ -2341,8 +2461,8 @@ sendToBackend :
     -> toBackend
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-sendToBackend millisecondsWaitBefore sessionId clientId toBackend instructions =
-    wait (Duration.milliseconds millisecondsWaitBefore) instructions
+sendToBackend delay sessionId clientId toBackend instructions =
+    wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
                 { state
@@ -2591,11 +2711,17 @@ In order to do that you can write something like this:
 -}
 andThen :
     DelayInMs
-    -> (Data frontendModel backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> (Data frontendModel backendModel -> List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 andThen delay andThenFunc instructions =
-    wait (Duration.milliseconds delay) instructions |> AndThen (\state -> andThenFunc (stateToData state) (Start state))
+    wait (Duration.milliseconds delay) instructions
+        |> AndThen (\state -> foldList (andThenFunc (stateToData state)) (Start state))
+
+
+foldList : List (a -> a) -> a -> a
+foldList list a =
+    List.foldl (\item state -> state |> item) a list
 
 
 {-| -}
@@ -4630,6 +4756,15 @@ currentStepText currentStep testView_ =
                         UserBlurEvent htmlId ->
                             "Blur (lost focus) on " ++ Effect.Browser.Dom.idToString htmlId
 
+                        UserWheelEvent htmlId ->
+                            "Scrolled mouse wheel on " ++ Effect.Browser.Dom.idToString htmlId
+
+                        UserCustomEvent htmlId value ->
+                            "Custom event on "
+                                ++ Effect.Browser.Dom.idToString htmlId
+                                ++ " with "
+                                ++ Json.Encode.encode 0 value
+
                 SnapshotEvent data ->
                     "Snapshot view with name " ++ data.name
     in
@@ -5258,6 +5393,12 @@ eventIcon color eventType columnIndex rowIndex =
                     [ circleHelper "big-circle" ]
 
                 UserBlurEvent _ ->
+                    [ circleHelper "big-circle" ]
+
+                UserWheelEvent _ ->
+                    [ circleHelper "big-circle" ]
+
+                UserCustomEvent _ _ ->
                     [ circleHelper "big-circle" ]
             )
                 ++ (if data.isSuccessful then
