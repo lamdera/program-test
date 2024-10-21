@@ -69,6 +69,7 @@ import Html.Lazy
 import Http
 import Json.Decode
 import Json.Encode
+import Lamdera.Debug
 import List.Nonempty exposing (Nonempty)
 import Math.Matrix4 as Mat4
 import Process
@@ -707,7 +708,7 @@ type alias FrontendState toBackend frontendMsg frontendModel toFrontend =
     , pendingEffects : Array (FrontendPendingEffect toBackend frontendMsg)
     , toFrontend : List (ToFrontendData toFrontend)
     , timers : SeqDict Duration { startTime : Time.Posix }
-    , url : Url
+    , url : String
     , windowSize : { width : Int, height : Int }
     }
 
@@ -956,7 +957,7 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , clickLink :
         DelayInMs
-        -> { href : String }
+        -> String
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , resizeWindow :
@@ -1244,7 +1245,7 @@ getClientConnectSubs backendSub =
         testApp "myButton is clickable"
             |> Effect.Test.connectFrontend
                 sessionId0
-                myDomain
+                "/"
                 { width = 1920, height = 1080 }
                 (\( state, frontendActions ) ->
                     state
@@ -1265,7 +1266,7 @@ getClientConnectSubs backendSub =
 connectFrontend :
     DelayInMs
     -> SessionId
-    -> Url
+    -> String
     -> { width : Int, height : Int }
     ->
         (FrontendActions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -1306,7 +1307,9 @@ connectFrontend delay sessionId url windowSize andThenFunc instructions =
                         "clientId " ++ String.fromInt state.counter |> Effect.Lamdera.clientIdFromString
 
                     ( frontend, cmd ) =
-                        state.frontendApp.init url (Effect.Browser.Navigation.fromInternalKey MockNavigationKey)
+                        state.frontendApp.init
+                            (normalizeUrl state.domain url |> Maybe.withDefault state.domain)
+                            (Effect.Browser.Navigation.fromInternalKey MockNavigationKey)
 
                     subscriptions : Subscription FrontendOnly frontendMsg
                     subscriptions =
@@ -1366,6 +1369,18 @@ connectFrontend delay sessionId url windowSize andThenFunc instructions =
             )
 
 
+
+--{-| -}
+--group :
+--    List
+--        (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+--         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+--        )
+--    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+--group list =
+--    AndThen (\state -> foldList list (Start state))
+
+
 {-| -}
 type alias Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
     { eventType : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -1381,7 +1396,7 @@ type alias Event toBackend frontendMsg frontendModel toFrontend backendMsg backe
 type alias EventFrontend frontendModel =
     { model : frontendModel
     , sessionId : SessionId
-    , url : Url
+    , url : String
     , windowSize : { width : Int, height : Int }
     }
 
@@ -1405,7 +1420,7 @@ type UserInputType
     = UserClicksButton HtmlId
     | UserInputsText HtmlId String
     | UserPressesKey HtmlId KeyEvent (List KeyOptions)
-    | UserClicksLink { href : String }
+    | UserClicksLink String
     | UserResizesWindow { width : Int, height : Int }
     | UserPointerDownEvent HtmlId PointerEvent
     | UserPointerUpEvent HtmlId PointerEvent
@@ -2259,28 +2274,26 @@ input clientId delay htmlId text_ =
 
 
 {-| -}
-normalizeUrl : Url -> String -> String
+normalizeUrl : Url -> String -> Maybe Url
 normalizeUrl domainUrl path =
-    if String.startsWith "/" path then
-        let
-            domain =
-                Url.toString domainUrl
-        in
-        if String.endsWith "/" domain then
-            String.dropRight 1 domain ++ path
+    let
+        domain =
+            Url.toString domainUrl
+    in
+    (if String.endsWith "/" domain then
+        String.dropRight 1 domain ++ path
 
-        else
-            domain ++ path
-
-    else
-        path
+     else
+        domain ++ path
+    )
+        |> Url.fromString
 
 
 {-| -}
 clickLink :
     ClientId
     -> DelayInMs
-    -> { href : String }
+    -> String
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 clickLink clientId delay data instructions =
@@ -2298,19 +2311,19 @@ clickLink clientId delay data instructions =
                                 |> .body
                                 |> Html.div []
                                 |> Test.Html.Query.fromHtml
-                                |> Test.Html.Query.findAll [ Test.Html.Selector.attribute (Html.Attributes.href data.href) ]
+                                |> Test.Html.Query.findAll [ Test.Html.Selector.attribute (Html.Attributes.href data) ]
                                 |> Test.Html.Query.count
                                     (\count ->
                                         if count > 0 then
                                             Expect.pass
 
                                         else
-                                            Expect.fail ("Expected at least one link pointing to " ++ data.href)
+                                            Expect.fail ("Expected at least one link pointing to " ++ data)
                                     )
                                 |> Test.Runner.getFailureReason
                         of
                             Nothing ->
-                                case Url.fromString (normalizeUrl state.domain data.href) of
+                                case normalizeUrl state.domain data of
                                     Just url ->
                                         handleFrontendUpdate
                                             clientId
@@ -2319,12 +2332,12 @@ clickLink clientId delay data instructions =
                                             (addEvent (event True) Nothing state)
 
                                     Nothing ->
-                                        addEvent (event False) (Just (InvalidUrl data.href)) state
+                                        addEvent (event False) (Just (InvalidUrl data)) state
 
                             Just _ ->
                                 addEvent
                                     (event False)
-                                    (Just (CustomError ("Clicking link failed for " ++ data.href)))
+                                    (Just (CustomError ("Clicking link failed for " ++ data)))
                                     state
 
                     Nothing ->
@@ -2416,7 +2429,7 @@ userEvent delay userInputType clientId htmlId event instructions =
                             Err error ->
                                 addEvent
                                     (eventType False)
-                                    (Just (CustomError ("User input event for " ++ htmlIdString ++ "failed: " ++ error)))
+                                    (Just (CustomError ("User input event for " ++ htmlIdString ++ " failed: " ++ error)))
                                     state
 
                     Nothing ->
@@ -2999,20 +3012,19 @@ handleUrlChange :
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 handleUrlChange urlText clientId state =
-    case normalizeUrl state.domain urlText |> Url.fromString of
-        Just url ->
-            let
-                state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                state2 =
-                    handleFrontendUpdate clientId (currentTime state) (state.frontendApp.onUrlChange url) state
-            in
-            { state2
-                | frontends =
-                    SeqDict.update clientId (Maybe.map (\newFrontend -> { newFrontend | url = url })) state2.frontends
-            }
+    let
+        url : Url
+        url =
+            normalizeUrl state.domain urlText |> Maybe.withDefault state.domain
 
-        Nothing ->
-            state
+        state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        state2 =
+            handleFrontendUpdate clientId (currentTime state) (state.frontendApp.onUrlChange url) state
+    in
+    { state2
+        | frontends =
+            SeqDict.update clientId (Maybe.map (\newFrontend -> { newFrontend | url = Url.toString url })) state2.frontends
+    }
 
 
 {-| -}
@@ -3590,6 +3602,40 @@ init _ _ navigationKey =
     )
 
 
+viewTest :
+    Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Int
+    -> Int
+    -> Int
+    -> Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    ->
+        ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+        )
+viewTest test index stepIndex timelineIndex model =
+    let
+        state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        state =
+            instructionsToState test
+    in
+    ( { model
+        | currentTest =
+            { index = index
+            , testName = state.testName
+            , steps = state.history
+            , timelines = getTimelines2 state.history
+            , timelineIndex = timelineIndex
+            , stepIndex = stepIndex
+            , overlayPosition = Bottom
+            , showModel = False
+            , collapsedFields = RegularDict.empty
+            }
+                |> Just
+      }
+    , Browser.Dom.setViewportOf timelineContainerId 0 0 |> Task.attempt (\_ -> NoOp)
+    )
+
+
 {-| -}
 update :
     ViewerWith (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
@@ -3621,26 +3667,10 @@ update config msg model =
                     case getAt index tests of
                         Just test ->
                             let
-                                state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                                state =
-                                    instructionsToState test
+                                _ =
+                                    writeLocalStorage (getTestName test) 0 0
                             in
-                            ( { model
-                                | currentTest =
-                                    { index = index
-                                    , testName = state.testName
-                                    , steps = state.history
-                                    , timelines = getTimelines2 state.history
-                                    , timelineIndex = 0
-                                    , stepIndex = 0
-                                    , overlayPosition = Bottom
-                                    , showModel = False
-                                    , collapsedFields = RegularDict.empty
-                                    }
-                                        |> Just
-                              }
-                            , Browser.Dom.setViewportOf timelineContainerId 0 0 |> Task.attempt (\_ -> NoOp)
-                            )
+                            viewTest test index 0 0 model
 
                         Nothing ->
                             ( model, Cmd.none )
@@ -3652,7 +3682,21 @@ update config msg model =
             ( model, Cmd.none )
 
         PressedBackToOverview ->
-            ( { model | currentTest = Nothing }, Cmd.none )
+            let
+                model2 : Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                model2 =
+                    { model | currentTest = Nothing }
+            in
+            case model2.tests of
+                Just (Ok tests) ->
+                    runTests tests model2
+                        |> Tuple.mapSecond
+                            (\cmd ->
+                                Cmd.batch [ Lamdera.Debug.debugD currentTestLocalStorage, cmd ]
+                            )
+
+                _ ->
+                    ( model2, Lamdera.Debug.debugD currentTestLocalStorage )
 
         ShortPauseFinished ->
             ( model, Task.attempt GotFilesForTests config.cmds )
@@ -3660,25 +3704,31 @@ update config msg model =
         GotFilesForTests result ->
             case result of
                 Ok tests ->
-                    case getAt (List.length model.testResults) tests of
-                        Just test ->
-                            ( { model
-                                | testResults =
-                                    model.testResults
-                                        ++ [ case instructionsToState test |> .testErrors of
-                                                firstError :: _ ->
-                                                    Err firstError
+                    let
+                        maybeModelAndCmd =
+                            case Lamdera.Debug.debugR currentTestLocalStorage { name = "", index = 0, stepIndex = 0, timelineIndex = 0 } of
+                                Just { name, index, stepIndex, timelineIndex } ->
+                                    List.indexedMap
+                                        (\testIndex test ->
+                                            if name == getTestName test then
+                                                viewTest test testIndex stepIndex timelineIndex model |> Just
 
-                                                [] ->
-                                                    Ok ()
-                                           ]
-                                , tests = Just (Ok tests)
-                              }
-                            , Process.sleep 0 |> Task.perform (\() -> ShortPauseFinished)
-                            )
+                                            else
+                                                Nothing
+                                        )
+                                        tests
+                                        |> List.filterMap identity
+                                        |> List.head
+
+                                Nothing ->
+                                    Nothing
+                    in
+                    case maybeModelAndCmd of
+                        Just ( model2, cmd ) ->
+                            ( { model2 | tests = Just (Ok tests) }, cmd )
 
                         Nothing ->
-                            ( model, Cmd.none )
+                            runTests tests model
 
                 Err error ->
                     ( { model | tests = Just (Err error) }, Cmd.none )
@@ -3757,15 +3807,24 @@ update config msg model =
                                     ( currentTest, Cmd.none )
 
                         ArrowUp ->
-                            ( { currentTest | timelineIndex = currentTest.timelineIndex - 1 |> max 0 }, Cmd.none )
+                            let
+                                timelineIndex =
+                                    currentTest.timelineIndex - 1 |> max 0
+
+                                _ =
+                                    writeLocalStorage currentTest.testName currentTest.stepIndex timelineIndex
+                            in
+                            ( { currentTest | timelineIndex = timelineIndex }, Cmd.none )
 
                         ArrowDown ->
-                            ( { currentTest
-                                | timelineIndex =
+                            let
+                                timelineIndex =
                                     currentTest.timelineIndex + 1 |> min (Array.length currentTest.timelines - 1)
-                              }
-                            , Cmd.none
-                            )
+
+                                _ =
+                                    writeLocalStorage currentTest.testName currentTest.stepIndex timelineIndex
+                            in
+                            ( { currentTest | timelineIndex = timelineIndex }, Cmd.none )
                 )
                 model
 
@@ -3796,6 +3855,35 @@ update config msg model =
                 model
     )
         |> checkCachedElmValue
+
+
+runTests :
+    List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    ->
+        ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+        )
+runTests tests model =
+    case getAt (List.length model.testResults) tests of
+        Just test ->
+            ( { model
+                | testResults =
+                    model.testResults
+                        ++ [ case instructionsToState test |> .testErrors of
+                                firstError :: _ ->
+                                    Err firstError
+
+                                [] ->
+                                    Ok ()
+                           ]
+                , tests = Just (Ok tests)
+              }
+            , Process.sleep 0 |> Task.perform (\() -> GotFilesForTests (Ok tests))
+            )
+
+        Nothing ->
+            ( model, Cmd.none )
 
 
 {-| -}
@@ -3829,6 +3917,23 @@ arrayFindIndex item array =
            )
 
 
+currentTestLocalStorage =
+    "current-test"
+
+
+{-| This reaaalllllly should have been a cmd instead of an unmanaged side effect
+-}
+writeLocalStorage :
+    String
+    -> Int
+    -> Int
+    -> { name : String, stepIndex : Int, timelineIndex : Int }
+writeLocalStorage testName stepIndex timelineIndex =
+    Lamdera.Debug.debugS
+        currentTestLocalStorage
+        { name = testName, stepIndex = stepIndex, timelineIndex = timelineIndex }
+
+
 {-| -}
 stepTo :
     Int
@@ -3844,12 +3949,14 @@ stepTo stepIndex currentTest =
                 newTimeline : CurrentTimeline
                 newTimeline =
                     eventTypeToTimelineType step.eventType
-            in
-            ( { currentTest
-                | stepIndex = stepIndex
-                , timelineIndex =
+
+                timelineIndex =
                     arrayFindIndex newTimeline currentTest.timelines |> Maybe.withDefault currentTest.timelineIndex
-              }
+
+                _ =
+                    writeLocalStorage currentTest.testName stepIndex timelineIndex
+            in
+            ( { currentTest | stepIndex = stepIndex, timelineIndex = timelineIndex }
             , Browser.Dom.getElement timelineContainerId
                 |> Task.andThen
                     (\container ->
@@ -4683,7 +4790,7 @@ currentStepText currentStep testView_ =
                                 ++ Effect.Browser.Dom.idToString htmlId
                                 ++ "\" input"
 
-                        UserClicksLink { href } ->
+                        UserClicksLink href ->
                             "Press link leading to " ++ href
 
                         UserResizesWindow { width, height } ->
@@ -5318,7 +5425,7 @@ eventIcon color eventType columnIndex rowIndex =
         UserInputEvent data ->
             (case data.inputType of
                 UserClicksButton _ ->
-                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserInputsText _ _ ->
                     [ cursorTextSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
@@ -5333,28 +5440,28 @@ eventIcon color eventType columnIndex rowIndex =
                     [ circleHelper "big-circle" ]
 
                 UserPointerDownEvent _ _ ->
-                    [ circleHelper "big-circle" ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserPointerUpEvent _ _ ->
-                    [ circleHelper "big-circle" ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserPointerEnterEvent _ _ ->
-                    [ circleHelper "big-circle" ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserPointerLeaveEvent _ _ ->
-                    [ circleHelper "big-circle" ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserPointerOutEvent _ _ ->
-                    [ circleHelper "big-circle" ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserPointerMoveEvent _ _ ->
-                    [ circleHelper "big-circle" ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserPointerOverEvent _ _ ->
-                    [ circleHelper "big-circle" ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserPointerCancelEvent _ _ ->
-                    [ circleHelper "big-circle" ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserTouchCancelEvent _ _ ->
                     [ circleHelper "big-circle" ]
@@ -5369,25 +5476,25 @@ eventIcon color eventType columnIndex rowIndex =
                     [ circleHelper "big-circle" ]
 
                 UserMouseEnterEvent _ _ ->
-                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserMouseLeaveEvent _ _ ->
-                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserMouseOutEvent _ _ ->
-                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserMouseMoveEvent _ _ ->
-                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserMouseOverEvent _ _ ->
-                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserMouseUpEvent _ _ ->
-                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserMouseDownEvent _ _ ->
-                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                    [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
                 UserFocusEvent _ ->
                     [ circleHelper "big-circle" ]
@@ -5498,10 +5605,10 @@ cursorTextSvg color left top =
 
 
 {-| -}
-cursorSvg : String -> Int -> Int -> Svg msg
-cursorSvg color left top =
+cursorSvg : String -> Int -> Int -> Int -> Svg msg
+cursorSvg color left top width =
     Svg.svg
-        [ Svg.Attributes.width (String.fromInt timelineColumnWidth)
+        [ Svg.Attributes.width (String.fromInt width)
         , Html.Attributes.style "left" (px left)
         , Html.Attributes.style "top" (px top)
         , Html.Attributes.style "position" "absolute"
@@ -5724,9 +5831,124 @@ testView windowWidth instructions testView_ =
                             BackendTimeline ->
                                 [ centeredText "There is no view to display for the backend" ]
                        )
+                    ++ (case currentStep.eventType of
+                            UserInputEvent { inputType } ->
+                                case inputType of
+                                    UserPointerDownEvent _ pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserClicksButton htmlId ->
+                                        []
+
+                                    UserInputsText htmlId string ->
+                                        []
+
+                                    UserPressesKey htmlId keyEvent keyOptions ->
+                                        []
+
+                                    UserClicksLink string ->
+                                        []
+
+                                    UserResizesWindow record ->
+                                        []
+
+                                    UserPointerUpEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserPointerEnterEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserPointerLeaveEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserPointerOutEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserPointerMoveEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserPointerOverEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserPointerCancelEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserTouchCancelEvent htmlId touchEvent ->
+                                        []
+
+                                    UserTouchStartEvent htmlId touchEvent ->
+                                        []
+
+                                    UserTouchEndEvent htmlId touchEvent ->
+                                        []
+
+                                    UserTouchMoveEvent htmlId touchEvent ->
+                                        []
+
+                                    UserMouseEnterEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserMouseLeaveEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserMouseOutEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserMouseMoveEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserMouseOverEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserMouseUpEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserMouseDownEvent htmlId pointerEvent ->
+                                        [ drawCursor pointerEvent ]
+
+                                    UserFocusEvent htmlId ->
+                                        []
+
+                                    UserBlurEvent htmlId ->
+                                        []
+
+                                    UserWheelEvent htmlId ->
+                                        []
+
+                                    UserCustomEvent htmlId value ->
+                                        []
+
+                            _ ->
+                                []
+                       )
 
         Nothing ->
             []
+
+
+drawCursor : PointerEvent -> Html msg
+drawCursor ( x, y ) =
+    Svg.svg
+        [ Svg.Attributes.width (String.fromInt 20)
+        , Html.Attributes.style "left" (String.fromFloat x ++ "px")
+        , Html.Attributes.style "top" (String.fromFloat y ++ "px")
+        , Html.Attributes.style "position" "absolute"
+        , Svg.Attributes.viewBox "10 10 240 260"
+        , Html.Attributes.style "pointer-events" "none"
+        ]
+        [ Svg.path
+            [ Svg.Attributes.fill "black"
+            , Svg.Attributes.stroke "black"
+            , Svg.Attributes.strokeWidth "30"
+            , Svg.Attributes.d "M224.15,179.17l-46.83-46.82,37.93-13.51.76-.3a20,20,0,0,0-1.76-37.27L54.16,29A20,20,0,0,0,29,54.16L81.27,214.24A20,20,0,0,0,118.54,216c.11-.25.21-.5.3-.76l13.51-37.92,46.83,46.82a20,20,0,0,0,28.28,0l16.69-16.68A20,20,0,0,0,224.15,179.17Zm-30.83,25.17-48.48-48.48A20,20,0,0,0,130.7,150a20.66,20.66,0,0,0-3.74.35A20,20,0,0,0,112.35,162c-.11.25-.21.5-.3.76L100.4,195.5,54.29,54.29l141.21,46.1-32.71,11.66c-.26.09-.51.19-.76.3a20,20,0,0,0-6.17,32.48h0l48.49,48.48Z"
+            ]
+            []
+        , Svg.path
+            [ Svg.Attributes.fill "white"
+            , Svg.Attributes.d "M224.15,179.17l-46.83-46.82,37.93-13.51.76-.3a20,20,0,0,0-1.76-37.27L54.16,29A20,20,0,0,0,29,54.16L81.27,214.24A20,20,0,0,0,118.54,216c.11-.25.21-.5.3-.76l13.51-37.92,46.83,46.82a20,20,0,0,0,28.28,0l16.69-16.68A20,20,0,0,0,224.15,179.17Zm-30.83,25.17-48.48-48.48A20,20,0,0,0,130.7,150a20.66,20.66,0,0,0-3.74.35A20,20,0,0,0,112.35,162c-.11.25-.21.5-.3.76L100.4,195.5,54.29,54.29l141.21,46.1-32.71,11.66c-.26.09-.51.19-.76.3a20,20,0,0,0-6.17,32.48h0l48.49,48.48Z"
+            ]
+            []
+        ]
 
 
 {-| -}
