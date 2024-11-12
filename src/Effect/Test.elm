@@ -3450,9 +3450,14 @@ runTask maybeClientId state task =
                         currentTime state
                             |> Time.posixToMillis
                             |> toFloat
+                    , boundary = Nothing
+                    , inputs = []
                     }
                 )
                 |> runTask maybeClientId state
+
+        EndXrSession function ->
+            function () |> runTask maybeClientId state
 
 
 handleHttpResponseWithTestError :

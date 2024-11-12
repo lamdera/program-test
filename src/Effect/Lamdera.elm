@@ -531,6 +531,9 @@ toTask simulatedTask =
                 |> Task.onError (Err >> Task.succeed)
                 |> Task.andThen (\result -> toTask (function result))
 
+        Effect.Internal.EndXrSession function ->
+            WebGLFix.endXrSession |> Task.andThen (\result -> toTask (function result))
+
 
 toSub : Subscription restriction msg -> Sub msg
 toSub sub =

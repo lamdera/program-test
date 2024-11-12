@@ -18,9 +18,13 @@ module Effect.Internal exposing
     , Task(..)
     , Visibility(..)
     , Wrap(..)
+    , XrButton
     , XrEyeType(..)
+    , XrHandedness(..)
+    , XrInput
     , XrPose
     , XrRenderError(..)
+    , XrStartData
     , XrStartError(..)
     , XrView
     , andThen
@@ -37,6 +41,8 @@ import Http
 import Json.Decode
 import Json.Encode
 import Math.Matrix4 exposing (Mat4)
+import Math.Vector2 exposing (Vec2)
+import Math.Vector3 exposing (Vec3)
 import Time
 import WebGL
 import WebGLFix.Internal
@@ -130,19 +136,36 @@ type Task restriction x a
     | FileToBytes File (Bytes -> Task restriction x a)
     | FileToUrl File (String -> Task restriction x a)
     | LoadTexture LoadTextureOptions String (Result WebGLFix.Texture.Error WebGLFix.Texture.Texture -> Task restriction x a)
-    | RequestXrStart (List WebGLFix.Internal.Option) (Result XrStartError Int -> Task restriction x a)
-    | RenderXrFrame ({ time : Float, xrView : XrView } -> List WebGL.Entity) (Result XrRenderError XrPose -> Task restriction x a)
+    | RequestXrStart (List WebGLFix.Internal.Option) (Result XrStartError XrStartData -> Task restriction x a)
+    | RenderXrFrame ({ time : Float, xrView : XrView, inputs : List XrInput } -> List WebGL.Entity) (Result XrRenderError XrPose -> Task restriction x a)
+    | EndXrSession (() -> Task restriction x a)
 
 
 type alias XrPose =
     { transform : Mat4
     , views : List XrView
     , time : Float
+    , boundary : Maybe (List Vec2)
+    , inputs : List XrInput
     }
 
 
+type alias XrInput =
+    { handedness : XrHandedness, matrix : Maybe Mat4, buttons : List XrButton, mapping : String }
+
+
+type alias XrButton =
+    { isPressed : Bool, isTouched : Bool, value : Float }
+
+
+type XrHandedness
+    = LeftHand
+    | RightHand
+    | Unknown
+
+
 type alias XrView =
-    { eye : XrEyeType, viewMatrix : Mat4, viewMatrixInverse : Mat4, projectionMatrix : Mat4 }
+    { eye : XrEyeType, projectionMatrix : Mat4, viewMatrix : Mat4 }
 
 
 type XrEyeType
@@ -156,8 +179,13 @@ type XrStartError
     | NotSupported
 
 
+type alias XrStartData =
+    { boundary : Maybe (List Vec2), supportedFrameRates : List Int }
+
+
 type XrRenderError
     = XrSessionNotStarted
+    | XrLostTracking
 
 
 type Bigger
@@ -330,6 +358,9 @@ andThen f task =
         RenderXrFrame entities function ->
             RenderXrFrame entities (function >> andThen f)
 
+        EndXrSession function ->
+            EndXrSession (function >> andThen f)
+
 
 taskMapError : (x -> y) -> Task restriction x a -> Task restriction y a
 taskMapError f task =
@@ -412,3 +443,6 @@ taskMapError f task =
 
         RenderXrFrame entities function ->
             RenderXrFrame entities (function >> taskMapError f)
+
+        EndXrSession function ->
+            EndXrSession (function >> taskMapError f)

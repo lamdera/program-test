@@ -435,3 +435,6 @@ onError f task =
 
         RenderXrFrame entities function ->
             RenderXrFrame entities (function >> onError f)
+
+        EndXrSession function ->
+            EndXrSession (function >> onError f)

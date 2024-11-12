@@ -7,7 +7,7 @@ module Effect.WebGL exposing
     , clearColor, preserveDrawingBuffer
     , indexedTriangles, lines, lineStrip, lineLoop, points, triangleFan
     , triangleStrip
-    , renderXrFrame, requestXrStart, XrPose, XrRenderError(..), XrStartError(..), XrView, XrEyeType(..)
+    , XrButton, XrEyeType(..), XrHandedness(..), XrInput, XrPose, XrRenderError(..), XrStartData, XrStartError(..), XrView, endXrSession, renderXrFrame, requestXrStart
     )
 
 {-| The WebGL API is for high performance rendering. Definitely read about
@@ -47,11 +47,6 @@ before trying to do too much with just the documentation provided here.
 @docs indexedTriangles, lines, lineStrip, lineLoop, points, triangleFan
 @docs triangleStrip
 
-
-# Virtual Reality (aka webxr)
-
-@docs renderXrFrame, requestXrStart, XrPose, XrRenderError, XrStartError, XrView, XrEyeType
-
 -}
 
 import Effect.Command exposing (FrontendOnly)
@@ -59,7 +54,9 @@ import Effect.Internal
 import Effect.Task
 import Effect.Time
 import Html exposing (Attribute, Html)
-import Math.Matrix4 exposing (Mat4)
+import Math.Matrix4 as Mat4 exposing (Mat4)
+import Math.Vector2 exposing (Vec2)
+import Math.Vector3 as Vec3 exposing (Vec3)
 import WebGL
 import WebGL.Settings exposing (Setting)
 import WebGLFix
@@ -365,14 +362,16 @@ preserveDrawingBuffer =
     WebGLFix.preserveDrawingBuffer
 
 
-{-| -}
 type XrStartError
     = AlreadyStarted
     | NotSupported
 
 
-{-| -}
-requestXrStart : List WebGLFix.Option -> Effect.Task.Task FrontendOnly XrStartError Int
+type alias XrStartData =
+    { boundary : Maybe (List Vec2), supportedFrameRates : List Int }
+
+
+requestXrStart : List WebGLFix.Option -> Effect.Task.Task FrontendOnly XrStartError XrStartData
 requestXrStart options =
     Effect.Internal.RequestXrStart
         options
@@ -389,41 +388,85 @@ requestXrStart options =
         )
 
 
-{-| -}
 type XrRenderError
     = XrSessionNotStarted
+    | XrLostTracking
 
 
-{-| -}
 type alias XrPose =
     { transform : Mat4
     , views : List XrView
     , time : Effect.Time.Posix
+    , boundary : Maybe (List Vec2)
+    , inputs : List XrInput
     }
 
 
-{-| -}
+type alias XrInput =
+    { handedness : XrHandedness, matrix : Maybe Mat4, buttons : List XrButton, mapping : String }
+
+
+type XrHandedness
+    = LeftHand
+    | RightHand
+    | Unknown
+
+
+type alias XrButton =
+    { isPressed : Bool, isTouched : Bool, value : Float }
+
+
 type alias XrView =
-    { eye : XrEyeType, viewMatrix : Mat4, viewMatrixInverse : Mat4, projectionMatrix : Mat4 }
+    { eye : XrEyeType, viewMatrix : Mat4, projectionMatrix : Mat4 }
 
 
-{-| -}
 type XrEyeType
     = LeftEye
     | RightEye
     | OtherEye
 
 
-{-| -}
+zUpMat : Mat4
+zUpMat =
+    Mat4.fromRecord
+        { m11 = 1
+        , m21 = 0
+        , m31 = 0
+        , m41 = 0
+        , m12 = 0
+        , m22 = 0
+        , m32 = -1
+        , m42 = 0
+        , m13 = 0
+        , m23 = 1
+        , m33 = 0
+        , m43 = 0
+        , m14 = 0
+        , m24 = 0
+        , m34 = 0
+        , m44 = 1
+        }
+
+
+zUpInputMat : Mat4
+zUpInputMat =
+    Mat4.rotate pi (Vec3.vec3 1 0 0) zUpMatInverse
+
+
+zUpMatInverse : Mat4
+zUpMatInverse =
+    Mat4.inverseOrthonormal zUpMat
+
+
 renderXrFrame :
-    ({ time : Effect.Time.Posix, xrView : XrView } -> List Entity)
+    ({ time : Effect.Time.Posix, xrView : XrView, inputs : List XrInput } -> List Entity)
     -> Effect.Task.Task FrontendOnly XrRenderError XrPose
 renderXrFrame entities =
     Effect.Internal.RenderXrFrame
-        (\{ time, xrView } ->
-            entities
-                { time = round time |> Effect.Time.millisToPosix
-                , xrView =
+        (\{ time, xrView, inputs } ->
+            let
+                xrView2 : XrView
+                xrView2 =
                     { eye =
                         case xrView.eye of
                             Effect.Internal.LeftEye ->
@@ -435,9 +478,13 @@ renderXrFrame entities =
                             Effect.Internal.OtherEye ->
                                 OtherEye
                     , projectionMatrix = xrView.projectionMatrix
-                    , viewMatrix = xrView.viewMatrix
-                    , viewMatrixInverse = xrView.viewMatrixInverse
+                    , viewMatrix = Mat4.mul xrView.viewMatrix zUpMat
                     }
+            in
+            entities
+                { time = round time |> Effect.Time.millisToPosix
+                , xrView = xrView2
+                , inputs = List.map inputFromInternal inputs
                 }
         )
         (\result ->
@@ -459,14 +506,43 @@ renderXrFrame entities =
                                             Effect.Internal.OtherEye ->
                                                 OtherEye
                                     , projectionMatrix = view.projectionMatrix
-                                    , viewMatrix = view.viewMatrix
-                                    , viewMatrixInverse = view.viewMatrixInverse
+                                    , viewMatrix = Mat4.mul view.viewMatrix zUpMat
                                     }
                                 )
                                 ok.views
                         , time = round ok.time |> Effect.Time.millisToPosix
+                        , boundary = ok.boundary
+                        , inputs = List.map inputFromInternal ok.inputs
                         }
 
-                Err Effect.Internal.XrSessionNotStarted ->
-                    Effect.Internal.Fail XrSessionNotStarted
+                Err error ->
+                    case error of
+                        Effect.Internal.XrSessionNotStarted ->
+                            Effect.Internal.Fail XrSessionNotStarted
+
+                        Effect.Internal.XrLostTracking ->
+                            Effect.Internal.Fail XrLostTracking
         )
+
+
+inputFromInternal : Effect.Internal.XrInput -> XrInput
+inputFromInternal input =
+    { handedness =
+        case input.handedness of
+            Effect.Internal.LeftHand ->
+                LeftHand
+
+            Effect.Internal.RightHand ->
+                RightHand
+
+            Effect.Internal.Unknown ->
+                Unknown
+    , matrix = Maybe.map (\a -> Mat4.mul (Mat4.mul zUpMatInverse a) zUpInputMat) input.matrix
+    , mapping = input.mapping
+    , buttons = input.buttons
+    }
+
+
+endXrSession : Effect.Internal.Task FrontendOnly x ()
+endXrSession =
+    Effect.Internal.EndXrSession Effect.Internal.Succeed

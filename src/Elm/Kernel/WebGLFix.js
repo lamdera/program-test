@@ -3,8 +3,10 @@
 import Elm.Kernel.VirtualDom exposing (custom, doc)
 import WebGLFix.Internal as WI exposing (enableSetting, enableOption)
 import Elm.Kernel.Scheduler exposing (binding, succeed, fail)
-import Effect.Internal as EI exposing (NotSupported, AlreadyStarted, XrSessionNotStarted, LeftEye, RightEye, OtherEye)
+import Effect.Internal as EI exposing (NotSupported, AlreadyStarted, XrSessionNotStarted, XrLostTracking, LeftEye, RightEye, OtherEye, LeftHand, RightHand, Unknown)
 import Elm.Kernel.List exposing (fromArray)
+import Elm.Kernel.MJS exposing (v2, v3)
+import Maybe exposing (Just, Nothing)
 
 */
 
@@ -853,6 +855,16 @@ var xrSession = null;
 var xrGl = null;
 var xrReferenceSpace = null;
 var xrModel = null;
+var xrStartTime = 0;
+var xrLastUpdate = 0;
+
+//function _WebGLFix_setFrameRate(frameRate) {
+//    return __Scheduler_binding(function (callback) {
+//        session.updateTargetFrameRate( framerateList[0] ).then((a) => {
+//
+//        });
+//    }
+//}
 
 function _WebGLFix_requestXrStart(options) {
     return __Scheduler_binding(function (callback) {
@@ -860,42 +872,83 @@ function _WebGLFix_requestXrStart(options) {
             callback(__Scheduler_fail(__EI_AlreadyStarted));
         }
         else {
-            console.log(navigator.xr);
             if (navigator.xr) {
-                navigator.xr.requestSession('immersive-vr').then((session) => {
+                navigator.xr.requestSession(
+                    'immersive-vr', {
+                        requiredFeatures: ["local-floor"],
+                        optionalFeatures: ["bounded-floor"],
+                    }).then((session) => {
+
+                    xrStartTime = Date.now();
                     xrSession = session;
                     // Listen for the sessions 'end' event so we can respond if the user
                     // or UA ends the session for any reason.
-                    //session.addEventListener('end', onSessionEnded);
+                    session.addEventListener('end', (a) => {
+                        xrSession = null;
+                        xrGl = null;
+                        xrReferenceSpace = null;
+                        xrModel = null;
+                    });
 
                     // Create a WebGL context to render with, initialized to be compatible
                     // with the XRDisplay we're presenting to.
                     var xrCanvas = document.createElement('canvas');
-                    xrGl = xrCanvas.getContext('webgl', { xrCompatible: true });
-                    console.log("3");
+
+                    var contextAttributes = {
+                          alpha: false,
+                          depth: true,
+                          stencil: false,
+                          antialias: false,
+                          premultipliedAlpha: false,
+                          preserveDrawingBuffer: false,
+                          xrCompatible: true
+                        };
+
+                    xrGl = xrCanvas.getContext('webgl', contextAttributes);
+
                     // Use the new WebGL context to create a XRWebGLLayer and set it as the
                     // sessions baseLayer. This allows any content rendered to the layer to
                     // be displayed on the XRDevice.
                     session.updateRenderState({ baseLayer: new XRWebGLLayer(session, xrGl) });
-                    console.log("5");
-                    // Get a reference space, which is required for querying poses. In this
-                    // case an 'local' reference space means that all poses will be relative
-                    // to the location where the XRDevice was first detected.
-                    session.requestReferenceSpace('local').then((refSpace) => {
-                      xrReferenceSpace = refSpace;
-                      var baseMatrix = refSpace._baseMatrix;
-                      console.log(refSpace);
 
-                      xrModel = { __entities: [], __cache: {}, __options: options };
+                    let xrStartData = {
+                        __$boundary : __Maybe_Nothing,
+                        __$supportedFrameRates :
+                            session.supportedFrameRates
+                                ? __List_fromArray(session.supportedFrameRates)
+                                : __List_fromArray([])
+                        };
 
-                      xrRender(xrModel);
+                    if (session.updateTargetFrameRate) {
+                        session.updateTargetFrameRate(120);
+                    }
 
-                      callback(__Scheduler_succeed(1));
-                      // Inform the session that we're ready to begin drawing.
-                      //session.requestAnimationFrame(onXRFrame);
+                    session
+                        .requestReferenceSpace('bounded-floor')
+                        .then((boundedFloor) => {
 
-                    });
+                            xrReferenceSpace = boundedFloor;
 
+                            xrModel = { __cache: {}, __options: options };
+
+                            xrRender(xrModel);
+
+                            xrStartData.__$boundary = __Maybe_Just(__List_fromArray(xrReferenceSpace.boundsGeometry.map((p) => { return A2(__MJS_v2, p.x, -p.z); })));
+                            callback(__Scheduler_succeed(xrStartData));
+                        })
+                        .catch(() => {
+                            session
+                                .requestReferenceSpace('local-floor')
+                                .then((localFloor) => {
+                                    xrReferenceSpace = localFloor;
+
+                                    xrModel = { __cache: {}, __options: options };
+
+                                    xrRender(xrModel);
+
+                                    callback(__Scheduler_succeed(xrStartData));
+                                });
+                        });
 
                 });
             }
@@ -906,41 +959,114 @@ function _WebGLFix_requestXrStart(options) {
     });
 }
 
-function _WebGLFix_renderXrFrame(entities) {
+
+function getInputSources(session, frame, refSpace) {
+    let inputs = []
+    session.inputSources.forEach((inputSource) => {
+        let pose = frame.getPose(inputSource.targetRaySpace, refSpace);
+
+        let gamepad = inputSource.gamepad;
+
+        let controller = {
+            __$buttons : __List_fromArray(gamepad.buttons.map((button) => {
+                    return { __$isPressed : button.pressed, __$isTouched : button.touched, __$value : button.value };
+                }))
+            , __$handedness : __EI_Unknown
+            , __$mapping : gamepad.mapping
+            , __$matrix : __Maybe_Nothing
+            };
+
+        switch (inputSource.handedness) {
+            case "left":
+                controller.__$handedness = __EI_LeftHand
+                break;
+            case "right":
+                controller.__$handedness = __EI_RightHand
+                break;
+        }
+
+        if (pose) {
+            controller.__$matrix = __Maybe_Just(new Float64Array(pose.transform.matrix));
+        }
+
+        inputs.push(controller);
+    });
+
+    return __List_fromArray(inputs);
+}
+
+function _WebGLFix_xrEnd(a) {
     return __Scheduler_binding(function (callback) {
         if (xrSession) {
+            xrSession.end().then((b) => callback(__Scheduler_succeed(0)));
+        }
+        else {
+            callback(__Scheduler_succeed(0));
+        }
+    });
+}
 
+function _WebGLFix_renderXrFrame(entities) {
+    return __Scheduler_binding(function (callback) {
+
+        if (xrSession) {
+            function notStarted(a) { callback(__Scheduler_fail(__EI_XrSessionNotStarted)); }
+
+            xrSession.addEventListener('end', notStarted );
 
             xrSession.requestAnimationFrame((time, frame) => {
                 let pose = frame.getViewerPose(xrReferenceSpace);
 
-                let err = xrGl.getError();
-                if (err) {
-                    console.error(`WebGL error returned: ${err}`);
-                }
-
-                let poseData = { __$transform : new Float64Array(pose.transform.matrix)
-                    , __$views : __List_fromArray(pose.views.map((view) => jsViewToElm(view)))
-                    , __$time : time
-                    };
+                xrSession.removeEventListener('end', notStarted);
 
                 if (pose) {
+                    let inputs = getInputSources(xrSession, frame, xrReferenceSpace);
+
                     let glLayer = frame.session.renderState.baseLayer;
 
                     xrGl.bindFramebuffer(xrGl.FRAMEBUFFER, glLayer.framebuffer);
                     xrGl.clear(xrGl.COLOR_BUFFER_BIT | xrGl.DEPTH_BUFFER_BIT | xrGl.STENCIL_BUFFER_BIT);
 
+                    let elmViews = [];
 
                     for (let view of pose.views) {
                         let viewport = glLayer.getViewport(view);
 
-                        xrModel.__entities = entities({ __$time : time, __$xrView : jsViewToElm(view) });
+                        let transform = view.transform;
+                        let elmView = { __$eye :
+                              view.eye === "left"
+                                  ? __EI_LeftEye
+                                  : view.eye === "right"
+                                      ? __EI_RightEye
+                                      : __EI_OtherEye
+                              , __$projectionMatrix : new Float64Array(view.projectionMatrix)
+                              , __$viewMatrix : new Float64Array(transform.inverse.matrix)
+                              };
+                        elmViews.push(elmView);
+
                         xrGl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
-                        xrDrawGL(xrModel);
+                        xrDrawGL(entities({ __$time : xrStartTime + time, __$xrView : elmView, __$inputs : inputs }), xrModel);
                     }
+
+                    //console.log(createImageFromFramebuffer(xrGl, 2064, 2208));
+
+                    let poseData = { __$transform : new Float64Array(pose.transform.matrix)
+                        , __$views : __List_fromArray(elmViews)
+                        , __$time : xrStartTime + time
+                        , __$boundary : __Maybe_Nothing
+                        , __$inputs : inputs
+                        };
+
+                    if (xrReferenceSpace.boundsGeometry) {
+                         poseData.__$boundary = __Maybe_Just(__List_fromArray(xrReferenceSpace.boundsGeometry.map((p) => { return A2(__MJS_v2, p.x, -p.z); })));
+                    }
+
+                    callback(__Scheduler_succeed(poseData));
+                }
+                else {
+                    callback(__Scheduler_fail(__EI_XrLostTracking));
                 }
 
-                callback(__Scheduler_succeed(poseData));
             });
         }
         else {
@@ -949,26 +1075,12 @@ function _WebGLFix_renderXrFrame(entities) {
     });
 }
 
-function jsViewToElm(view) {
-    return { __$eye :
-        view.eye === "left"
-            ? __EI_LeftEye
-            : view.eye === "right"
-                ? __EI_RightEye
-                : __EI_OtherEye
-        , __$projectionMatrix : new Float64Array(view.projectionMatrix)
-        , __$viewMatrix : new Float64Array(view.transform.matrix)
-        , __$viewMatrixInverse : new Float64Array(view.transform.inverse.matrix)
-        };
-}
-
 /**
  *  Creates canvas and schedules initial _WebGLFix_drawGL
  *  @param {Object} model
  *  @param {Object} model.__cache that may contain the following properties:
            gl, shaders, programs, buffers, textures
  *  @param {List<Option>} model.__options list of options coming from Elm
- *  @param {List<Entity>} model.__entities list of entities coming from Elm
  */
 function xrRender(model) {
   var options = {
@@ -1025,7 +1137,7 @@ function xrRender(model) {
   }
 }
 
-var xrDrawGL = function (model) {
+var xrDrawGL = function (entities, model) {
   var cache = model.__cache;
   var gl = cache.gl;
 
@@ -1169,5 +1281,26 @@ var xrDrawGL = function (model) {
     }
   }
 
-  _WebGLFix_listEach(drawEntity, model.__entities);
+  _WebGLFix_listEach(drawEntity, entities);
+}
+
+
+function createImageFromFramebuffer(gl, width, height) {
+    // Read the contents of the framebuffer
+    var data = new Uint8Array(width * height * 4);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+
+    // Create a 2D canvas to store the result
+    var canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    var context = canvas.getContext('2d');
+
+    // Copy the pixels to a 2D canvas
+    var imageData = context.createImageData(width, height);
+    imageData.data.set(data);
+    context.putImageData(imageData, 0, 0);
+
+    var img = new Image();
+    return canvas.toDataURL();
 }
