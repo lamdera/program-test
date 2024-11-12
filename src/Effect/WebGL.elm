@@ -367,15 +367,18 @@ preserveDrawingBuffer =
     WebGLFix.preserveDrawingBuffer
 
 
+{-| -}
 type XrStartError
     = AlreadyStarted
     | NotSupported
 
 
+{-| -}
 type alias XrStartData =
     { boundary : Maybe (List Vec2), supportedFrameRates : List Int }
 
 
+{-| -}
 requestXrStart : List WebGLFix.Option -> Effect.Task.Task FrontendOnly XrStartError XrStartData
 requestXrStart options =
     Effect.Internal.RequestXrStart
@@ -393,11 +396,13 @@ requestXrStart options =
         )
 
 
+{-| -}
 type XrRenderError
     = XrSessionNotStarted
     | XrLostTracking
 
 
+{-| -}
 type alias XrPose =
     { transform : Mat4
     , views : List XrView
@@ -407,24 +412,29 @@ type alias XrPose =
     }
 
 
+{-| -}
 type alias XrInput =
     { handedness : XrHandedness, matrix : Maybe Mat4, buttons : List XrButton, mapping : String }
 
 
+{-| -}
 type XrHandedness
     = LeftHand
     | RightHand
     | Unknown
 
 
+{-| -}
 type alias XrButton =
     { isPressed : Bool, isTouched : Bool, value : Float }
 
 
+{-| -}
 type alias XrView =
     { eye : XrEyeType, viewMatrix : Mat4, projectionMatrix : Mat4 }
 
 
+{-| -}
 type XrEyeType
     = LeftEye
     | RightEye
@@ -463,6 +473,7 @@ zUpMatInverse =
     Mat4.inverseOrthonormal zUpMat
 
 
+{-| -}
 renderXrFrame :
     ({ time : Effect.Time.Posix, xrView : XrView, inputs : List XrInput } -> List Entity)
     -> Effect.Task.Task FrontendOnly XrRenderError XrPose
@@ -548,6 +559,7 @@ inputFromInternal input =
     }
 
 
+{-| -}
 endXrSession : Effect.Internal.Task FrontendOnly x ()
 endXrSession =
     Effect.Internal.EndXrSession Effect.Internal.Succeed
