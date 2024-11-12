@@ -973,6 +973,7 @@ function getInputSources(session, frame, refSpace) {
                 }))
             , __$handedness : __EI_Unknown
             , __$mapping : gamepad.mapping
+            , __$axes : __List_fromArray(gamepad.axes)
             , __$matrix : __Maybe_Nothing
             };
 

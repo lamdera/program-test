@@ -151,7 +151,7 @@ type alias XrPose =
 
 
 type alias XrInput =
-    { handedness : XrHandedness, matrix : Maybe Mat4, buttons : List XrButton, mapping : String }
+    { handedness : XrHandedness, matrix : Maybe Mat4, buttons : List XrButton, axes : List Float, mapping : String }
 
 
 type alias XrButton =
