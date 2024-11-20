@@ -2607,8 +2607,9 @@ simulateStep timeLeft state =
                     && (timeLeft |> Quantity.greaterThanOrEqualTo animationFrame)
                     && (delta |> Quantity.greaterThan animationFrame)
             then
-                runEffects { state | elapsedTime = Quantity.plus animationFrame state.elapsedTime }
-                    |> simulateStep (timeLeft |> Quantity.minus animationFrame)
+                simulateStep
+                    (timeLeft |> Quantity.minus animationFrame)
+                    (runEffects { state | elapsedTime = Quantity.plus animationFrame state.elapsedTime })
 
             else if delta |> Quantity.lessThanOrEqualTo timeLeft then
                 let
@@ -2645,18 +2646,16 @@ simulateStep timeLeft state =
                 in
                 simulateStep
                     (timeLeft |> Quantity.minus delta)
-                    { state3
-                        | elapsedTime = Duration.from state3.startTime nextTimerEnd.endTime
-                    }
-                    |> runEffects
+                    (runEffects { state3 | elapsedTime = Duration.from state3.startTime nextTimerEnd.endTime })
 
             else
                 { state | elapsedTime = Quantity.plus state.elapsedTime timeLeft }
 
         Nothing ->
             if hasPendingEffects state && (timeLeft |> Quantity.greaterThanOrEqualTo animationFrame) then
-                runEffects { state | elapsedTime = Quantity.plus animationFrame state.elapsedTime }
-                    |> simulateStep (timeLeft |> Quantity.minus animationFrame)
+                simulateStep
+                    (timeLeft |> Quantity.minus animationFrame)
+                    (runEffects { state | elapsedTime = Quantity.plus animationFrame state.elapsedTime })
 
             else
                 { state | elapsedTime = Quantity.plus state.elapsedTime timeLeft }
