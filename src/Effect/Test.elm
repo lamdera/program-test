@@ -38,6 +38,11 @@ If you want to just run the end to end tests to make sure they work, or automati
 
 @docs startHeadless, HeadlessMsg
 
+
+## Types
+
+@docs Button, CurrentTimeline, Event, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, TestView, Touch, TouchEvent
+
 -}
 
 import Array exposing (Array)
