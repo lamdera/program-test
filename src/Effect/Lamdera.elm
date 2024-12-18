@@ -27,7 +27,6 @@ import Effect.Browser.Navigation
 import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
 import Effect.Internal exposing (File(..), NavigationKey(..))
 import Effect.Subscription exposing (Subscription)
-import Effect.WebGL
 import File
 import File.Download
 import File.Select
@@ -434,8 +433,8 @@ toTask simulatedTask =
                             Bytes.Decode.decode (Bytes.Decode.string (Bytes.width a)) a
                                 |> Maybe.withDefault ""
                     )
-                        |> Task.succeed
-                        |> Task.andThen (\result -> toTask (function result))
+                        |> function
+                        |> toTask
 
         Effect.Internal.FileToBytes file function ->
             case file of
@@ -450,8 +449,8 @@ toTask simulatedTask =
                         Effect.Internal.BytesFile a ->
                             a
                     )
-                        |> Task.succeed
-                        |> Task.andThen (\result -> toTask (function result))
+                        |> function
+                        |> toTask
 
         Effect.Internal.FileToUrl file function ->
             case file of
@@ -466,8 +465,8 @@ toTask simulatedTask =
                         Effect.Internal.BytesFile a ->
                             "data:*/*;base64," ++ Maybe.withDefault "" (Base64.fromBytes a)
                     )
-                        |> Task.succeed
-                        |> Task.andThen (\result -> toTask (function result))
+                        |> function
+                        |> toTask
 
         Effect.Internal.LoadTexture options string function ->
             let

@@ -4,6 +4,7 @@ module Effect.Test exposing
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions
     , startHeadless, HeadlessMsg
+    , Button, CurrentTimeline, Event, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, TestView, Touch, TouchEvent
     )
 
 {-|
@@ -45,7 +46,7 @@ import Browser exposing (UrlRequest(..))
 import Browser.Dom
 import Browser.Events
 import Browser.Navigation
-import Bytes exposing (Bytes, Endianness(..))
+import Bytes exposing (Bytes)
 import Bytes.Decode
 import Bytes.Encode
 import DebugParser exposing (ElmValue(..), ExpandableValue(..), SequenceType(..))
@@ -53,8 +54,8 @@ import Dict as RegularDict
 import Duration exposing (Duration)
 import Effect.Browser.Dom exposing (HtmlId)
 import Effect.Browser.Navigation
-import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
-import Effect.Http exposing (Body)
+import Effect.Command exposing (BackendOnly, FrontendOnly)
+import Effect.Http
 import Effect.Internal exposing (Command(..), File, NavigationKey(..), Task(..))
 import Effect.Lamdera exposing (ClientId, SessionId)
 import Effect.Snapshot exposing (Snapshot)
@@ -3711,7 +3712,7 @@ update config msg model =
                     let
                         maybeModelAndCmd =
                             case Lamdera.Debug.debugR currentTestLocalStorage { name = "", index = 0, stepIndex = 0, timelineIndex = 0 } of
-                                Just { name, index, stepIndex, timelineIndex } ->
+                                Just { name, stepIndex, timelineIndex } ->
                                     List.indexedMap
                                         (\testIndex test ->
                                             if name == getTestName test then
@@ -3990,16 +3991,15 @@ checkCachedElmValue ( model, cmd ) =
         ( model2, cmd2 ) =
             updateCurrentTest
                 (\currentTest ->
-                    let
-                        currentAndPreviousStep : { previousStep : Maybe Int, currentStep : Maybe Int }
-                        currentAndPreviousStep =
-                            currentAndPreviousStepIndex currentTest
-                    in
                     ( case ( currentTest.showModel, model.tests ) of
                         ( True, Just (Ok tests) ) ->
                             case getAt currentTest.index tests of
                                 Just test ->
                                     let
+                                        currentAndPreviousStep : { previousStep : Maybe Int, currentStep : Maybe Int }
+                                        currentAndPreviousStep =
+                                            currentAndPreviousStepIndex currentTest
+
                                         state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
                                         state =
                                             getState test
@@ -5764,13 +5764,13 @@ testView :
     -> TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> List (Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
 testView windowWidth instructions testView_ =
-    let
-        currentAndPreviousStep : { previousStep : Maybe Int, currentStep : Maybe Int }
-        currentAndPreviousStep =
-            currentAndPreviousStepIndex testView_
-    in
     case Array.get testView_.stepIndex testView_.steps of
         Just currentStep ->
+            let
+                currentAndPreviousStep : { previousStep : Maybe Int, currentStep : Maybe Int }
+                currentAndPreviousStep =
+                    currentAndPreviousStepIndex testView_
+            in
             if testView_.showModel then
                 let
                     overlayHeight : Int
@@ -5812,11 +5812,6 @@ testView windowWidth instructions testView_ =
                 ]
 
             else
-                let
-                    state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                    state =
-                        getState instructions
-                in
                 testOverlay windowWidth testView_ currentStep
                     :: (case currentTimeline testView_ of
                             FrontendTimeline clientId ->
@@ -5824,6 +5819,11 @@ testView windowWidth instructions testView_ =
                                     Just currentStep2 ->
                                         case SeqDict.get clientId currentStep2.frontends of
                                             Just frontend ->
+                                                let
+                                                    state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                                                    state =
+                                                        getState instructions
+                                                in
                                                 state.frontendApp.view frontend.model |> .body |> List.map (Html.map (\_ -> NoOp))
 
                                             Nothing ->
@@ -5841,85 +5841,85 @@ testView windowWidth instructions testView_ =
                                     UserPointerDownEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserClicksButton htmlId ->
+                                    UserClicksButton _ ->
                                         []
 
-                                    UserInputsText htmlId string ->
+                                    UserInputsText _ _ ->
                                         []
 
-                                    UserPressesKey htmlId keyEvent keyOptions ->
+                                    UserPressesKey _ _ _ ->
                                         []
 
-                                    UserClicksLink string ->
+                                    UserClicksLink _ ->
                                         []
 
-                                    UserResizesWindow record ->
+                                    UserResizesWindow _ ->
                                         []
 
-                                    UserPointerUpEvent htmlId pointerEvent ->
+                                    UserPointerUpEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserPointerEnterEvent htmlId pointerEvent ->
+                                    UserPointerEnterEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserPointerLeaveEvent htmlId pointerEvent ->
+                                    UserPointerLeaveEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserPointerOutEvent htmlId pointerEvent ->
+                                    UserPointerOutEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserPointerMoveEvent htmlId pointerEvent ->
+                                    UserPointerMoveEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserPointerOverEvent htmlId pointerEvent ->
+                                    UserPointerOverEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserPointerCancelEvent htmlId pointerEvent ->
+                                    UserPointerCancelEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserTouchCancelEvent htmlId touchEvent ->
+                                    UserTouchCancelEvent _ _ ->
                                         []
 
-                                    UserTouchStartEvent htmlId touchEvent ->
+                                    UserTouchStartEvent _ _ ->
                                         []
 
-                                    UserTouchEndEvent htmlId touchEvent ->
+                                    UserTouchEndEvent _ _ ->
                                         []
 
-                                    UserTouchMoveEvent htmlId touchEvent ->
+                                    UserTouchMoveEvent _ _ ->
                                         []
 
-                                    UserMouseEnterEvent htmlId pointerEvent ->
+                                    UserMouseEnterEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserMouseLeaveEvent htmlId pointerEvent ->
+                                    UserMouseLeaveEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserMouseOutEvent htmlId pointerEvent ->
+                                    UserMouseOutEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserMouseMoveEvent htmlId pointerEvent ->
+                                    UserMouseMoveEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserMouseOverEvent htmlId pointerEvent ->
+                                    UserMouseOverEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserMouseUpEvent htmlId pointerEvent ->
+                                    UserMouseUpEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserMouseDownEvent htmlId pointerEvent ->
+                                    UserMouseDownEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserFocusEvent htmlId ->
+                                    UserFocusEvent _ ->
                                         []
 
-                                    UserBlurEvent htmlId ->
+                                    UserBlurEvent _ ->
                                         []
 
-                                    UserWheelEvent htmlId ->
+                                    UserWheelEvent _ ->
                                         []
 
-                                    UserCustomEvent htmlId value ->
+                                    UserCustomEvent _ _ ->
                                         []
 
                             _ ->
@@ -6258,7 +6258,7 @@ addBytesFiles files model =
                     )
                     files
                     |> Task.sequence
-                    |> Task.andThen (\loaded -> tests (RegularDict.fromList loaded) |> Task.succeed)
+                    |> Task.map (\loaded -> tests (RegularDict.fromList loaded))
             )
             model.cmds
     }
@@ -6313,7 +6313,7 @@ addStringFiles files model =
                     )
                     files
                     |> Task.sequence
-                    |> Task.andThen (\loaded -> tests (RegularDict.fromList loaded) |> Task.succeed)
+                    |> Task.map (\loaded -> tests (RegularDict.fromList loaded))
             )
             model.cmds
     }

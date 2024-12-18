@@ -30,7 +30,7 @@ HTTP requests or writing to a database.
 
 -}
 
-import Effect.Internal exposing (Command(..), HttpBody(..), Task(..))
+import Effect.Internal exposing (Command(..), Task(..))
 
 
 {-| Here are some common tasks:

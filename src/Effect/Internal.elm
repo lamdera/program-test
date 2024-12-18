@@ -42,7 +42,6 @@ import Json.Decode
 import Json.Encode
 import Math.Matrix4 exposing (Mat4)
 import Math.Vector2 exposing (Vec2)
-import Math.Vector3 exposing (Vec3)
 import Time
 import WebGL
 import WebGLFix.Internal

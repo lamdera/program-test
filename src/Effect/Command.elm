@@ -32,7 +32,7 @@ module Effect.Command exposing
 
 -}
 
-import Effect.Internal exposing (Command(..), NavigationKey, Subscription(..))
+import Effect.Internal exposing (Command(..))
 import Json.Encode
 
 

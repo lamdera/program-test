@@ -9,7 +9,7 @@ module Test.Html.Internal.Inert exposing (Node, fromElmHtml, fromHtml, parseAttr
 import Elm.Kernel.HtmlAsJson
 import Html exposing (Html)
 import Json.Decode
-import Test.Html.Internal.ElmHtml.InternalTypes as InternalTypes exposing (ElmHtml(..), EventHandler, Facts, Tagger, decodeAttribute, decodeElmHtml)
+import Test.Html.Internal.ElmHtml.InternalTypes as InternalTypes exposing (ElmHtml, EventHandler, Tagger, decodeAttribute, decodeElmHtml)
 import VirtualDom
 
 

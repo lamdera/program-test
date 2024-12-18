@@ -11,7 +11,7 @@ module Test.Html.Internal.ElmHtml.ToString exposing
 
 -}
 
-import Dict exposing (Dict)
+import Dict
 import String
 import Test.Html.Internal.ElmHtml.InternalTypes exposing (..)
 
@@ -42,7 +42,7 @@ nodeToLines options nodeType =
         NodeEntry record ->
             nodeRecordToString options record
 
-        CustomNode record ->
+        CustomNode _ ->
             []
 
         MarkdownNode record ->
@@ -98,14 +98,6 @@ nodeRecordToString options { tag, children, facts } =
             in
             "<" ++ tag ++ filling ++ ">"
 
-        closeTag =
-            "</" ++ tag ++ ">"
-
-        childrenStrings =
-            List.map (nodeToLines options) children
-                |> List.concat
-                |> List.map ((++) (String.repeat options.indent " "))
-
         styles =
             case Dict.toList facts.styles of
                 [] ->
@@ -114,7 +106,7 @@ nodeRecordToString options { tag, children, facts } =
                 styleValues ->
                     styleValues
                         |> List.map (\( key, value ) -> key ++ ":" ++ value ++ ";")
-                        |> String.join ""
+                        |> String.concat
                         |> (\styleString ->
                                 "style=\""
                                     ++ String.replace "\"" "&quot;" styleString
@@ -127,19 +119,19 @@ nodeRecordToString options { tag, children, facts } =
                 |> Maybe.map (\name -> "class=\"" ++ name ++ "\"")
 
         stringAttributes =
-            Dict.filter (\k v -> k /= "className") facts.stringAttributes
+            facts.stringAttributes
+                |> Dict.remove "className"
                 |> Dict.toList
                 |> List.map (\( k, v ) -> k ++ "=\"" ++ v ++ "\"")
                 |> String.join " "
                 |> Just
 
         boolToString b =
-            case b of
-                True ->
-                    "True"
+            if b then
+                "True"
 
-                False ->
-                    "False"
+            else
+                "False"
 
         boolAttributes =
             Dict.toList facts.boolAttributes
@@ -160,6 +152,15 @@ nodeRecordToString options { tag, children, facts } =
            element kinds.
         -}
         _ ->
+            let
+                closeTag =
+                    "</" ++ tag ++ ">"
+
+                childrenStrings =
+                    children
+                        |> List.concatMap (nodeToLines options)
+                        |> List.map ((++) (String.repeat options.indent " "))
+            in
             [ openTag [ classes, styles, stringAttributes, boolAttributes ] ]
                 ++ childrenStrings
                 ++ [ closeTag ]

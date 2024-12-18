@@ -36,7 +36,6 @@ before trying to do too much with just the documentation provided here.
 -}
 
 import Effect.Internal exposing (XrPose, XrRenderError, XrStartData, XrStartError)
-import Effect.Time
 import Elm.Kernel.WebGLFix
 import Html exposing (Attribute, Html)
 import Task exposing (Task)

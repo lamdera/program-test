@@ -195,7 +195,7 @@ uploadSnapshotHelper apiKey buildId publicFiles_ snapshot_ =
                     buildId
                     hash
                     (Base64.fromString htmlString |> Maybe.withDefault "")
-                    |> Task.andThen (\_ -> Task.succeed filesToUpload)
+                    |> Task.map (\_ -> filesToUpload)
             )
 
 
