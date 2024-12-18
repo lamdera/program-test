@@ -1,34 +1,34 @@
-module Types exposing (..)
+module Types exposing (..)
 
-import Browser exposing (UrlRequest)
-import Browser.Navigation exposing (Key)
-import Url exposing (Url)
-
-
-type alias FrontendModel =
-    { key : Key
-    , message : String
-    }
+import Browser exposing (UrlRequest)
+import Browser.Navigation exposing (Key)
+import Url exposing (Url)
 
 
-type alias BackendModel =
-    { message : String
-    }
+type alias FrontendModel =
+    { key : Key
+    , message : String
+    }
 
 
-type FrontendMsg
-    = UrlClicked UrlRequest
-    | UrlChanged Url
-    | NoOpFrontendMsg
+type alias BackendModel =
+    { message : String
+    }
 
 
-type ToBackend
-    = NoOpToBackend
+type FrontendMsg
+    = UrlClicked UrlRequest
+    | UrlChanged Url
+    | NoOpFrontendMsg
 
 
-type BackendMsg
-    = NoOpBackendMsg
+type ToBackend
+    = NoOpToBackend
 
 
-type ToFrontend
+type BackendMsg
+    = NoOpBackendMsg
+
+
+type ToFrontend
     = NoOpToFrontend
