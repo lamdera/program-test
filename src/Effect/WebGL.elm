@@ -61,7 +61,7 @@ import Effect.Time
 import Html exposing (Attribute, Html)
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector2 exposing (Vec2)
-import Math.Vector3 as Vec3 exposing (Vec3)
+import Math.Vector3 as Vec3
 import WebGL
 import WebGL.Settings exposing (Setting)
 import WebGLFix

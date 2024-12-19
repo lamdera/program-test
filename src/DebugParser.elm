@@ -347,18 +347,20 @@ codeToChar str =
     let
         length =
             String.length str
-
-        code =
-            String.foldl addHex 0 str
     in
     if 4 <= length && length <= 6 then
         P.problem "code point must have between 4 and 6 digits"
 
-    else if 0 <= code && code <= 0x0010FFFF then
-        P.succeed (Char.fromCode code)
-
     else
-        P.problem "code point must be between 0 and 0x10FFFF"
+        let
+            code =
+                String.foldl addHex 0 str
+        in
+        if 0 <= code && code <= 0x0010FFFF then
+            P.succeed (Char.fromCode code)
+
+        else
+            P.problem "code point must be between 0 and 0x10FFFF"
 
 
 addHex : Char -> Int -> Int

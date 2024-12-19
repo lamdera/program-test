@@ -18,9 +18,7 @@ module Test.Html.Internal.ElmHtml.InternalTypes exposing
 -}
 
 import Dict exposing (Dict)
-import Html.Events
 import Json.Decode exposing (field)
-import Json.Encode
 import Test.Html.Internal.ElmHtml.Constants as Constants exposing (..)
 import Test.Html.Internal.ElmHtml.Helpers exposing (..)
 import Test.Html.Internal.ElmHtml.Markdown exposing (..)
@@ -238,7 +236,7 @@ contextDecodeElmHtml context =
 decodeTextTag : Json.Decode.Decoder TextTagRecord
 decodeTextTag =
     field kernelConstants.virtualDom.text
-        (Json.Decode.andThen (\text -> Json.Decode.succeed { text = text }) Json.Decode.string)
+        (Json.Decode.map (\text -> { text = text }) Json.Decode.string)
 
 
 {-| decode a tagger

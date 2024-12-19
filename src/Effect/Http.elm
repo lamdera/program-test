@@ -569,7 +569,7 @@ expectString onResult =
                 NetworkError_ ->
                     onResult (Err NetworkError)
 
-                BadStatus_ metadata body ->
+                BadStatus_ metadata _ ->
                     onResult (Err <| BadStatus metadata.statusCode)
 
                 GoodStatus_ _ body ->
