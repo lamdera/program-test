@@ -1,6 +1,6 @@
 module Effect.Test exposing
     ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile, Data, FileContents(..)
-    , FrontendActions, sendToBackend, backendUpdate, fastForward, group, andThen, Instructions, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
+    , FrontendActions, backendUpdate, fastForward, group, andThen, Instructions, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions
     , startHeadless, HeadlessMsg
@@ -981,6 +981,11 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         -> frontendMsg
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , sendToBackend :
+        DelayInMs
+        -> toBackend
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , snapshotView :
         DelayInMs
         -> { name : String }
@@ -1359,6 +1364,7 @@ connectFrontend delay sessionId url windowSize andThenFunc instructions =
                             , resizeWindow = resizeWindow clientId
                             , checkView = checkView clientId
                             , update = frontendUpdate clientId
+                            , sendToBackend = sendToBackend clientId
                             , snapshotView = snapshotView clientId
                             , checkModel = checkFrontend clientId
                             , custom = custom clientId
@@ -1419,6 +1425,7 @@ type EventType toBackend frontendMsg frontendModel toFrontend backendMsg backend
     | UserInputEvent { clientId : ClientId, inputType : UserInputType, isSuccessful : Bool }
     | TestEvent (Maybe ClientId) String
     | SnapshotEvent { clientId : ClientId, name : String, isSuccessful : Bool }
+    | ManuallySendToBackend { clientId : ClientId, toBackend : toBackend }
 
 
 {-| -}
@@ -2470,26 +2477,35 @@ disconnectFrontend backendApp clientId state =
             ( state, Nothing )
 
 
-{-| Normally you won't send data directly to the backend and instead use `connectFrontend` followed by things like `click` or `input` to cause the frontend to send data to the backend.
-If you do need to send data directly, then you can use this though.
--}
 sendToBackend :
-    DelayInMs
-    -> SessionId
-    -> ClientId
+    ClientId
+    -> DelayInMs
     -> toBackend
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-sendToBackend delay sessionId clientId toBackend instructions =
+sendToBackend clientId delay toBackend instructions =
     wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
-                { state
-                    | toBackend =
-                        state.toBackend
-                            ++ [ { sessionId = sessionId, clientId = clientId, toBackend = toBackend, stepIndex = Nothing } ]
-                }
-                    |> addEvent (TestEvent (Just clientId) ("Trigger ToBackend: " ++ Debug.toString toBackend)) Nothing
+                case SeqDict.get clientId state.frontends of
+                    Just frontend ->
+                        handleUpdateFromFrontend
+                            { sessionId = frontend.sessionId
+                            , clientId = clientId
+                            , toBackend = toBackend
+                            , stepIndex = Nothing
+                            }
+                            (addEvent
+                                (ManuallySendToBackend { clientId = clientId, toBackend = toBackend })
+                                Nothing
+                                state
+                            )
+
+                    Nothing ->
+                        addEvent
+                            (ManuallySendToBackend { clientId = clientId, toBackend = toBackend })
+                            (Just (ClientIdNotFound clientId))
+                            state
             )
 
 
@@ -4120,6 +4136,9 @@ eventTypeToTimelineType eventType =
         SnapshotEvent data ->
             FrontendTimeline data.clientId
 
+        ManuallySendToBackend data ->
+            FrontendTimeline data.clientId
+
 
 {-| -}
 isSkippable : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Bool
@@ -4153,6 +4172,9 @@ isSkippable eventType =
             False
 
         SnapshotEvent _ ->
+            True
+
+        ManuallySendToBackend _ ->
             True
 
 
@@ -4362,6 +4384,9 @@ checkCachedElmValueHelper event state =
                     Nothing
 
                 SnapshotEvent _ ->
+                    Nothing
+
+                ManuallySendToBackend _ ->
                     Nothing
     }
 
@@ -4892,6 +4917,9 @@ currentStepText currentStep testView_ =
 
                 SnapshotEvent data ->
                     "Snapshot view with name " ++ data.name
+
+                ManuallySendToBackend record ->
+                    "Manually created ToBackend: " ++ Debug.toString record.toBackend
     in
     Html.div
         [ Html.Attributes.style "padding" "4px", Html.Attributes.title fullMsg ]
@@ -5015,6 +5043,9 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                     []
 
                 SnapshotEvent _ ->
+                    []
+
+                ManuallySendToBackend _ ->
                     []
     in
     { columnIndex = state.columnIndex + 1
@@ -5541,6 +5572,9 @@ eventIcon color eventType columnIndex rowIndex =
                     else
                         [ xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
                    )
+
+        ManuallySendToBackend _ ->
+            [ circleHelper "big-circle" ]
 
 
 {-| -}
