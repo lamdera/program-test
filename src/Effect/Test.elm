@@ -3627,15 +3627,19 @@ viewTest test index stepIndex timelineIndex model =
         state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         state =
             instructionsToState test
+
+        timelines : Array CurrentTimeline
+        timelines =
+            getTimelines2 state.history
     in
     ( { model
         | currentTest =
             { index = index
             , testName = state.testName
             , steps = state.history
-            , timelines = getTimelines2 state.history
-            , timelineIndex = timelineIndex
-            , stepIndex = stepIndex
+            , timelines = timelines
+            , timelineIndex = clamp 0 (Array.length timelines - 1) timelineIndex
+            , stepIndex = clamp 0 (Array.length state.history - 1) stepIndex
             , overlayPosition = Bottom
             , showModel = False
             , collapsedFields = RegularDict.empty
@@ -3715,6 +3719,11 @@ update config msg model =
             case result of
                 Ok tests ->
                     let
+                        maybeModelAndCmd :
+                            Maybe
+                                ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                                , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+                                )
                         maybeModelAndCmd =
                             case Lamdera.Debug.debugR currentTestLocalStorage { name = "", index = 0, stepIndex = 0, timelineIndex = 0 } of
                                 Just { name, stepIndex, timelineIndex } ->
