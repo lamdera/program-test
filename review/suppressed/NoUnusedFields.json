@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "automatically created by": "elm-review suppress",
+  "learn more": "elm-review suppress --help",
+  "suppressions": [
+    { "count": 7, "filePath": "src/Sap2012.elm" },
+    { "count": 6, "filePath": "src/Survey/Types.elm" },
+    { "count": 4, "filePath": "src/Survey.elm" },
+    { "count": 4, "filePath": "src/Survey/Heating.elm" },
+    { "count": 1, "filePath": "src/Building.elm" },
+    { "count": 1, "filePath": "src/Sap2012/AppendixU/Data.elm" }
+  ]
+}
