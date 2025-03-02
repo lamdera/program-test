@@ -1,11 +1,11 @@
-module Effect.TreeView exposing (CollapsedField(..), MsgConfig, PathNode, pathNodeToKey, treeView, treeViewDiff)
+module Effect.TreeView exposing (CollapsedField(..), MsgConfig, PathNode, treeView, treeViewDiff)
 
 import DebugParser exposing (ElmValue(..), ExpandableValue(..))
-import Dict exposing (Dict)
 import Html exposing (Attribute, Html)
 import Html.Attributes
 import Html.Events
 import Html.Lazy
+import SeqDict exposing (SeqDict)
 
 
 type PathNode
@@ -14,25 +14,6 @@ type PathNode
     | SequenceNode Int
     | DictNode ElmValue
     | DictKeyNode ElmValue
-
-
-pathNodeToKey : PathNode -> String
-pathNodeToKey pathNode =
-    case pathNode of
-        FieldNode string ->
-            "q_" ++ string
-
-        VariantNode string ->
-            "r_" ++ string
-
-        SequenceNode int ->
-            "s_" ++ String.fromInt int
-
-        DictNode elmValue ->
-            "t_" ++ elmValueToKey elmValue
-
-        DictKeyNode elmValue ->
-            "u_" ++ elmValueToKey elmValue
 
 
 type CollapsedField
@@ -217,7 +198,7 @@ collapsedValue value =
                             "<record>"
 
                         ElmDict list ->
-                            "<dict, " ++ items (List.length list)
+                            "<dict, " ++ items (SeqDict.size list)
             )
         )
 
@@ -231,6 +212,7 @@ items count =
         String.fromInt count ++ " items>"
 
 
+variantText : String -> Html msg
 variantText variant =
     htmlEl [ fontColor (rgb 0.5 0.4 0.9) ] (htmlText variant)
 
@@ -331,7 +313,7 @@ isSingleLine elmValue =
                     False
 
                 ElmDict dict ->
-                    List.isEmpty dict
+                    SeqDict.isEmpty dict
 
 
 indexedMap2 : (Int -> a -> b -> c) -> List a -> List b -> List c
@@ -340,7 +322,7 @@ indexedMap2 func listA listB =
         |> List.indexedMap (\index ( a, b ) -> func index a b)
 
 
-treeViewDiff : MsgConfig msg -> Int -> List PathNode -> Dict (List String) CollapsedField -> ElmValue -> ElmValue -> Html msg
+treeViewDiff : MsgConfig msg -> Int -> List PathNode -> SeqDict (List PathNode) CollapsedField -> ElmValue -> ElmValue -> Html msg
 treeViewDiff msgConfig depth currentPath collapsedFields oldValue value =
     case ( oldValue, value ) of
         ( Plain oldPlainValue, Plain plainValue ) ->
@@ -522,69 +504,58 @@ treeViewDiff msgConfig depth currentPath collapsedFields oldValue value =
                         )
 
                 ( ElmDict oldDict, ElmDict dict ) ->
-                    if List.isEmpty oldDict && List.isEmpty dict then
+                    if SeqDict.isEmpty oldDict && SeqDict.isEmpty dict then
                         emptyDict
 
                     else
-                        let
-                            oldDict2 : Dict String ( ElmValue, ElmValue )
-                            oldDict2 =
-                                List.map (\( key, value2 ) -> ( elmValueToKey key, ( key, value2 ) )) oldDict |> Dict.fromList
-
-                            dict2 : Dict String ( ElmValue, ElmValue )
-                            dict2 =
-                                List.map (\( key, value2 ) -> ( elmValueToKey key, ( key, value2 ) )) dict |> Dict.fromList
-
-                            merge =
-                                Dict.merge
-                                    (\_ ( key, old ) state ->
-                                        htmlColumn
-                                            [ oldColor ]
-                                            [ dictKey msgConfig depth currentPath collapsedFields key
-                                            , htmlEl
-                                                [ tabAmount ]
-                                                (treeView msgConfig (depth + 1) (DictNode key :: currentPath) collapsedFields old)
-                                            ]
-                                            :: state
-                                    )
-                                    (\_ ( key, old ) ( _, new ) state ->
-                                        htmlColumn
-                                            []
-                                            [ dictKey msgConfig depth currentPath collapsedFields key
-                                            , htmlEl
-                                                [ tabAmount ]
-                                                (treeViewDiff
-                                                    msgConfig
-                                                    (depth + 1)
-                                                    (DictNode key :: currentPath)
-                                                    collapsedFields
-                                                    old
-                                                    new
-                                                )
-                                            ]
-                                            :: state
-                                    )
-                                    (\_ ( key, new ) state ->
-                                        htmlColumn
-                                            [ newColor ]
-                                            [ dictKey msgConfig depth currentPath collapsedFields key
-                                            , htmlEl
-                                                [ tabAmount ]
-                                                (treeView
-                                                    msgConfig
-                                                    (depth + 1)
-                                                    (DictNode key :: currentPath)
-                                                    collapsedFields
-                                                    new
-                                                )
-                                            ]
-                                            :: state
-                                    )
-                                    oldDict2
-                                    dict2
+                        SeqDict.merge
+                            (\key old state ->
+                                htmlColumn
+                                    [ oldColor ]
+                                    [ dictKey msgConfig depth currentPath collapsedFields key
+                                    , htmlEl
+                                        [ tabAmount ]
+                                        (treeView msgConfig (depth + 1) (DictNode key :: currentPath) collapsedFields old)
+                                    ]
+                                    :: state
+                            )
+                            (\key old new state ->
+                                htmlColumn
                                     []
-                        in
-                        htmlColumn [] merge
+                                    [ dictKey msgConfig depth currentPath collapsedFields key
+                                    , htmlEl
+                                        [ tabAmount ]
+                                        (treeViewDiff
+                                            msgConfig
+                                            (depth + 1)
+                                            (DictNode key :: currentPath)
+                                            collapsedFields
+                                            old
+                                            new
+                                        )
+                                    ]
+                                    :: state
+                            )
+                            (\key new state ->
+                                htmlColumn
+                                    [ newColor ]
+                                    [ dictKey msgConfig depth currentPath collapsedFields key
+                                    , htmlEl
+                                        [ tabAmount ]
+                                        (treeView
+                                            msgConfig
+                                            (depth + 1)
+                                            (DictNode key :: currentPath)
+                                            collapsedFields
+                                            new
+                                        )
+                                    ]
+                                    :: state
+                            )
+                            oldDict
+                            dict
+                            []
+                            |> htmlColumn []
 
                 _ ->
                     htmlText "Error, old and new types don't match"
@@ -657,12 +628,12 @@ elmValueToKey elmValue =
                     "l_" ++ String.join "_" (List.map (\( field, a ) -> field ++ "-" ++ elmValueToKey a) list)
 
                 ElmDict list ->
-                    "m_" ++ String.join "_" (List.map (\( key, value ) -> elmValueToKey key ++ "-" ++ elmValueToKey value) list)
+                    "m_" ++ String.join "_" (List.map (\( key, value ) -> elmValueToKey key ++ "-" ++ elmValueToKey value) (SeqDict.toList list))
 
 
-isCollapsed : Int -> ElmValue -> List PathNode -> Dict (List String) CollapsedField -> Bool
+isCollapsed : Int -> ElmValue -> List PathNode -> SeqDict (List PathNode) CollapsedField -> Bool
 isCollapsed depth elmValue nextPath collapsedFields =
-    case Dict.get (List.map pathNodeToKey nextPath) collapsedFields of
+    case SeqDict.get nextPath collapsedFields of
         Just FieldIsCollapsed ->
             True
 
@@ -690,7 +661,7 @@ isCollapsed depth elmValue nextPath collapsedFields =
                                 List.length list > 5
 
                             ElmDict list ->
-                                List.length list > 5
+                                SeqDict.size list > 5
 
 
 tabAmount : Html.Attribute msg
@@ -698,7 +669,7 @@ tabAmount =
     Html.Attributes.style "padding-left" "24px"
 
 
-treeView : MsgConfig msg -> Int -> List PathNode -> Dict (List String) CollapsedField -> ElmValue -> Html msg
+treeView : MsgConfig msg -> Int -> List PathNode -> SeqDict (List PathNode) CollapsedField -> ElmValue -> Html msg
 treeView msgConfig depth currentPath collapsedFields value =
     case value of
         Plain plainValue ->
@@ -839,7 +810,7 @@ treeView msgConfig depth currentPath collapsedFields value =
                         )
 
                 DebugParser.ElmDict dict ->
-                    if List.isEmpty dict then
+                    if SeqDict.isEmpty dict then
                         emptyDict
 
                     else
@@ -855,11 +826,11 @@ treeView msgConfig depth currentPath collapsedFields value =
                                             (treeView msgConfig (depth + 1) (DictNode key :: currentPath) collapsedFields value2)
                                         ]
                                 )
-                                dict
+                                (SeqDict.toList dict)
                             )
 
 
-dictKey : MsgConfig msg -> Int -> List PathNode -> Dict (List String) CollapsedField -> ElmValue -> Html msg
+dictKey : MsgConfig msg -> Int -> List PathNode -> SeqDict (List PathNode) CollapsedField -> ElmValue -> Html msg
 dictKey msgConfig depth currentPath collapsedFields elmValue =
     let
         row : () -> Html msg

@@ -1,10 +1,10 @@
 module Effect.Test exposing
     ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile, Data, FileContents(..)
-    , FrontendActions, sendToBackend, backendUpdate, fastForward, group, andThen, Instructions, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
+    , FrontendActions, backendUpdate, fastForward, group, andThen, Instructions, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions
     , startHeadless, HeadlessMsg
-    , Button, CurrentTimeline, Event, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, TestView, Touch, TouchEvent
+    , Button(..), WheelOptions(..), DeltaMode(..), CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent
     )
 
 {-|
@@ -17,7 +17,7 @@ module Effect.Test exposing
 
 ## Control the tests
 
-@docs FrontendActions, sendToBackend, backendUpdate, fastForward, group, andThen, Instructions, HttpBody, HttpPart, DelayInMs, KeyEvent, KeyOptions, PointerEvent, PointerOptions
+@docs FrontendActions, backendUpdate, fastForward, group, andThen, Instructions, HttpBody, HttpPart, DelayInMs, KeyEvent, KeyOptions, PointerEvent, PointerOptions
 
 
 ## Check the current state
@@ -41,7 +41,7 @@ If you want to just run the end to end tests to make sure they work, or automati
 
 ## Types
 
-@docs Button, CurrentTimeline, Event, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, TestView, Touch, TouchEvent
+@docs Button, WheelOptions, DeltaMode, CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent
 
 -}
 
@@ -198,7 +198,7 @@ type alias ToBackendData toBackend =
     { sessionId : SessionId
     , clientId : ClientId
     , toBackend : toBackend
-    , stepIndex : Maybe Int
+    , stepIndex : Int
     }
 
 
@@ -379,6 +379,7 @@ type TestError
     | HttpResponseContainsBytesThatCantConvertToString HttpRequest
     | HttpResponseCantConvertTextureToString HttpRequest
     | HttpRequestNotHandled HttpRequest
+    | PortEventNotHandled String
 
 
 {-| -}
@@ -575,6 +576,9 @@ testErrorToString error =
         HttpRequestNotHandled httpRequest ->
             "A client tried making an http request to " ++ httpRequest.url ++ " but it wasn't handled by Config.handleHttpRequest"
 
+        PortEventNotHandled portName ->
+            "Data was sent to the frontend through a port named \"" ++ portName ++ "\" but there was no subscription for it"
+
 
 {-| -}
 toTest : Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Test
@@ -583,8 +587,8 @@ toTest instructions =
         state =
             instructionsToState instructions
     in
-    Test.test state.testName <|
-        \() ->
+    Test.test state.testName
+        (\() ->
             case state.testErrors of
                 firstError :: _ ->
                     testErrorToString firstError |> Expect.fail
@@ -623,6 +627,7 @@ toTest instructions =
                                     )
                                 ++ " Make sure snapshot names are unique!"
                                 |> Expect.fail
+        )
 
 
 {-| Copied from elm-community/list-extra
@@ -981,6 +986,11 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         -> frontendMsg
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , sendToBackend :
+        DelayInMs
+        -> toBackend
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , snapshotView :
         DelayInMs
         -> { name : String }
@@ -994,6 +1004,12 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
     , custom :
         DelayInMs
         -> HtmlId
+        -> String
+        -> Json.Encode.Value
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , portEvent :
+        DelayInMs
         -> String
         -> Json.Encode.Value
         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -1289,6 +1305,19 @@ connectFrontend delay sessionId url windowSize andThenFunc instructions =
         |> AndThen
             (\state ->
                 let
+                    clientId : ClientId
+                    clientId =
+                        "clientId " ++ String.fromInt state.counter |> Effect.Lamdera.clientIdFromString
+
+                    ( frontend, cmd ) =
+                        state.frontendApp.init
+                            (normalizeUrl state.domain url |> Maybe.withDefault state.domain)
+                            (Effect.Browser.Navigation.fromInternalKey MockNavigationKey)
+
+                    subscriptions : Subscription FrontendOnly frontendMsg
+                    subscriptions =
+                        state.frontendApp.subscriptions frontend
+
                     state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
                     state2 =
                         { state
@@ -1307,19 +1336,6 @@ connectFrontend delay sessionId url windowSize andThenFunc instructions =
                             , counter = state.counter + 1
                         }
                             |> addEvent (FrontendInitEvent clientId cmd) Nothing
-
-                    clientId : ClientId
-                    clientId =
-                        "clientId " ++ String.fromInt state.counter |> Effect.Lamdera.clientIdFromString
-
-                    ( frontend, cmd ) =
-                        state.frontendApp.init
-                            (normalizeUrl state.domain url |> Maybe.withDefault state.domain)
-                            (Effect.Browser.Navigation.fromInternalKey MockNavigationKey)
-
-                    subscriptions : Subscription FrontendOnly frontendMsg
-                    subscriptions =
-                        state.frontendApp.subscriptions frontend
 
                     list :
                         List
@@ -1359,9 +1375,11 @@ connectFrontend delay sessionId url windowSize andThenFunc instructions =
                             , resizeWindow = resizeWindow clientId
                             , checkView = checkView clientId
                             , update = frontendUpdate clientId
+                            , sendToBackend = sendToBackend clientId
                             , snapshotView = snapshotView clientId
                             , checkModel = checkFrontend clientId
                             , custom = custom clientId
+                            , portEvent = portEvent clientId
                             }
                 in
                 getClientConnectSubs (state2.backendApp.subscriptions state2.model)
@@ -1372,6 +1390,7 @@ connectFrontend delay sessionId url windowSize andThenFunc instructions =
                         state2
                     |> Start
                     |> foldList list
+                    |> disconnectFrontend clientId
             )
 
 
@@ -1409,7 +1428,7 @@ type alias EventFrontend frontendModel =
 
 {-| -}
 type EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    = UpdateFromFrontendEvent { clientId : ClientId, toBackend : toBackend, cmds : Command BackendOnly toFrontend backendMsg, stepIndex : Maybe Int }
+    = UpdateFromFrontendEvent { clientId : ClientId, toBackend : toBackend, cmds : Command BackendOnly toFrontend backendMsg, stepIndex : Int }
     | UpdateFromBackendEvent { clientId : ClientId, toFrontend : toFrontend, cmds : Command FrontendOnly toBackend frontendMsg, stepIndex : Int }
     | BackendUpdateEvent backendMsg (Command BackendOnly toFrontend backendMsg)
     | FrontendUpdateEvent ClientId frontendMsg (Command FrontendOnly toBackend frontendMsg)
@@ -1419,6 +1438,8 @@ type EventType toBackend frontendMsg frontendModel toFrontend backendMsg backend
     | UserInputEvent { clientId : ClientId, inputType : UserInputType, isSuccessful : Bool }
     | TestEvent (Maybe ClientId) String
     | SnapshotEvent { clientId : ClientId, name : String, isSuccessful : Bool }
+    | ManuallySendToBackend { clientId : ClientId, toBackend : toBackend }
+    | ManuallySendPortEvent { clientId : ClientId, portName : String, value : Json.Encode.Value, isSuccessful : Bool }
 
 
 {-| -}
@@ -1868,7 +1889,7 @@ userTouchEvent :
     -> TouchEvent
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userTouchEvent eventName userEvent2 clientId delay htmlId event instructions =
+userTouchEvent eventName userEventFunc clientId delay htmlId event instructions =
     let
         touchJson : Touch -> Json.Encode.Value
         touchJson event2 =
@@ -1884,7 +1905,7 @@ userTouchEvent eventName userEvent2 clientId delay htmlId event instructions =
     in
     userEvent
         delay
-        (userEvent2 htmlId event)
+        (userEventFunc htmlId event)
         clientId
         htmlId
         ( eventName
@@ -1919,35 +1940,35 @@ userPointerEvent :
     -> List PointerOptions
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userPointerEvent eventName userEvent2 clientId delay htmlId event options instructions =
+userPointerEvent eventName userEventFunc clientId delay htmlId event options instructions =
     let
-        event2 =
+        eventOptions =
             projectPointerEventOptions event options
     in
     userEvent
         delay
-        (userEvent2 htmlId event)
+        (userEventFunc htmlId event)
         clientId
         htmlId
         ( eventName
         , Json.Encode.object
-            [ ( "ctrlKey", Json.Encode.bool event2.ctrlKey )
-            , ( "shiftKey", Json.Encode.bool event2.shiftKey )
-            , ( "metaKey", Json.Encode.bool event2.metaKey )
-            , ( "altKey", Json.Encode.bool event2.altKey )
-            , ( "clientX", Json.Encode.float event2.clientX )
-            , ( "clientY", Json.Encode.float event2.clientY )
-            , ( "x", Json.Encode.float event2.clientX )
-            , ( "y", Json.Encode.float event2.clientY )
+            [ ( "ctrlKey", Json.Encode.bool eventOptions.ctrlKey )
+            , ( "shiftKey", Json.Encode.bool eventOptions.shiftKey )
+            , ( "metaKey", Json.Encode.bool eventOptions.metaKey )
+            , ( "altKey", Json.Encode.bool eventOptions.altKey )
+            , ( "clientX", Json.Encode.float eventOptions.clientX )
+            , ( "clientY", Json.Encode.float eventOptions.clientY )
+            , ( "x", Json.Encode.float eventOptions.clientX )
+            , ( "y", Json.Encode.float eventOptions.clientY )
             , ( "offsetX", Json.Encode.float (Tuple.first event) )
             , ( "offsetY", Json.Encode.float (Tuple.second event) )
-            , ( "pageX", Json.Encode.float event2.pageX )
-            , ( "pageY", Json.Encode.float event2.pageY )
-            , ( "screenX", Json.Encode.float event2.screenX )
-            , ( "screenY", Json.Encode.float event2.screenY )
+            , ( "pageX", Json.Encode.float eventOptions.pageX )
+            , ( "pageY", Json.Encode.float eventOptions.pageY )
+            , ( "screenX", Json.Encode.float eventOptions.screenX )
+            , ( "screenY", Json.Encode.float eventOptions.screenY )
             , ( "button"
               , Json.Encode.int
-                    (case event2.button of
+                    (case eventOptions.button of
                         MainButton ->
                             0
 
@@ -1964,14 +1985,14 @@ userPointerEvent eventName userEvent2 clientId delay htmlId event options instru
                             4
                     )
               )
-            , ( "pointerType", Json.Encode.string event2.pointerType )
-            , ( "pointerId", Json.Encode.int event2.pointerId )
-            , ( "isPrimary", Json.Encode.bool event2.isPrimary )
-            , ( "width", Json.Encode.float event2.width )
-            , ( "height", Json.Encode.float event2.height )
-            , ( "pressure", Json.Encode.float event2.pressure )
-            , ( "tiltX", Json.Encode.float event2.tiltX )
-            , ( "tiltY", Json.Encode.float event2.tiltY )
+            , ( "pointerType", Json.Encode.string eventOptions.pointerType )
+            , ( "pointerId", Json.Encode.int eventOptions.pointerId )
+            , ( "isPrimary", Json.Encode.bool eventOptions.isPrimary )
+            , ( "width", Json.Encode.float eventOptions.width )
+            , ( "height", Json.Encode.float eventOptions.height )
+            , ( "pressure", Json.Encode.float eventOptions.pressure )
+            , ( "tiltX", Json.Encode.float eventOptions.tiltX )
+            , ( "tiltY", Json.Encode.float eventOptions.tiltY )
             ]
         )
         instructions
@@ -2085,7 +2106,7 @@ userWheelEvent :
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 userWheelEvent clientId delay htmlId deltaY offsetPos wheelOptions options instructions =
     let
-        event2 =
+        eventOptions =
             projectPointerEventOptions offsetPos options
 
         event3 =
@@ -2123,23 +2144,23 @@ userWheelEvent clientId delay htmlId deltaY offsetPos wheelOptions options instr
             , ( "deltaY", Json.Encode.float deltaY )
             , ( "deltaZ", Json.Encode.float event3.deltaZ )
             , ( "deltaMode", Json.Encode.float event3.deltaMode )
-            , ( "ctrlKey", Json.Encode.bool event2.ctrlKey )
-            , ( "shiftKey", Json.Encode.bool event2.shiftKey )
-            , ( "metaKey", Json.Encode.bool event2.metaKey )
-            , ( "altKey", Json.Encode.bool event2.altKey )
-            , ( "clientX", Json.Encode.float event2.clientX )
-            , ( "clientY", Json.Encode.float event2.clientY )
-            , ( "x", Json.Encode.float event2.clientX )
-            , ( "y", Json.Encode.float event2.clientY )
+            , ( "ctrlKey", Json.Encode.bool eventOptions.ctrlKey )
+            , ( "shiftKey", Json.Encode.bool eventOptions.shiftKey )
+            , ( "metaKey", Json.Encode.bool eventOptions.metaKey )
+            , ( "altKey", Json.Encode.bool eventOptions.altKey )
+            , ( "clientX", Json.Encode.float eventOptions.clientX )
+            , ( "clientY", Json.Encode.float eventOptions.clientY )
+            , ( "x", Json.Encode.float eventOptions.clientX )
+            , ( "y", Json.Encode.float eventOptions.clientY )
             , ( "offsetX", Json.Encode.float (Tuple.first offsetPos) )
             , ( "offsetY", Json.Encode.float (Tuple.second offsetPos) )
-            , ( "pageX", Json.Encode.float event2.pageX )
-            , ( "pageY", Json.Encode.float event2.pageY )
-            , ( "screenX", Json.Encode.float event2.screenX )
-            , ( "screenY", Json.Encode.float event2.screenY )
+            , ( "pageX", Json.Encode.float eventOptions.pageX )
+            , ( "pageY", Json.Encode.float eventOptions.pageY )
+            , ( "screenX", Json.Encode.float eventOptions.screenX )
+            , ( "screenY", Json.Encode.float eventOptions.screenY )
             , ( "button"
               , Json.Encode.int
-                    (case event2.button of
+                    (case eventOptions.button of
                         MainButton ->
                             0
 
@@ -2173,6 +2194,56 @@ custom clientId delay htmlId eventName value instructions =
     userEvent delay (UserCustomEvent htmlId value) clientId htmlId ( eventName, value ) instructions
 
 
+portEvent :
+    ClientId
+    -> DelayInMs
+    -> String
+    -> Json.Encode.Value
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+portEvent clientId delay portName value instructions =
+    wait (Duration.milliseconds delay) instructions
+        |> NextStep
+            (\state ->
+                case SeqDict.get clientId state.frontends of
+                    Just frontend ->
+                        let
+                            msgs : List frontendMsg
+                            msgs =
+                                getPortSubscriptions (state.frontendApp.subscriptions frontend.model)
+                                    |> List.filterMap
+                                        (\a ->
+                                            if a.portName == portName then
+                                                a.msg value |> Just
+
+                                            else
+                                                Nothing
+                                        )
+                        in
+                        if List.isEmpty msgs then
+                            addEvent
+                                (ManuallySendPortEvent { clientId = clientId, portName = portName, value = value, isSuccessful = False })
+                                (Just (PortEventNotHandled portName))
+                                state
+
+                        else
+                            List.foldl
+                                (handleFrontendUpdate clientId (currentTime state))
+                                (addEvent
+                                    (ManuallySendPortEvent { clientId = clientId, portName = portName, value = value, isSuccessful = True })
+                                    Nothing
+                                    state
+                                )
+                                msgs
+
+                    Nothing ->
+                        addEvent
+                            (ManuallySendPortEvent { clientId = clientId, portName = portName, value = value, isSuccessful = False })
+                            (Just (ClientIdNotFound clientId))
+                            state
+            )
+
+
 {-| -}
 userMouseEvent :
     String
@@ -2184,35 +2255,35 @@ userMouseEvent :
     -> List PointerOptions
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userMouseEvent eventName userEvent2 clientId delay htmlId event options instructions =
+userMouseEvent eventName userEventFunc clientId delay htmlId event options instructions =
     let
-        event2 =
+        eventOptions =
             projectPointerEventOptions event options
     in
     userEvent
         delay
-        (userEvent2 htmlId event)
+        (userEventFunc htmlId event)
         clientId
         htmlId
         ( eventName
         , Json.Encode.object
-            [ ( "ctrlKey", Json.Encode.bool event2.ctrlKey )
-            , ( "shiftKey", Json.Encode.bool event2.shiftKey )
-            , ( "metaKey", Json.Encode.bool event2.metaKey )
-            , ( "altKey", Json.Encode.bool event2.altKey )
-            , ( "clientX", Json.Encode.float event2.clientX )
-            , ( "clientY", Json.Encode.float event2.clientY )
-            , ( "x", Json.Encode.float event2.clientX )
-            , ( "y", Json.Encode.float event2.clientY )
+            [ ( "ctrlKey", Json.Encode.bool eventOptions.ctrlKey )
+            , ( "shiftKey", Json.Encode.bool eventOptions.shiftKey )
+            , ( "metaKey", Json.Encode.bool eventOptions.metaKey )
+            , ( "altKey", Json.Encode.bool eventOptions.altKey )
+            , ( "clientX", Json.Encode.float eventOptions.clientX )
+            , ( "clientY", Json.Encode.float eventOptions.clientY )
+            , ( "x", Json.Encode.float eventOptions.clientX )
+            , ( "y", Json.Encode.float eventOptions.clientY )
             , ( "offsetX", Json.Encode.float (Tuple.first event) )
             , ( "offsetY", Json.Encode.float (Tuple.second event) )
-            , ( "pageX", Json.Encode.float event2.pageX )
-            , ( "pageY", Json.Encode.float event2.pageY )
-            , ( "screenX", Json.Encode.float event2.screenX )
-            , ( "screenY", Json.Encode.float event2.screenY )
+            , ( "pageX", Json.Encode.float eventOptions.pageX )
+            , ( "pageY", Json.Encode.float eventOptions.pageY )
+            , ( "screenX", Json.Encode.float eventOptions.screenX )
+            , ( "screenY", Json.Encode.float eventOptions.screenY )
             , ( "button"
               , Json.Encode.int
-                    (case event2.button of
+                    (case eventOptions.button of
                         MainButton ->
                             0
 
@@ -2445,51 +2516,61 @@ userEvent delay userInputType clientId htmlId event instructions =
 
 {-| -}
 disconnectFrontend :
-    BackendApp toBackend toFrontend backendMsg backendModel
-    -> ClientId
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> ( State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, Maybe (FrontendState toBackend frontendMsg frontendModel toFrontend) )
-disconnectFrontend backendApp clientId state =
-    case SeqDict.get clientId state.frontends of
-        Just frontend ->
-            let
-                state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                state2 =
-                    getClientDisconnectSubs (backendApp.subscriptions state.model)
-                        |> List.foldl
-                            (\msg state3 ->
-                                handleBackendUpdate (currentTime state3) state3.backendApp (msg frontend.sessionId clientId) state3
-                            )
-                            state
-            in
-            ( { state2 | frontends = SeqDict.remove clientId state2.frontends }
-            , Just { frontend | toFrontend = [] }
+    ClientId
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+disconnectFrontend clientId instructions =
+    wait (Duration.milliseconds 100) instructions
+        |> AndThen
+            (\state ->
+                case SeqDict.get clientId state.frontends of
+                    Just frontend ->
+                        let
+                            state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                            state2 =
+                                getClientDisconnectSubs (state.backendApp.subscriptions state.model)
+                                    |> List.foldl
+                                        (\msg state3 ->
+                                            handleBackendUpdate (currentTime state3) state3.backendApp (msg frontend.sessionId clientId) state3
+                                        )
+                                        state
+                        in
+                        Start { state2 | frontends = SeqDict.remove clientId state2.frontends }
+
+                    Nothing ->
+                        Start state
             )
 
-        Nothing ->
-            ( state, Nothing )
 
-
-{-| Normally you won't send data directly to the backend and instead use `connectFrontend` followed by things like `click` or `input` to cause the frontend to send data to the backend.
-If you do need to send data directly, then you can use this though.
--}
 sendToBackend :
-    DelayInMs
-    -> SessionId
-    -> ClientId
+    ClientId
+    -> DelayInMs
     -> toBackend
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-sendToBackend delay sessionId clientId toBackend instructions =
+sendToBackend clientId delay toBackend instructions =
     wait (Duration.milliseconds delay) instructions
         |> NextStep
             (\state ->
-                { state
-                    | toBackend =
-                        state.toBackend
-                            ++ [ { sessionId = sessionId, clientId = clientId, toBackend = toBackend, stepIndex = Nothing } ]
-                }
-                    |> addEvent (TestEvent (Just clientId) ("Trigger ToBackend: " ++ Debug.toString toBackend)) Nothing
+                case SeqDict.get clientId state.frontends of
+                    Just frontend ->
+                        handleUpdateFromFrontend
+                            { sessionId = frontend.sessionId
+                            , clientId = clientId
+                            , toBackend = toBackend
+                            , stepIndex = Array.length state.history
+                            }
+                            (addEvent
+                                (ManuallySendToBackend { clientId = clientId, toBackend = toBackend })
+                                Nothing
+                                state
+                            )
+
+                    Nothing ->
+                        addEvent
+                            (ManuallySendToBackend { clientId = clientId, toBackend = toBackend })
+                            (Just (ClientIdNotFound clientId))
+                            state
             )
 
 
@@ -2528,7 +2609,7 @@ minimumBy f ls =
             Just l_
 
         l_ :: ls_ ->
-            Just <| Tuple.first <| List.foldl minBy ( l_, f l_ ) ls_
+            Just (Tuple.first (List.foldl minBy ( l_, f l_ ) ls_))
 
         _ ->
             Nothing
@@ -2634,7 +2715,7 @@ simulateStep timeLeft state =
                             (\clientId frontend state4 ->
                                 let
                                     { triggeredMsgs, completedDurations } =
-                                        getTriggersTimerMsgs state2.frontendApp.subscriptions frontend nextTimerEnd.endTime
+                                        getTriggersTimerMsgs state4.frontendApp.subscriptions frontend nextTimerEnd.endTime
                                 in
                                 List.foldl
                                     (handleFrontendUpdate clientId nextTimerEnd.endTime)
@@ -2828,7 +2909,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                         ++ [ { sessionId = sessionId
                              , clientId = clientId
                              , toBackend = toBackend
-                             , stepIndex = Just stepIndex
+                             , stepIndex = stepIndex
                              }
                            ]
             }
@@ -3525,13 +3606,14 @@ getDomTask maybeClientId state htmlId function value =
 
 
 {-| -}
-type alias Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel =
-    { navigationKey : Browser.Navigation.Key
-    , currentTest : Maybe (TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-    , testResults : List (Result TestError ())
-    , tests : Maybe (Result FileLoadError (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
-    , windowSize : ( Int, Int )
-    }
+type Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    = Model
+        { navigationKey : Browser.Navigation.Key
+        , currentTest : Maybe (TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+        , testResults : List (Result TestError ())
+        , tests : Maybe (Result FileLoadError (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
+        , windowSize : ( Int, Int )
+        }
 
 
 {-| -}
@@ -3557,7 +3639,7 @@ type alias TestView toBackend frontendMsg frontendModel toFrontend backendMsg ba
     , timelineIndex : Int
     , overlayPosition : OverlayPosition
     , showModel : Bool
-    , collapsedFields : RegularDict.Dict (List String) CollapsedField
+    , collapsedFields : SeqDict (List PathNode) CollapsedField
     }
 
 
@@ -3582,7 +3664,6 @@ type Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     | PressedExpandField (List PathNode)
     | PressedCollapseField (List PathNode)
     | PressedArrowKey ArrowKey
-    | ChangedEventSlider String
     | GotWindowSize Int Int
     | PressedTimelineEvent Int
     | PressedTimeline CurrentTimeline
@@ -3598,12 +3679,13 @@ init :
         , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         )
 init _ _ navigationKey =
-    ( { navigationKey = navigationKey
-      , currentTest = Nothing
-      , testResults = []
-      , tests = Nothing
-      , windowSize = ( 1920, 1080 )
-      }
+    ( Model
+        { navigationKey = navigationKey
+        , currentTest = Nothing
+        , testResults = []
+        , tests = Nothing
+        , windowSize = ( 1920, 1080 )
+        }
     , Cmd.batch
         [ Process.sleep 0 |> Task.perform (\() -> ShortPauseFinished)
         , Browser.Dom.getViewport
@@ -3622,26 +3704,31 @@ viewTest :
         ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         )
-viewTest test index stepIndex timelineIndex model =
+viewTest test index stepIndex timelineIndex (Model model) =
     let
         state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         state =
             instructionsToState test
+
+        timelines : Array CurrentTimeline
+        timelines =
+            getTimelines2 state.history
     in
     ( { model
         | currentTest =
             { index = index
             , testName = state.testName
             , steps = state.history
-            , timelines = getTimelines2 state.history
-            , timelineIndex = timelineIndex
-            , stepIndex = stepIndex
+            , timelines = timelines
+            , timelineIndex = clamp 0 (Array.length timelines - 1) timelineIndex
+            , stepIndex = clamp 0 (Array.length state.history - 1) stepIndex
             , overlayPosition = Bottom
             , showModel = False
-            , collapsedFields = RegularDict.empty
+            , collapsedFields = SeqDict.empty
             }
                 |> Just
       }
+        |> Model
     , Browser.Dom.setViewportOf timelineContainerId 0 0 |> Task.attempt (\_ -> NoOp)
     )
 
@@ -3655,23 +3742,23 @@ update :
         ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         )
-update config msg model =
+update config msg (Model model) =
     (case msg of
         UrlClicked urlRequest ->
             case urlRequest of
                 Browser.Internal _ ->
-                    ( model, Cmd.none )
+                    ( Model model, Cmd.none )
 
                 Browser.External url ->
-                    ( model, Browser.Navigation.load url )
+                    ( Model model, Browser.Navigation.load url )
 
         UrlChanged _ ->
-            ( model, Cmd.none )
+            ( Model model, Cmd.none )
 
         PressedViewTest index ->
             case model.tests of
                 Just (Err _) ->
-                    ( model, Cmd.none )
+                    ( Model model, Cmd.none )
 
                 Just (Ok tests) ->
                     case getAt index tests of
@@ -3680,48 +3767,52 @@ update config msg model =
                                 _ =
                                     writeLocalStorage (getTestName test) 0 0
                             in
-                            viewTest test index 0 0 model
+                            viewTest test index 0 0 (Model model)
 
                         Nothing ->
-                            ( model, Cmd.none )
+                            ( Model model, Cmd.none )
 
                 Nothing ->
-                    ( model, Cmd.none )
+                    ( Model model, Cmd.none )
 
         NoOp ->
-            ( model, Cmd.none )
+            ( Model model, Cmd.none )
 
         PressedBackToOverview ->
             let
-                model2 : Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
                 model2 =
                     { model | currentTest = Nothing }
             in
             case model2.tests of
                 Just (Ok tests) ->
-                    runTests tests model2
+                    runTests tests (Model model2)
                         |> Tuple.mapSecond
                             (\cmd ->
                                 Cmd.batch [ Lamdera.Debug.debugD currentTestLocalStorage, cmd ]
                             )
 
                 _ ->
-                    ( model2, Lamdera.Debug.debugD currentTestLocalStorage )
+                    ( Model model2, Lamdera.Debug.debugD currentTestLocalStorage )
 
         ShortPauseFinished ->
-            ( model, Task.attempt GotFilesForTests config.cmds )
+            ( Model model, Task.attempt GotFilesForTests config.cmds )
 
         GotFilesForTests result ->
             case result of
                 Ok tests ->
                     let
+                        maybeModelAndCmd :
+                            Maybe
+                                ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                                , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+                                )
                         maybeModelAndCmd =
                             case Lamdera.Debug.debugR currentTestLocalStorage { name = "", index = 0, stepIndex = 0, timelineIndex = 0 } of
                                 Just { name, stepIndex, timelineIndex } ->
                                     List.indexedMap
                                         (\testIndex test ->
                                             if name == getTestName test then
-                                                viewTest test testIndex stepIndex timelineIndex model |> Just
+                                                viewTest test testIndex stepIndex timelineIndex (Model model) |> Just
 
                                             else
                                                 Nothing
@@ -3734,14 +3825,14 @@ update config msg model =
                                     Nothing
                     in
                     case maybeModelAndCmd of
-                        Just ( model2, cmd ) ->
-                            ( { model2 | tests = Just (Ok tests) }, cmd )
+                        Just ( Model model2, cmd ) ->
+                            ( Model { model2 | tests = Just (Ok tests) }, cmd )
 
                         Nothing ->
-                            runTests tests model
+                            runTests tests (Model model)
 
                 Err error ->
-                    ( { model | tests = Just (Err error) }, Cmd.none )
+                    ( Model { model | tests = Just (Err error) }, Cmd.none )
 
         PressedToggleOverlayPosition ->
             updateCurrentTest
@@ -3758,43 +3849,39 @@ update config msg model =
                     , Cmd.none
                     )
                 )
-                model
+                (Model model)
 
         PressedShowModel ->
-            updateCurrentTest (\currentTest -> ( { currentTest | showModel = True }, Cmd.none )) model
+            updateCurrentTest (\currentTest -> ( { currentTest | showModel = True }, Cmd.none )) (Model model)
 
         PressedHideModel ->
-            updateCurrentTest (\currentTest -> ( { currentTest | showModel = False }, Cmd.none )) model
+            updateCurrentTest (\currentTest -> ( { currentTest | showModel = False }, Cmd.none )) (Model model)
 
         PressedExpandField pathNodes ->
             updateCurrentTest
                 (\currentTest ->
                     ( { currentTest
                         | collapsedFields =
-                            RegularDict.insert
-                                (List.map Effect.TreeView.pathNodeToKey pathNodes)
+                            SeqDict.insert
+                                pathNodes
                                 FieldIsExpanded
                                 currentTest.collapsedFields
                       }
                     , Cmd.none
                     )
                 )
-                model
+                (Model model)
 
         PressedCollapseField pathNodes ->
             updateCurrentTest
                 (\currentTest ->
                     ( { currentTest
-                        | collapsedFields =
-                            RegularDict.insert
-                                (List.map Effect.TreeView.pathNodeToKey pathNodes)
-                                FieldIsCollapsed
-                                currentTest.collapsedFields
+                        | collapsedFields = SeqDict.insert pathNodes FieldIsCollapsed currentTest.collapsedFields
                       }
                     , Cmd.none
                     )
                 )
-                model
+                (Model model)
 
         PressedArrowKey arrowKey ->
             updateCurrentTest
@@ -3836,21 +3923,13 @@ update config msg model =
                             in
                             ( { currentTest | timelineIndex = timelineIndex }, Cmd.none )
                 )
-                model
-
-        ChangedEventSlider a ->
-            case String.toInt a of
-                Just stepIndex ->
-                    updateCurrentTest (stepTo stepIndex) model
-
-                Nothing ->
-                    ( model, Cmd.none )
+                (Model model)
 
         GotWindowSize width height ->
-            ( { model | windowSize = ( width, height ) }, Cmd.none )
+            ( Model { model | windowSize = ( width, height ) }, Cmd.none )
 
         PressedTimelineEvent stepIndex ->
-            updateCurrentTest (stepTo stepIndex) model
+            updateCurrentTest (stepTo stepIndex) (Model model)
 
         PressedTimeline timelineType ->
             updateCurrentTest
@@ -3862,7 +3941,7 @@ update config msg model =
                         Nothing ->
                             ( currentTest, Cmd.none )
                 )
-                model
+                (Model model)
     )
         |> checkCachedElmValue
 
@@ -3874,26 +3953,27 @@ runTests :
         ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         )
-runTests tests model =
+runTests tests (Model model) =
     case getAt (List.length model.testResults) tests of
         Just test ->
-            ( { model
-                | testResults =
-                    model.testResults
-                        ++ [ case instructionsToState test |> .testErrors of
-                                firstError :: _ ->
-                                    Err firstError
+            ( Model
+                { model
+                    | testResults =
+                        model.testResults
+                            ++ [ case instructionsToState test |> .testErrors of
+                                    firstError :: _ ->
+                                        Err firstError
 
-                                [] ->
-                                    Ok ()
-                           ]
-                , tests = Just (Ok tests)
-              }
+                                    [] ->
+                                        Ok ()
+                               ]
+                    , tests = Just (Ok tests)
+                }
             , Process.sleep 0 |> Task.perform (\() -> GotFilesForTests (Ok tests))
             )
 
         Nothing ->
-            ( model, Cmd.none )
+            ( Model model, Cmd.none )
 
 
 {-| -}
@@ -3904,13 +3984,13 @@ type CurrentTimeline
 
 {-| -}
 arrayFindIndex : a -> Array a -> Maybe Int
-arrayFindIndex item array =
+arrayFindIndex itemA array =
     Array.foldl
-        (\item2 ( index, found ) ->
+        (\itemB ( index, found ) ->
             if found then
                 ( index, found )
 
-            else if item2 == item then
+            else if itemB == itemA then
                 ( index, True )
 
             else
@@ -3927,6 +4007,7 @@ arrayFindIndex item array =
            )
 
 
+currentTestLocalStorage : String
 currentTestLocalStorage =
     "current-test"
 
@@ -3991,9 +4072,9 @@ checkCachedElmValue :
         ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         )
-checkCachedElmValue ( model, cmd ) =
+checkCachedElmValue ( Model model, cmdA ) =
     let
-        ( model2, cmd2 ) =
+        ( model2, cmdB ) =
             updateCurrentTest
                 (\currentTest ->
                     ( case ( currentTest.showModel, model.tests ) of
@@ -4056,9 +4137,9 @@ checkCachedElmValue ( model, cmd ) =
                     , Cmd.none
                     )
                 )
-                model
+                (Model model)
     in
-    ( model2, Cmd.batch [ cmd, cmd2 ] )
+    ( model2, Cmd.batch [ cmdA, cmdB ] )
 
 
 {-| -}
@@ -4111,6 +4192,12 @@ eventTypeToTimelineType eventType =
         SnapshotEvent data ->
             FrontendTimeline data.clientId
 
+        ManuallySendToBackend data ->
+            FrontendTimeline data.clientId
+
+        ManuallySendPortEvent data ->
+            FrontendTimeline data.clientId
+
 
 {-| -}
 isSkippable : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Bool
@@ -4144,6 +4231,12 @@ isSkippable eventType =
             False
 
         SnapshotEvent _ ->
+            True
+
+        ManuallySendToBackend _ ->
+            True
+
+        ManuallySendPortEvent _ ->
             True
 
 
@@ -4354,6 +4447,12 @@ checkCachedElmValueHelper event state =
 
                 SnapshotEvent _ ->
                     Nothing
+
+                ManuallySendToBackend _ ->
+                    Nothing
+
+                ManuallySendPortEvent _ ->
+                    Nothing
     }
 
 
@@ -4381,24 +4480,24 @@ updateCurrentTest :
         ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         )
-updateCurrentTest func model =
+updateCurrentTest func (Model model) =
     case model.currentTest of
         Just currentTest ->
             let
                 ( currentTest2, cmd ) =
                     func currentTest
             in
-            ( { model | currentTest = Just currentTest2 }, cmd )
+            ( Model { model | currentTest = Just currentTest2 }, cmd )
 
         Nothing ->
-            ( model, Cmd.none )
+            ( Model model, Cmd.none )
 
 
 {-| -}
 view :
     Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Browser.Document (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-view model =
+view (Model model) =
     { title = "Test viewer"
     , body =
         case model.tests of
@@ -4633,7 +4732,7 @@ getTestName instructions =
 
 {-| -}
 modelView :
-    RegularDict.Dict (List String) CollapsedField
+    SeqDict (List PathNode) CollapsedField
     -> Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 modelView collapsedFields event =
@@ -4682,6 +4781,7 @@ refineElmValue value =
                                             Nothing
                                 )
                                 list
+                                |> SeqDict.fromList
                                 |> ElmDict
 
                         _ ->
@@ -4691,7 +4791,9 @@ refineElmValue value =
                     List.map (\( field, value2 ) -> ( field, refineElmValue value2 )) fields |> ElmRecord
 
                 ElmDict list ->
-                    List.map (\( key, value2 ) -> ( refineElmValue key, refineElmValue value2 )) list
+                    SeqDict.toList list
+                        |> List.map (\( key, value2 ) -> ( refineElmValue key, refineElmValue value2 ))
+                        |> SeqDict.fromList
                         |> ElmDict
             )
                 |> Expandable
@@ -4706,7 +4808,7 @@ blockArrowKeys =
 
 {-| -}
 modelDiffView :
-    RegularDict.Dict (List String) CollapsedField
+    SeqDict (List PathNode) CollapsedField
     -> Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
@@ -4883,6 +4985,12 @@ currentStepText currentStep testView_ =
 
                 SnapshotEvent data ->
                     "Snapshot view with name " ++ data.name
+
+                ManuallySendToBackend data ->
+                    "Manually created ToBackend: " ++ Debug.toString data.toBackend
+
+                ManuallySendPortEvent data ->
+                    "Manually triggered \"" ++ data.portName ++ "\" port: " ++ Json.Encode.encode 0 data.value
     in
     Html.div
         [ Html.Attributes.style "padding" "4px", Html.Attributes.title fullMsg ]
@@ -4915,6 +5023,7 @@ type alias TimelineViewData toBackend frontendMsg frontendModel toFrontend backe
 
 
 {-| -}
+unselectedTimelineColor : String
 unselectedTimelineColor =
     "#626262"
 
@@ -4937,20 +5046,20 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
         arrowHelper : Int -> Int -> Int -> List (Html msg)
         arrowHelper rowIndexStart rowIndexEnd stepIndex =
             let
-                x0 =
+                xA =
                     stepIndex * timelineColumnWidth + timelineColumnWidth // 2 |> toFloat
 
-                y0 =
+                yA =
                     rowIndexStart * timelineRowHeight + timelineRowHeight // 4 |> toFloat
 
-                x1 =
+                xB =
                     state.columnIndex * timelineColumnWidth + timelineColumnWidth // 2 |> toFloat
 
-                y1 =
+                yB =
                     rowIndexEnd * timelineRowHeight + timelineRowHeight // 4 |> toFloat
 
                 length =
-                    (x1 - x0) ^ 2 + (y1 - y0) ^ 2 |> sqrt
+                    (xB - xA) ^ 2 + (yB - yA) ^ 2 |> sqrt
 
                 length2 =
                     (length - 4) / length
@@ -4963,7 +5072,7 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                     else
                         unselectedTimelineColor
             in
-            [ arrowSvg color2 x0 y0 (length2 * (x1 - x0) + x0) (length2 * (y1 - y0) + y0) ]
+            [ arrowSvg color2 xA yA (length2 * (xB - xA) + xA) (length2 * (yB - yA) + yA) ]
 
         arrows : Int -> List (Html msg)
         arrows rowIndex =
@@ -4975,14 +5084,9 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                     arrowHelper 0 rowIndex data.stepIndex
 
                 UpdateFromFrontendEvent data ->
-                    case data.stepIndex of
-                        Just stepIndex ->
-                            case SeqDict.get (FrontendTimeline data.clientId) state.dict of
-                                Just timeline ->
-                                    arrowHelper timeline.rowIndex rowIndex stepIndex
-
-                                Nothing ->
-                                    []
+                    case SeqDict.get (FrontendTimeline data.clientId) state.dict of
+                        Just timeline ->
+                            arrowHelper timeline.rowIndex rowIndex data.stepIndex
 
                         Nothing ->
                             []
@@ -5006,6 +5110,12 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                     []
 
                 SnapshotEvent _ ->
+                    []
+
+                ManuallySendToBackend _ ->
+                    []
+
+                ManuallySendPortEvent _ ->
                     []
     in
     { columnIndex = state.columnIndex + 1
@@ -5060,40 +5170,40 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
 
 {-| -}
 arrowSvg : String -> Float -> Float -> Float -> Float -> Html msg
-arrowSvg color x0 y0 x1 y1 =
+arrowSvg color xA yA xB yB =
     let
         length =
-            (x1 - x0) ^ 2 + (y1 - y0) ^ 2 |> sqrt
+            (xB - xA) ^ 2 + (yB - yA) ^ 2 |> sqrt
 
         offset =
             (length - 6) / length
 
-        x2 =
-            offset * (x1 - x0) + x0
+        xC =
+            offset * (xB - xA) + xA
 
-        y2 =
-            offset * (y1 - y0) + y0
+        yC =
+            offset * (yB - yA) + yA
 
         arrowWidthScalar =
             0.666
 
-        x3 =
-            -(y1 - y2) * arrowWidthScalar + x2
+        xD =
+            -(yB - yC) * arrowWidthScalar + xC
 
-        y3 =
-            (x1 - x2) * arrowWidthScalar + y2
+        yD =
+            (xB - xC) * arrowWidthScalar + yC
 
-        x4 =
-            (y1 - y2) * arrowWidthScalar + x2
+        xF =
+            (yB - yC) * arrowWidthScalar + xC
 
-        y4 =
-            -(x1 - x2) * arrowWidthScalar + y2
+        yF =
+            -(xB - xC) * arrowWidthScalar + yC
 
         maxX =
-            max x0 x1 + 10
+            max xA xB + 10
 
         maxY =
-            max y0 y1 + 10
+            max yA yB + 10
     in
     Svg.svg
         [ Svg.Attributes.width (String.fromFloat maxX)
@@ -5104,10 +5214,10 @@ arrowSvg color x0 y0 x1 y1 =
         , Html.Attributes.style "pointer-events" "none"
         ]
         [ Svg.line
-            [ Svg.Attributes.x1 (String.fromFloat x0)
-            , Svg.Attributes.y1 (String.fromFloat y0)
-            , Svg.Attributes.x2 (String.fromFloat x2)
-            , Svg.Attributes.y2 (String.fromFloat y2)
+            [ Svg.Attributes.x1 (String.fromFloat xA)
+            , Svg.Attributes.y1 (String.fromFloat yA)
+            , Svg.Attributes.x2 (String.fromFloat xC)
+            , Svg.Attributes.y2 (String.fromFloat yC)
             , Svg.Attributes.width "20"
             , Html.Attributes.style "stroke" color
             , Html.Attributes.style "stroke-width" "2"
@@ -5115,11 +5225,11 @@ arrowSvg color x0 y0 x1 y1 =
             []
         , Svg.polygon
             [ Html.Attributes.style "fill" color
-            , (String.fromFloat x3 ++ "," ++ String.fromFloat y3)
+            , (String.fromFloat xD ++ "," ++ String.fromFloat yD)
                 ++ " "
-                ++ (String.fromFloat x1 ++ "," ++ String.fromFloat y1)
+                ++ (String.fromFloat xB ++ "," ++ String.fromFloat yB)
                 ++ " "
-                ++ (String.fromFloat x4 ++ "," ++ String.fromFloat y4)
+                ++ (String.fromFloat xF ++ "," ++ String.fromFloat yF)
                 |> Svg.Attributes.points
             ]
             []
@@ -5345,11 +5455,13 @@ timelineEventId =
 
 
 {-| -}
+px : Int -> String
 px value =
     String.fromInt value ++ "px"
 
 
 {-| -}
+timelineCss : Html msg
 timelineCss =
     Html.node "style"
         []
@@ -5376,6 +5488,7 @@ timelineCss =
 
 
 {-| -}
+timelineColumnWidth : number
 timelineColumnWidth =
     14
 
@@ -5422,9 +5535,8 @@ eventIcon color eventType columnIndex rowIndex =
             [ circleHelper "circle" ]
 
         CheckStateEvent { isSuccessful } ->
-            [ magnifyingGlassSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
-            ]
-                ++ (if isSuccessful then
+            magnifyingGlassSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
+                :: (if isSuccessful then
                         []
 
                     else
@@ -5525,13 +5637,19 @@ eventIcon color eventType columnIndex rowIndex =
                    )
 
         SnapshotEvent data ->
-            [ cameraSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
-                ++ (if data.isSuccessful then
+            cameraSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
+                :: (if data.isSuccessful then
                         []
 
                     else
                         [ xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
                    )
+
+        ManuallySendToBackend _ ->
+            [ circleHelper "big-circle" ]
+
+        ManuallySendPortEvent _ ->
+            [ circleHelper "big-circle" ]
 
 
 {-| -}
@@ -5961,6 +6079,7 @@ drawCursor ( x, y ) =
 
 
 {-| -}
+centeredText : String -> Html msg
 centeredText text2 =
     Html.div
         [ Html.Attributes.style "position" "absolute"
@@ -5993,7 +6112,7 @@ testOverlay windowWidth testView_ currentStep =
                 Html.Attributes.style "bottom" "0"
         ]
         [ Html.div
-            [ Html.Attributes.style "padding" "4px" ]
+            [ Html.Attributes.style "padding" "4px", Html.Attributes.style "display" "flex" ]
             [ overlayButton PressedBackToOverview "Close test"
             , Html.div [ Html.Attributes.style "display" "inline-block", Html.Attributes.style "padding" "4px" ] []
             , overlayButton PressedToggleOverlayPosition "Move"
@@ -6006,6 +6125,109 @@ testOverlay windowWidth testView_ currentStep =
             , Html.div
                 [ Html.Attributes.style "display" "inline-block", Html.Attributes.style "padding" "4px" ]
                 [ Html.text testView_.testName ]
+            , Html.div
+                [ Html.Attributes.style "display" "inline-block"
+                , Html.Attributes.style "padding" "4px"
+                , Html.Attributes.style "margin-left" "auto"
+                ]
+                [ case Array.get 0 testView_.steps of
+                    Just startEvent ->
+                        let
+                            elapsed : Int
+                            elapsed =
+                                Time.posixToMillis currentStep.time - Time.posixToMillis startEvent.time
+
+                            hours : Int
+                            hours =
+                                elapsed // (1000 * 60 * 60)
+
+                            elapsedMinusHours : Int
+                            elapsedMinusHours =
+                                elapsed - (1000 * 60 * 60 * hours)
+
+                            minutes : Int
+                            minutes =
+                                elapsedMinusHours // (1000 * 60)
+
+                            elapsedMinusMinutes : Int
+                            elapsedMinusMinutes =
+                                elapsedMinusHours - (1000 * 60 * minutes)
+
+                            seconds : Int
+                            seconds =
+                                elapsedMinusMinutes // 1000
+
+                            milliseconds : Int
+                            milliseconds =
+                                elapsedMinusMinutes - (1000 * seconds)
+
+                            startText =
+                                (case Time.toMonth Time.utc startEvent.time of
+                                    Time.Jan ->
+                                        "Jan"
+
+                                    Time.Feb ->
+                                        "Feb"
+
+                                    Time.Mar ->
+                                        "Mar"
+
+                                    Time.Apr ->
+                                        "Apr"
+
+                                    Time.May ->
+                                        "May"
+
+                                    Time.Jun ->
+                                        "Jun"
+
+                                    Time.Jul ->
+                                        "Jul"
+
+                                    Time.Aug ->
+                                        "Aug"
+
+                                    Time.Sep ->
+                                        "Sep"
+
+                                    Time.Oct ->
+                                        "Oct"
+
+                                    Time.Nov ->
+                                        "Nov"
+
+                                    Time.Dec ->
+                                        "Dec"
+                                )
+                                    ++ " "
+                                    ++ String.fromInt (Time.toDay Time.utc startEvent.time)
+                                    ++ ", "
+                                    ++ String.fromInt (Time.toYear Time.utc startEvent.time)
+                                    ++ " "
+                                    ++ String.padLeft 2 '0' (String.fromInt (Time.toHour Time.utc startEvent.time))
+                                    ++ ":"
+                                    ++ String.padLeft 2 '0' (String.fromInt (Time.toMinute Time.utc startEvent.time))
+
+                            --++ ":"
+                            --++ String.padLeft 2 '0' (String.fromInt (Time.toSecond Time.utc startEvent.time))
+                            --++ "."
+                            --++ String.padLeft 4 '0' (String.fromInt (Time.toMillis Time.utc startEvent.time))
+                        in
+                        Html.text
+                            (startText
+                                ++ " + "
+                                ++ String.fromInt hours
+                                ++ ":"
+                                ++ String.padLeft 2 '0' (String.fromInt minutes)
+                                ++ ":"
+                                ++ String.padLeft 2 '0' (String.fromInt seconds)
+                                ++ "."
+                                ++ String.padLeft 4 '0' (String.fromInt milliseconds)
+                            )
+
+                    Nothing ->
+                        Html.text ""
+                ]
             ]
         , timelineView windowWidth testView_
         , currentStepText currentStep testView_
