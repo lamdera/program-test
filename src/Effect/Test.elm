@@ -45,7 +45,7 @@ If you want to just run the end to end tests to make sure they work, or automati
 @docs Button, WheelOptions, DeltaMode, CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent
 
 
-## Setting up non-Lamdera apps
+## Setting up end-to-end tests for non-Lamdera apps
 
 @docs configForApplication, configForDocument, configForElement, configForSandbox
 
