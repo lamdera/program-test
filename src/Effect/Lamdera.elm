@@ -76,7 +76,7 @@ frontend toBackend userApp =
         \msg model ->
             userApp.updateFromBackend msg model
                 |> Tuple.mapSecond (toCmd (\_ -> Cmd.none) (\_ _ -> Cmd.none) toBackend)
-    , subscriptions = userApp.subscriptions >> toSub
+    , subscriptions = userApp.subscriptions >> Effect.Internal.toSub
     , onUrlRequest = userApp.onUrlRequest
     , onUrlChange = userApp.onUrlChange
     }
@@ -110,7 +110,7 @@ backend broadcastCmd toFrontend userApp =
                 msg
                 model
                 |> Tuple.mapSecond (toCmd broadcastCmd toFrontend (\_ -> Cmd.none))
-    , subscriptions = userApp.subscriptions >> toSub
+    , subscriptions = userApp.subscriptions >> Effect.Internal.toSub
     }
 
 
@@ -532,75 +532,3 @@ toTask simulatedTask =
 
         Effect.Internal.EndXrSession function ->
             WebGLFix.endXrSession |> Task.andThen (\result -> toTask (function result))
-
-
-toSub : Subscription restriction msg -> Sub msg
-toSub sub =
-    case sub of
-        Effect.Internal.SubBatch subs ->
-            List.map toSub subs |> Sub.batch
-
-        Effect.Internal.SubNone ->
-            Sub.none
-
-        Effect.Internal.TimeEvery duration msg ->
-            Time.every (Duration.inMilliseconds duration) msg
-
-        Effect.Internal.OnAnimationFrame msg ->
-            Browser.Events.onAnimationFrame msg
-
-        Effect.Internal.OnAnimationFrameDelta msg ->
-            Browser.Events.onAnimationFrameDelta (Duration.milliseconds >> msg)
-
-        Effect.Internal.OnKeyPress decoder ->
-            Browser.Events.onKeyPress decoder
-
-        Effect.Internal.OnKeyDown decoder ->
-            Browser.Events.onKeyDown decoder
-
-        Effect.Internal.OnKeyUp decoder ->
-            Browser.Events.onKeyUp decoder
-
-        Effect.Internal.OnClick decoder ->
-            Browser.Events.onClick decoder
-
-        Effect.Internal.OnMouseMove decoder ->
-            Browser.Events.onMouseMove decoder
-
-        Effect.Internal.OnMouseDown decoder ->
-            Browser.Events.onMouseDown decoder
-
-        Effect.Internal.OnMouseUp decoder ->
-            Browser.Events.onMouseUp decoder
-
-        Effect.Internal.OnVisibilityChange msg ->
-            Browser.Events.onVisibilityChange
-                (\visibility ->
-                    case visibility of
-                        Browser.Events.Visible ->
-                            msg Effect.Internal.Visible
-
-                        Browser.Events.Hidden ->
-                            msg Effect.Internal.Hidden
-                )
-
-        Effect.Internal.OnResize msg ->
-            Browser.Events.onResize msg
-
-        Effect.Internal.SubPort _ portFunction _ ->
-            portFunction
-
-        Effect.Internal.OnConnect msg ->
-            Lamdera.onConnect
-                (\sessionId clientId ->
-                    msg (Effect.Internal.SessionId sessionId) (Effect.Internal.ClientId clientId)
-                )
-
-        Effect.Internal.OnDisconnect msg ->
-            Lamdera.onDisconnect
-                (\sessionId clientId ->
-                    msg (Effect.Internal.SessionId sessionId) (Effect.Internal.ClientId clientId)
-                )
-
-        Effect.Internal.HttpTrack string function ->
-            Http.track string function

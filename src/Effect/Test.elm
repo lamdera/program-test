@@ -5,6 +5,7 @@ module Effect.Test exposing
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions
     , startHeadless, HeadlessMsg
     , Button(..), WheelOptions(..), DeltaMode(..), CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent
+    , configForApplication, configForDocument, configForElement, configForSandbox
     )
 
 {-|
@@ -42,6 +43,11 @@ If you want to just run the end to end tests to make sure they work, or automati
 ## Types
 
 @docs Button, WheelOptions, DeltaMode, CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent
+
+
+## Setting up non-Lamdera apps
+
+@docs configForApplication, configForDocument, configForElement, configForSandbox
 
 -}
 
@@ -144,6 +150,173 @@ type alias Config toBackend frontendMsg frontendModel toFrontend backendMsg back
     , handleFileUpload : { data : Data frontendModel backendModel, mimeTypes : List String } -> FileUpload
     , handleMultipleFilesUpload : { data : Data frontendModel backendModel, mimeTypes : List String } -> MultipleFilesUpload
     , domain : Url
+    }
+
+
+{-| Test config for a Browser.application app. See the examples folder for how to setup end-to-end tests for your app.
+-}
+configForApplication :
+    { flags : flags
+    , frontendApp :
+        { init : flags -> Url.Url -> Effect.Browser.Navigation.Key -> ( frontendModel, Command FrontendOnly Never frontendMsg )
+        , view : frontendModel -> Browser.Document frontendMsg
+        , update : frontendMsg -> frontendModel -> ( frontendModel, Command FrontendOnly Never frontendMsg )
+        , subscriptions : frontendModel -> Subscription FrontendOnly frontendMsg
+        , onUrlRequest : UrlRequest -> frontendMsg
+        , onUrlChange : Url.Url -> frontendMsg
+        }
+    , handleHttpRequest : { data : Data frontendModel (), currentRequest : HttpRequest } -> HttpResponse
+    , handlePortToJs : { data : Data frontendModel (), currentRequest : PortToJs } -> Maybe ( String, Json.Decode.Value )
+    , handleFileUpload : { data : Data frontendModel (), mimeTypes : List String } -> FileUpload
+    , handleMultipleFilesUpload : { data : Data frontendModel (), mimeTypes : List String } -> MultipleFilesUpload
+    , domain : Url
+    }
+    -> Config Never frontendMsg frontendModel Never Never ()
+configForApplication data =
+    { frontendApp =
+        { init = data.frontendApp.init data.flags
+        , update = data.frontendApp.update
+        , updateFromBackend = \_ model -> ( model, Effect.Command.none )
+        , view = data.frontendApp.view
+        , subscriptions = data.frontendApp.subscriptions
+        , onUrlRequest = data.frontendApp.onUrlRequest
+        , onUrlChange = data.frontendApp.onUrlChange
+        }
+    , backendApp =
+        { init = ( (), Effect.Command.none )
+        , update = \_ model -> ( model, Effect.Command.none )
+        , updateFromFrontend = \_ _ _ model -> ( model, Effect.Command.none )
+        , subscriptions = \_ -> Effect.Subscription.none
+        }
+    , handleHttpRequest = data.handleHttpRequest
+    , handlePortToJs = data.handlePortToJs
+    , handleFileUpload = data.handleFileUpload
+    , handleMultipleFilesUpload = data.handleMultipleFilesUpload
+    , domain = data.domain
+    }
+
+
+{-| Test config for a Browser.document app. See the examples folder for how to setup end-to-end tests for your app.
+-}
+configForDocument :
+    { flags : flags
+    , noOpMsg : frontendMsg
+    , frontendApp :
+        { init : flags -> Url.Url -> Effect.Browser.Navigation.Key -> ( frontendModel, Command FrontendOnly Never frontendMsg )
+        , view : frontendModel -> Browser.Document frontendMsg
+        , update : frontendMsg -> frontendModel -> ( frontendModel, Command FrontendOnly Never frontendMsg )
+        , subscriptions : frontendModel -> Subscription FrontendOnly frontendMsg
+        }
+    , handleHttpRequest : { data : Data frontendModel (), currentRequest : HttpRequest } -> HttpResponse
+    , handlePortToJs : { data : Data frontendModel (), currentRequest : PortToJs } -> Maybe ( String, Json.Decode.Value )
+    , handleFileUpload : { data : Data frontendModel (), mimeTypes : List String } -> FileUpload
+    , handleMultipleFilesUpload : { data : Data frontendModel (), mimeTypes : List String } -> MultipleFilesUpload
+    , domain : Url
+    }
+    -> Config Never frontendMsg frontendModel Never Never ()
+configForDocument data =
+    { frontendApp =
+        { init = data.frontendApp.init data.flags
+        , update = data.frontendApp.update
+        , updateFromBackend = \_ model -> ( model, Effect.Command.none )
+        , view = data.frontendApp.view
+        , subscriptions = data.frontendApp.subscriptions
+        , onUrlRequest = \_ -> data.noOpMsg
+        , onUrlChange = \_ -> data.noOpMsg
+        }
+    , backendApp =
+        { init = ( (), Effect.Command.none )
+        , update = \_ model -> ( model, Effect.Command.none )
+        , updateFromFrontend = \_ _ _ model -> ( model, Effect.Command.none )
+        , subscriptions = \_ -> Effect.Subscription.none
+        }
+    , handleHttpRequest = data.handleHttpRequest
+    , handlePortToJs = data.handlePortToJs
+    , handleFileUpload = data.handleFileUpload
+    , handleMultipleFilesUpload = data.handleMultipleFilesUpload
+    , domain = data.domain
+    }
+
+
+{-| Test config for a Browser.element app. See the examples folder for how to setup end-to-end tests for your app.
+-}
+configForElement :
+    { flags : flags
+    , noOpMsg : frontendMsg
+    , frontendApp :
+        { init : flags -> Url.Url -> Effect.Browser.Navigation.Key -> ( frontendModel, Command FrontendOnly Never frontendMsg )
+        , view : frontendModel -> Html frontendMsg
+        , update : frontendMsg -> frontendModel -> ( frontendModel, Command FrontendOnly Never frontendMsg )
+        , subscriptions : frontendModel -> Subscription FrontendOnly frontendMsg
+        }
+    , handleHttpRequest : { data : Data frontendModel (), currentRequest : HttpRequest } -> HttpResponse
+    , handlePortToJs : { data : Data frontendModel (), currentRequest : PortToJs } -> Maybe ( String, Json.Decode.Value )
+    , handleFileUpload : { data : Data frontendModel (), mimeTypes : List String } -> FileUpload
+    , handleMultipleFilesUpload : { data : Data frontendModel (), mimeTypes : List String } -> MultipleFilesUpload
+    , domain : Url
+    }
+    -> Config Never frontendMsg frontendModel Never Never ()
+configForElement data =
+    { frontendApp =
+        { init = data.frontendApp.init data.flags
+        , update = data.frontendApp.update
+        , updateFromBackend = \_ model -> ( model, Effect.Command.none )
+        , view = \model -> { title = "", body = [ data.frontendApp.view model ] }
+        , subscriptions = data.frontendApp.subscriptions
+        , onUrlRequest = \_ -> data.noOpMsg
+        , onUrlChange = \_ -> data.noOpMsg
+        }
+    , backendApp =
+        { init = ( (), Effect.Command.none )
+        , update = \_ model -> ( model, Effect.Command.none )
+        , updateFromFrontend = \_ _ _ model -> ( model, Effect.Command.none )
+        , subscriptions = \_ -> Effect.Subscription.none
+        }
+    , handleHttpRequest = data.handleHttpRequest
+    , handlePortToJs = data.handlePortToJs
+    , handleFileUpload = data.handleFileUpload
+    , handleMultipleFilesUpload = data.handleMultipleFilesUpload
+    , domain = data.domain
+    }
+
+
+{-| Test config for a Browser.sandbox app. See the examples folder for how to setup end-to-end tests for your app.
+-}
+configForSandbox :
+    { noOpMsg : frontendMsg
+    , frontendApp :
+        { init : frontendModel
+        , view : frontendModel -> Html frontendMsg
+        , update : frontendMsg -> frontendModel -> frontendModel
+        }
+    , handleHttpRequest : { data : Data frontendModel (), currentRequest : HttpRequest } -> HttpResponse
+    , handlePortToJs : { data : Data frontendModel (), currentRequest : PortToJs } -> Maybe ( String, Json.Decode.Value )
+    , handleFileUpload : { data : Data frontendModel (), mimeTypes : List String } -> FileUpload
+    , handleMultipleFilesUpload : { data : Data frontendModel (), mimeTypes : List String } -> MultipleFilesUpload
+    , domain : Url
+    }
+    -> Config Never frontendMsg frontendModel Never Never ()
+configForSandbox data =
+    { frontendApp =
+        { init = \_ _ -> ( data.frontendApp.init, Effect.Command.none )
+        , update = \msg model -> ( data.frontendApp.update msg model, Effect.Command.none )
+        , updateFromBackend = \_ model -> ( model, Effect.Command.none )
+        , view = \model -> { title = "", body = [ data.frontendApp.view model ] }
+        , subscriptions = \_ -> Effect.Subscription.none
+        , onUrlRequest = \_ -> data.noOpMsg
+        , onUrlChange = \_ -> data.noOpMsg
+        }
+    , backendApp =
+        { init = ( (), Effect.Command.none )
+        , update = \_ model -> ( model, Effect.Command.none )
+        , updateFromFrontend = \_ _ _ model -> ( model, Effect.Command.none )
+        , subscriptions = \_ -> Effect.Subscription.none
+        }
+    , handleHttpRequest = data.handleHttpRequest
+    , handlePortToJs = data.handlePortToJs
+    , handleFileUpload = data.handleFileUpload
+    , handleMultipleFilesUpload = data.handleMultipleFilesUpload
+    , domain = data.domain
     }
 
 
@@ -371,6 +544,7 @@ httpPartFromInternal part =
 {-| -}
 type TestError
     = CustomError String
+    | UserEventError HtmlId String
     | ClientIdNotFound ClientId
     | ViewTestError String
     | InvalidUrl String
@@ -548,15 +722,14 @@ testErrorToString error =
         CustomError text_ ->
             text_
 
+        UserEventError htmlId text_ ->
+            "User input event for \"" ++ Effect.Browser.Dom.idToString htmlId ++ "\" failed. " ++ text_
+
         ClientIdNotFound clientId ->
             "Client Id " ++ Effect.Lamdera.clientIdToString clientId ++ " not found"
 
         ViewTestError string ->
-            if String.length string > 100 then
-                String.left 100 string ++ "..."
-
-            else
-                string
+            string
 
         InvalidUrl string ->
             string ++ " is not a valid url"
@@ -2504,10 +2677,50 @@ userEvent delay userInputType clientId htmlId event instructions =
                                 handleFrontendUpdate clientId (currentTime state) msg (addEvent (eventType True) Nothing state)
 
                             Err error ->
-                                addEvent
-                                    (eventType False)
-                                    (Just (CustomError ("User input event for " ++ htmlIdString ++ " failed: " ++ error)))
-                                    state
+                                let
+                                    foundNodeEventMissing : String
+                                    foundNodeEventMissing =
+                                        "Event.expectEvent: I found a node, but it does not listen for \""
+                                            ++ Tuple.first event
+                                            ++ "\""
+
+                                    wrongNumberOfNodes : String
+                                    wrongNumberOfNodes =
+                                        "Query.find always expects to find 1 element, but it found "
+
+                                    decodeError : String
+                                    decodeError =
+                                        "Problem with the given value:"
+
+                                    error2 : String
+                                    error2 =
+                                        if String.startsWith decodeError error then
+                                            "I found the node with the correct ID and it has the event listener I'm looking for. But the value passed into it gave the following Json.Decode error:"
+                                                ++ String.dropLeft (String.length decodeError) error
+
+                                        else if String.startsWith wrongNumberOfNodes error then
+                                            case String.dropLeft (String.length wrongNumberOfNodes) error |> String.split " " of
+                                                head :: _ ->
+                                                    case String.toInt head of
+                                                        Just 0 ->
+                                                            "I couldn't find a node with that ID. Make sure you have have Html.Attributes.id \"" ++ htmlIdString ++ "\" in the input node's attributes (or whatever function in your chosen UI package produces this attribute)."
+
+                                                        Just _ ->
+                                                            "I found " ++ head ++ " nodes with Html.Attributes.id \"" ++ htmlIdString ++ "\". I don't know which one to use! Make sure IDs are unique."
+
+                                                        Nothing ->
+                                                            error
+
+                                                [] ->
+                                                    error
+
+                                        else if String.startsWith foundNodeEventMissing error then
+                                            "A node with that ID was found but it's missing an event listener for \"" ++ Tuple.first event ++ "\""
+
+                                        else
+                                            error
+                                in
+                                addEvent (eventType False) (Just (UserEventError htmlId error2)) state
 
                     Nothing ->
                         addEvent (eventType False) (Just (ClientIdNotFound clientId)) state
@@ -3640,6 +3853,7 @@ type alias TestView toBackend frontendMsg frontendModel toFrontend backendMsg ba
     , overlayPosition : OverlayPosition
     , showModel : Bool
     , collapsedFields : SeqDict (List PathNode) CollapsedField
+    , buttonCursor : Maybe { htmlId : HtmlId, x : Float, y : Float }
     }
 
 
@@ -3667,6 +3881,7 @@ type Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     | GotWindowSize Int Int
     | PressedTimelineEvent Int
     | PressedTimeline CurrentTimeline
+    | GotButtonPosition HtmlId (Result Browser.Dom.Error Browser.Dom.Element)
 
 
 {-| -}
@@ -3713,6 +3928,10 @@ viewTest test index stepIndex timelineIndex (Model model) =
         timelines : Array CurrentTimeline
         timelines =
             getTimelines2 state.history
+
+        stepIndex2 : Int
+        stepIndex2 =
+            clamp 0 (Array.length state.history - 1) stepIndex
     in
     ( { model
         | currentTest =
@@ -3721,15 +3940,32 @@ viewTest test index stepIndex timelineIndex (Model model) =
             , steps = state.history
             , timelines = timelines
             , timelineIndex = clamp 0 (Array.length timelines - 1) timelineIndex
-            , stepIndex = clamp 0 (Array.length state.history - 1) stepIndex
+            , stepIndex = stepIndex2
             , overlayPosition = Bottom
             , showModel = False
             , collapsedFields = SeqDict.empty
+            , buttonCursor = Nothing
             }
                 |> Just
       }
         |> Model
-    , Browser.Dom.setViewportOf timelineContainerId 0 0 |> Task.attempt (\_ -> NoOp)
+    , Cmd.batch
+        [ Browser.Dom.getViewportOf timelineContainerId
+            |> Task.andThen
+                (\{ viewport } ->
+                    Browser.Dom.setViewportOf
+                        timelineContainerId
+                        (toFloat stepIndex2 * timelineColumnWidth + viewport.width / -2)
+                        0
+                )
+            |> Task.attempt (\_ -> NoOp)
+        , case Array.get stepIndex2 state.history of
+            Just step ->
+                getButtonPosition step
+
+            Nothing ->
+                Cmd.none
+        ]
     )
 
 
@@ -3855,7 +4091,18 @@ update config msg (Model model) =
             updateCurrentTest (\currentTest -> ( { currentTest | showModel = True }, Cmd.none )) (Model model)
 
         PressedHideModel ->
-            updateCurrentTest (\currentTest -> ( { currentTest | showModel = False }, Cmd.none )) (Model model)
+            updateCurrentTest
+                (\currentTest ->
+                    ( { currentTest | showModel = False }
+                    , case Array.get currentTest.stepIndex currentTest.steps of
+                        Just step ->
+                            getButtonPosition step
+
+                        Nothing ->
+                            Cmd.none
+                    )
+                )
+                (Model model)
 
         PressedExpandField pathNodes ->
             updateCurrentTest
@@ -3926,7 +4173,19 @@ update config msg (Model model) =
                 (Model model)
 
         GotWindowSize width height ->
-            ( Model { model | windowSize = ( width, height ) }, Cmd.none )
+            ( Model { model | windowSize = ( width, height ) }
+            , case model.currentTest of
+                Just currentTest ->
+                    case Array.get currentTest.stepIndex currentTest.steps of
+                        Just step ->
+                            getButtonPosition step
+
+                        Nothing ->
+                            Cmd.none
+
+                Nothing ->
+                    Cmd.none
+            )
 
         PressedTimelineEvent stepIndex ->
             updateCurrentTest (stepTo stepIndex) (Model model)
@@ -3940,6 +4199,27 @@ update config msg (Model model) =
 
                         Nothing ->
                             ( currentTest, Cmd.none )
+                )
+                (Model model)
+
+        GotButtonPosition htmlId result ->
+            updateCurrentTest
+                (\currentTest ->
+                    ( { currentTest
+                        | buttonCursor =
+                            case result of
+                                Ok { element } ->
+                                    Just
+                                        { htmlId = htmlId
+                                        , x = element.x + element.width / 2
+                                        , y = element.y + element.height / 2
+                                        }
+
+                                Err _ ->
+                                    Nothing
+                      }
+                    , Cmd.none
+                    )
                 )
                 (Model model)
     )
@@ -3973,7 +4253,7 @@ runTests tests (Model model) =
             )
 
         Nothing ->
-            ( Model model, Cmd.none )
+            ( Model { model | tests = Just (Ok tests) }, Cmd.none )
 
 
 {-| -}
@@ -4048,19 +4328,40 @@ stepTo stepIndex currentTest =
                     writeLocalStorage currentTest.testName stepIndex timelineIndex
             in
             ( { currentTest | stepIndex = stepIndex, timelineIndex = timelineIndex }
-            , Browser.Dom.getElement timelineContainerId
-                |> Task.andThen
-                    (\container ->
-                        Browser.Dom.setViewportOf
-                            timelineContainerId
-                            (toFloat stepIndex * timelineColumnWidth - container.element.width / 2)
-                            0
-                    )
-                |> Task.attempt (\_ -> NoOp)
+            , Cmd.batch
+                [ Browser.Dom.getElement timelineContainerId
+                    |> Task.andThen
+                        (\container ->
+                            Browser.Dom.setViewportOf
+                                timelineContainerId
+                                (toFloat stepIndex * timelineColumnWidth - container.element.width / 2)
+                                0
+                        )
+                    |> Task.attempt (\_ -> NoOp)
+                , getButtonPosition step
+                ]
             )
 
         Nothing ->
             ( currentTest, Cmd.none )
+
+
+getButtonPosition :
+    Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+getButtonPosition step =
+    case step.eventType of
+        UserInputEvent { inputType } ->
+            case inputType of
+                UserClicksButton htmlId ->
+                    Browser.Dom.getElement (Effect.Browser.Dom.idToString htmlId)
+                        |> Task.attempt (GotButtonPosition htmlId)
+
+                _ ->
+                    Cmd.none
+
+        _ ->
+            Cmd.none
 
 
 {-| -}
@@ -4509,16 +4810,35 @@ view (Model model) =
                                 testView (Tuple.first model.windowSize) instructions testView_
 
                             Nothing ->
-                                [ text "Invalid index for tests" ]
+                                [ overviewContainer
+                                    [ Html.b
+                                        [ Html.Attributes.style "color" errorColor
+                                        , Html.Attributes.style "padding" "4px"
+                                        ]
+                                        [ Html.text "Invalid index for tests" ]
+                                    ]
+                                ]
 
                     Nothing ->
                         [ overview tests model.testResults ]
 
             Just (Err error) ->
-                [ fileLoadErrorToString error |> text ]
+                [ overviewContainer
+                    [ Html.b
+                        [ Html.Attributes.style "color" errorColor
+                        , Html.Attributes.style "padding" "4px"
+                        ]
+                        [ Html.text (fileLoadErrorToString error) ]
+                    ]
+                ]
 
             Nothing ->
-                [ text "Loading files for tests..." ]
+                [ overviewContainer
+                    [ Html.div
+                        [ defaultFontColor ]
+                        [ text "Loading files for tests..." ]
+                    ]
+                ]
     }
 
 
@@ -4564,47 +4884,70 @@ overview :
     -> List (Result TestError ())
     -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 overview tests testResults_ =
-    List.foldl
-        (\test { index, testResults, elements } ->
-            { index = index + 1
-            , testResults = List.drop 1 testResults
-            , elements =
-                Html.div
-                    [ Html.Attributes.style "padding-bottom" "4px" ]
-                    [ button (PressedViewTest index) (getTestName test)
-                    , case testResults of
-                        (Ok ()) :: _ ->
-                            Html.span
-                                [ Html.Attributes.style "color" "rgb(0, 200, 0)"
-                                , Html.Attributes.style "padding" "4px"
-                                ]
-                                [ Html.text "Passed" ]
-
-                        (Err head) :: _ ->
-                            Html.span
-                                [ Html.Attributes.style "color" "rgb(200, 10, 10)"
-                                , Html.Attributes.style "padding" "4px"
-                                ]
-                                [ Html.text (testErrorToString head) ]
-
-                        [] ->
-                            Html.text ""
+    let
+        overviewBody =
+            case tests of
+                [] ->
+                    [ Html.div
+                        [ defaultFontColor
+                        , Html.Attributes.style "padding" "4px"
+                        ]
+                        [ Html.text "You don't have any tests written yet!" ]
                     ]
-                    :: elements
-            }
-        )
-        { index = 0, testResults = testResults_, elements = [] }
-        tests
-        |> .elements
-        |> List.reverse
-        |> (::) (titleText "End to end test viewer")
-        |> Html.div
-            [ Html.Attributes.style "padding" "8px"
-            , Html.Attributes.style "font-family" "arial"
-            , Html.Attributes.style "font-size" "16px"
-            , darkBackground
-            , Html.Attributes.style "height" "100vh"
-            ]
+
+                _ ->
+                    List.foldl
+                        (\test { index, testResults, elements } ->
+                            { index = index + 1
+                            , testResults = List.drop 1 testResults
+                            , elements =
+                                Html.div
+                                    [ Html.Attributes.style "padding-bottom" "4px" ]
+                                    [ button (PressedViewTest index) (getTestName test)
+                                    , case testResults of
+                                        (Ok ()) :: _ ->
+                                            Html.span
+                                                [ Html.Attributes.style "color" "rgb(0, 200, 0)"
+                                                , Html.Attributes.style "padding" "4px"
+                                                ]
+                                                [ Html.text "Passed" ]
+
+                                        (Err head) :: _ ->
+                                            let
+                                                error =
+                                                    testErrorToString head
+                                            in
+                                            Html.b
+                                                [ Html.Attributes.style "color" errorColor
+                                                , Html.Attributes.style "padding" "4px"
+                                                , Html.Attributes.style "white-space" "pre-wrap"
+                                                ]
+                                                [ Html.text error ]
+
+                                        [] ->
+                                            Html.text ""
+                                    ]
+                                    :: elements
+                            }
+                        )
+                        { index = 0, testResults = testResults_, elements = [] }
+                        tests
+                        |> .elements
+                        |> List.reverse
+    in
+    overviewContainer overviewBody
+
+
+overviewContainer : List (Html msg) -> Html msg
+overviewContainer body =
+    Html.div
+        [ Html.Attributes.style "padding" "8px"
+        , Html.Attributes.style "font-family" "arial"
+        , Html.Attributes.style "font-size" "16px"
+        , darkBackground
+        , Html.Attributes.style "height" "100vh"
+        ]
+        (titleText "End to end test viewer" :: body)
 
 
 {-| -}
@@ -4678,10 +5021,7 @@ overlaySelectButton isSelected onPress text_ =
 {-| -}
 text : String -> Html msg
 text text_ =
-    Html.div
-        [ Html.Attributes.style "padding" "4px"
-        ]
-        [ Html.text text_ ]
+    Html.div [ Html.Attributes.style "padding" "4px" ] [ Html.text text_ ]
 
 
 {-| -}
@@ -5964,8 +6304,17 @@ testView windowWidth instructions testView_ =
                                     UserPointerDownEvent _ pointerEvent ->
                                         [ drawCursor pointerEvent ]
 
-                                    UserClicksButton _ ->
-                                        []
+                                    UserClicksButton htmlId ->
+                                        case testView_.buttonCursor of
+                                            Just buttonCursor ->
+                                                if buttonCursor.htmlId == htmlId then
+                                                    [ drawCursor ( buttonCursor.x, buttonCursor.y ) ]
+
+                                                else
+                                                    []
+
+                                            Nothing ->
+                                                []
 
                                     UserInputsText _ _ ->
                                         []
@@ -6083,8 +6432,12 @@ centeredText : String -> Html msg
 centeredText text2 =
     Html.div
         [ Html.Attributes.style "position" "absolute"
-        , Html.Attributes.style "left" "45%"
+        , Html.Attributes.style "text-align" "center"
         , Html.Attributes.style "top" "400px"
+        , Html.Attributes.style "font-size" "20px"
+        , Html.Attributes.style "font-family" "sans-serif"
+        , Html.Attributes.style "width" "100%"
+        , Html.Attributes.style "color" "rgb(40, 40, 40)"
         ]
         [ Html.text text2 ]
 
@@ -6231,10 +6584,18 @@ testOverlay windowWidth testView_ currentStep =
             ]
         , timelineView windowWidth testView_
         , currentStepText currentStep testView_
-        , Html.div
-            [ Html.Attributes.style "color" "rgb(200, 10, 10)", Html.Attributes.style "padding" "4px" ]
+        , Html.b
+            [ Html.Attributes.style "color" errorColor
+            , Html.Attributes.style "padding" "4px"
+            , Html.Attributes.style "white-space" "pre-wrap"
+            ]
             (List.map (\a -> testErrorToString a |> text) currentStep.testErrors)
         ]
+
+
+errorColor : String
+errorColor =
+    "rgb(250, 100, 110)"
 
 
 {-| -}
