@@ -8,6 +8,7 @@
         "Effect.Command",
         "Effect.Http",
         "Effect.File",
+        "Effect.Browser",
         "Effect.Browser.Dom",
         "Effect.Browser.Events",
         "Effect.Browser.Navigation",

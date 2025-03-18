@@ -6,12 +6,6 @@ module DebugParser exposing
     , valueToElmValue
     )
 
-{-|
-
-@docs parse
-
--}
-
 import Elm.Kernel.DebugParser
 import SeqDict exposing (SeqDict)
 

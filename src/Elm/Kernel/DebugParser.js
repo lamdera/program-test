@@ -3,6 +3,8 @@
 import Elm.Kernel.Utils exposing (Tuple2)
 import Array exposing (toList)
 import Dict exposing (toList)
+import SeqDict exposing (fromList, toList)
+import SeqSet exposing (toList)
 import Set exposing (toList)
 import DebugParser exposing (Plain, Expandable, ElmString, ElmChar, ElmNumber, ElmBool, ElmFunction, ElmInternals, ElmUnit, ElmFile, ElmBytes, ElmSequence, ElmType, ElmRecord, ElmDict, SeqSet, SeqList, SeqArray, SeqTuple)
 
@@ -65,48 +67,67 @@ function _DebugParser_toAnsiString(value)
 			return __DebugParser_Expandable(A2(__DebugParser_ElmSequence, __DebugParser_SeqTuple, _List_fromArray(output)));
 		}
 
-		if (tag === 'Set_elm_builtin')
-		{
-		    var value2 = __Set_toList(value);
-		    var output = [];
-            for (; value2.b; value2 = value2.b) // WHILE_CONS
-            {
-                output.push(_DebugParser_toAnsiString(value2.a));
+        switch(tag) {
+            case 'SeqSet_elm_builtin': {
+                var value2 = __SeqSet_toList(value);
+                var output = [];
+                for (; value2.b; value2 = value2.b) // WHILE_CONS
+                {
+                    output.push(_DebugParser_toAnsiString(value2.a));
+                }
+                return __DebugParser_Expandable(A2(__DebugParser_ElmSequence, __DebugParser_SeqSet, _List_fromArray(output)));
             }
-            return __DebugParser_Expandable(A2(__DebugParser_ElmSequence, __DebugParser_SeqSet, _List_fromArray(output)));
-		}
-
-		if (tag === 'RBNode_elm_builtin' || tag === 'RBEmpty_elm_builtin')
-		{
-            var value2 = __Dict_toList(value);
-            var output = [];
-            for (; value2.b; value2 = value2.b) // WHILE_CONS
-            {
-                output.push(__Utils_Tuple2(_DebugParser_toAnsiString(value2.a.a), _DebugParser_toAnsiString(value2.a.b)));
+            case 'Set_elm_builtin': {
+                var value2 = __Set_toList(value);
+                var output = [];
+                for (; value2.b; value2 = value2.b) // WHILE_CONS
+                {
+                    output.push(_DebugParser_toAnsiString(value2.a));
+                }
+                return __DebugParser_Expandable(A2(__DebugParser_ElmSequence, __DebugParser_SeqSet, _List_fromArray(output)));
             }
-            return __DebugParser_Expandable(__DebugParser_ElmDict(_List_fromArray(output)));
-		}
-
-		if (tag === 'Array_elm_builtin')
-		{
-            var value2 = __Array_toList(value);
-            var output = [];
-            for (; value2.b; value2 = value2.b) // WHILE_CONS
+            case 'SeqDict_elm_builtin':
             {
-                output.push(_DebugParser_toAnsiString(value2.a));
+                var value2 = __SeqDict_toList(value);
+                var output = [];
+                for (; value2.b; value2 = value2.b) // WHILE_CONS
+                {
+                    output.push(__Utils_Tuple2(_DebugParser_toAnsiString(value2.a.a), _DebugParser_toAnsiString(value2.a.b)));
+                }
+                return __DebugParser_Expandable(__DebugParser_ElmDict(__SeqDict_fromList(_List_fromArray(output))));
             }
-            return __DebugParser_Expandable(A2(__DebugParser_ElmSequence, __DebugParser_SeqArray, _List_fromArray(output)));
-		}
-
-		if (tag === '::' || tag === '[]')
-		{
-            var output = [];
-            for (; value.b; value = value.b) // WHILE_CONS
+            case 'RBNode_elm_builtin':
+            case 'RBEmpty_elm_builtin':
             {
-                output.push(_DebugParser_toAnsiString(value.a));
+                var value2 = __Dict_toList(value);
+                var output = [];
+                for (; value2.b; value2 = value2.b) // WHILE_CONS
+                {
+                    output.push(__Utils_Tuple2(_DebugParser_toAnsiString(value2.a.a), _DebugParser_toAnsiString(value2.a.b)));
+                }
+                return __DebugParser_Expandable(__DebugParser_ElmDict(__SeqDict_fromList(_List_fromArray(output))));
             }
-            return __DebugParser_Expandable(A2(__DebugParser_ElmSequence, __DebugParser_SeqList, _List_fromArray(output)));
-		}
+            case 'Array_elm_builtin':
+            {
+                var value2 = __Array_toList(value);
+                var output = [];
+                for (; value2.b; value2 = value2.b) // WHILE_CONS
+                {
+                    output.push(_DebugParser_toAnsiString(value2.a));
+                }
+                return __DebugParser_Expandable(A2(__DebugParser_ElmSequence, __DebugParser_SeqArray, _List_fromArray(output)));
+            }
+            case '::':
+            case '[]':
+            {
+                var output = [];
+                for (; value.b; value = value.b) // WHILE_CONS
+                {
+                    output.push(_DebugParser_toAnsiString(value.a));
+                }
+                return __DebugParser_Expandable(A2(__DebugParser_ElmSequence, __DebugParser_SeqList, _List_fromArray(output)));
+            }
+        }
 
         var output = [];
         for (var i in value)

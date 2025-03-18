@@ -484,7 +484,11 @@ treeViewDiff msgConfig depth currentPath collapsedFields oldValue value =
                                             { onPress = msgConfig.pressedExpandField nextPath
                                             , label = htmlText (fieldName ++ ": ")
                                             }
-                                        , Html.Lazy.lazy2 collapsedValueDiff oldElmValue elmValue
+                                        , htmlEl
+                                            [ Html.Events.onClick (msgConfig.pressedExpandField nextPath)
+                                            , Html.Attributes.style "cursor" "pointer"
+                                            ]
+                                            (Html.Lazy.lazy2 collapsedValueDiff oldElmValue elmValue)
                                         ]
 
                                 else
