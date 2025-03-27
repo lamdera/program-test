@@ -202,7 +202,7 @@ configForDocument :
     { flags : flags
     , noOpMsg : frontendMsg
     , frontendApp :
-        { init : flags -> Url.Url -> Effect.Browser.Navigation.Key -> ( frontendModel, Command FrontendOnly Never frontendMsg )
+        { init : flags -> ( frontendModel, Command FrontendOnly Never frontendMsg )
         , view : frontendModel -> Browser.Document frontendMsg
         , update : frontendMsg -> frontendModel -> ( frontendModel, Command FrontendOnly Never frontendMsg )
         , subscriptions : frontendModel -> Subscription FrontendOnly frontendMsg
@@ -216,7 +216,7 @@ configForDocument :
     -> Config Never frontendMsg frontendModel Never Never ()
 configForDocument data =
     { frontendApp =
-        { init = data.frontendApp.init data.flags
+        { init = \_ _ -> data.frontendApp.init data.flags
         , update = data.frontendApp.update
         , updateFromBackend = \_ model -> ( model, Effect.Command.none )
         , view = data.frontendApp.view
@@ -244,7 +244,7 @@ configForElement :
     { flags : flags
     , noOpMsg : frontendMsg
     , frontendApp :
-        { init : flags -> Url.Url -> Effect.Browser.Navigation.Key -> ( frontendModel, Command FrontendOnly Never frontendMsg )
+        { init : flags -> ( frontendModel, Command FrontendOnly Never frontendMsg )
         , view : frontendModel -> Html frontendMsg
         , update : frontendMsg -> frontendModel -> ( frontendModel, Command FrontendOnly Never frontendMsg )
         , subscriptions : frontendModel -> Subscription FrontendOnly frontendMsg
@@ -258,7 +258,7 @@ configForElement :
     -> Config Never frontendMsg frontendModel Never Never ()
 configForElement data =
     { frontendApp =
-        { init = data.frontendApp.init data.flags
+        { init = \_ _ -> data.frontendApp.init data.flags
         , update = data.frontendApp.update
         , updateFromBackend = \_ model -> ( model, Effect.Command.none )
         , view = \model -> { title = "", body = [ data.frontendApp.view model ] }
