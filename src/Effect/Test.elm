@@ -674,7 +674,16 @@ checkView clientId delay query instructions =
                             Just { description } ->
                                 addEvent
                                     (CheckStateEvent { checkType = CheckFrontendView clientId, isSuccessful = False })
-                                    (Just (ViewTestError description))
+                                    ((case String.split "▼ " description |> List.reverse |> List.head of
+                                        Just error ->
+                                            "The following view check failed: " ++ error
+
+                                        Nothing ->
+                                            ""
+                                     )
+                                        |> ViewTestError
+                                        |> Just
+                                    )
                                     state
 
                             Nothing ->
@@ -2556,39 +2565,49 @@ clickLink clientId delay data instructions =
             (\state ->
                 case SeqDict.get clientId state.frontends of
                     Just frontend ->
-                        case
-                            state.frontendApp.view frontend.model
-                                |> .body
-                                |> Html.div []
-                                |> Test.Html.Query.fromHtml
-                                |> Test.Html.Query.findAll [ Test.Html.Selector.attribute (Html.Attributes.href data) ]
-                                |> Test.Html.Query.count
-                                    (\count ->
-                                        if count > 0 then
-                                            Expect.pass
+                        if String.startsWith "http://" data || String.startsWith "https://" data then
+                            addEvent
+                                (event False)
+                                ("This event is for internal links like /home or /user/?a=0. Simulating the user clicking on links that lead to another website is not supported."
+                                    |> CustomError
+                                    |> Just
+                                )
+                                state
 
-                                        else
-                                            Expect.fail ("Expected at least one link pointing to " ++ data)
-                                    )
-                                |> Test.Runner.getFailureReason
-                        of
-                            Nothing ->
-                                case normalizeUrl state.domain data of
-                                    Just url ->
-                                        handleFrontendUpdate
-                                            clientId
-                                            (currentTime state)
-                                            (state.frontendApp.onUrlRequest (Internal url))
-                                            (addEvent (event True) Nothing state)
+                        else
+                            case
+                                state.frontendApp.view frontend.model
+                                    |> .body
+                                    |> Html.div []
+                                    |> Test.Html.Query.fromHtml
+                                    |> Test.Html.Query.findAll [ Test.Html.Selector.attribute (Html.Attributes.href data) ]
+                                    |> Test.Html.Query.count
+                                        (\count ->
+                                            if count > 0 then
+                                                Expect.pass
 
-                                    Nothing ->
-                                        addEvent (event False) (Just (InvalidUrl data)) state
+                                            else
+                                                Expect.fail ("Expected at least one link pointing to " ++ data)
+                                        )
+                                    |> Test.Runner.getFailureReason
+                            of
+                                Nothing ->
+                                    case normalizeUrl state.domain data of
+                                        Just url ->
+                                            handleFrontendUpdate
+                                                clientId
+                                                (currentTime state)
+                                                (state.frontendApp.onUrlRequest (Internal url))
+                                                (addEvent (event True) Nothing state)
 
-                            Just _ ->
-                                addEvent
-                                    (event False)
-                                    (Just (CustomError ("Clicking link failed for " ++ data)))
-                                    state
+                                        Nothing ->
+                                            addEvent (event False) (Just (InvalidUrl data)) state
+
+                                Just _ ->
+                                    addEvent
+                                        (event False)
+                                        (Just (CustomError ("Couldn't find a link pointing to \"" ++ data ++ "\"")))
+                                        state
 
                     Nothing ->
                         addEvent (event False) (Just (ClientIdNotFound clientId)) state
