@@ -5,6 +5,7 @@ module Effect.Test exposing
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions
     , startHeadless, HeadlessMsg
     , Button, CurrentTimeline, Event, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, TestView, Touch, TouchEvent
+    , Action
     )
 
 {-|
@@ -395,27 +396,37 @@ type Instructions toBackend frontendMsg frontendModel toFrontend backendMsg back
     | Start (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 
 
+{-| -}
+type Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    = Action
+        (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        )
+
+
 {-| Make the test fail if it doesn't seem some condition.
 -}
 checkState :
     DelayInMs
     -> (Data frontendModel backendModel -> Result String ())
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-checkState delay checkFunc instructions =
-    wait (Duration.milliseconds delay) instructions
-        |> NextStep
-            (\state ->
-                case checkFunc (stateToData state) of
-                    Ok () ->
-                        addEvent (CheckStateEvent { checkType = CheckState, isSuccessful = True }) Nothing state
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+checkState delay checkFunc =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        case checkFunc (stateToData state) of
+                            Ok () ->
+                                addEvent (CheckStateEvent { checkType = CheckState, isSuccessful = True }) Nothing state
 
-                    Err error ->
-                        addEvent
-                            (CheckStateEvent { checkType = CheckState, isSuccessful = False })
-                            (Just (CustomError error))
-                            state
-            )
+                            Err error ->
+                                addEvent
+                                    (CheckStateEvent { checkType = CheckState, isSuccessful = False })
+                                    (Just (CustomError error))
+                                    state
+                    )
+        )
 
 
 {-| Make the test fail if the backend model doesn't seem some condition.
@@ -423,22 +434,24 @@ checkState delay checkFunc instructions =
 checkBackend :
     DelayInMs
     -> (backendModel -> Result String ())
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-checkBackend delay checkFunc instructions =
-    wait (Duration.milliseconds delay) instructions
-        |> NextStep
-            (\state ->
-                case checkFunc state.model of
-                    Ok () ->
-                        addEvent (CheckStateEvent { checkType = CheckBackend, isSuccessful = True }) Nothing state
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+checkBackend delay checkFunc =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        case checkFunc state.model of
+                            Ok () ->
+                                addEvent (CheckStateEvent { checkType = CheckBackend, isSuccessful = True }) Nothing state
 
-                    Err error ->
-                        addEvent
-                            (CheckStateEvent { checkType = CheckBackend, isSuccessful = False })
-                            (Just (CustomError error))
-                            state
-            )
+                            Err error ->
+                                addEvent
+                                    (CheckStateEvent { checkType = CheckBackend, isSuccessful = False })
+                                    (Just (CustomError error))
+                                    state
+                    )
+        )
 
 
 {-| -}
@@ -446,33 +459,35 @@ checkFrontend :
     ClientId
     -> DelayInMs
     -> (frontendModel -> Result String ())
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-checkFrontend clientId delay checkFunc instructions =
-    wait (Duration.milliseconds delay) instructions
-        |> NextStep
-            (\state ->
-                case SeqDict.get clientId state.frontends of
-                    Just frontend ->
-                        case checkFunc frontend.model of
-                            Ok () ->
-                                addEvent
-                                    (CheckStateEvent { checkType = CheckFrontendState clientId, isSuccessful = True })
-                                    Nothing
-                                    state
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+checkFrontend clientId delay checkFunc =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                case checkFunc frontend.model of
+                                    Ok () ->
+                                        addEvent
+                                            (CheckStateEvent { checkType = CheckFrontendState clientId, isSuccessful = True })
+                                            Nothing
+                                            state
 
-                            Err error ->
+                                    Err error ->
+                                        addEvent
+                                            (CheckStateEvent { checkType = CheckFrontendState clientId, isSuccessful = False })
+                                            (Just (CustomError error))
+                                            state
+
+                            Nothing ->
                                 addEvent
                                     (CheckStateEvent { checkType = CheckFrontendState clientId, isSuccessful = False })
-                                    (Just (CustomError error))
+                                    (Just (ClientIdNotFound clientId))
                                     state
-
-                    Nothing ->
-                        addEvent
-                            (CheckStateEvent { checkType = CheckFrontendState clientId, isSuccessful = False })
-                            (Just (ClientIdNotFound clientId))
-                            state
-            )
+                    )
+        )
 
 
 {-| -}
@@ -480,40 +495,42 @@ checkView :
     ClientId
     -> DelayInMs
     -> (Test.Html.Query.Single frontendMsg -> Expectation)
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-checkView clientId delay query instructions =
-    wait (Duration.milliseconds delay) instructions
-        |> NextStep
-            (\state ->
-                case SeqDict.get clientId state.frontends of
-                    Just frontend ->
-                        case
-                            state.frontendApp.view frontend.model
-                                |> .body
-                                |> Html.div []
-                                |> Test.Html.Query.fromHtml
-                                |> query
-                                |> Test.Runner.getFailureReason
-                        of
-                            Just { description } ->
-                                addEvent
-                                    (CheckStateEvent { checkType = CheckFrontendView clientId, isSuccessful = False })
-                                    (Just (ViewTestError description))
-                                    state
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+checkView clientId delay query =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                case
+                                    state.frontendApp.view frontend.model
+                                        |> .body
+                                        |> Html.div []
+                                        |> Test.Html.Query.fromHtml
+                                        |> query
+                                        |> Test.Runner.getFailureReason
+                                of
+                                    Just { description } ->
+                                        addEvent
+                                            (CheckStateEvent { checkType = CheckFrontendView clientId, isSuccessful = False })
+                                            (Just (ViewTestError description))
+                                            state
+
+                                    Nothing ->
+                                        addEvent
+                                            (CheckStateEvent { checkType = CheckFrontendView clientId, isSuccessful = True })
+                                            Nothing
+                                            state
 
                             Nothing ->
                                 addEvent
-                                    (CheckStateEvent { checkType = CheckFrontendView clientId, isSuccessful = True })
-                                    Nothing
+                                    (CheckStateEvent { checkType = CheckFrontendView clientId, isSuccessful = False })
+                                    (Just (ClientIdNotFound clientId))
                                     state
-
-                    Nothing ->
-                        addEvent
-                            (CheckStateEvent { checkType = CheckFrontendView clientId, isSuccessful = False })
-                            (Just (ClientIdNotFound clientId))
-                            state
-            )
+                    )
+        )
 
 
 {-| -}
@@ -521,23 +538,25 @@ frontendUpdate :
     ClientId
     -> DelayInMs
     -> frontendMsg
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-frontendUpdate clientId delay msg instructions =
-    let
-        event : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        event =
-            TestEvent (Just clientId) ("Trigger frontend update: " ++ Debug.toString msg)
-    in
-    wait (Duration.milliseconds delay) instructions
-        |> NextStep
-            (\state ->
-                if SeqDict.member clientId state.frontends then
-                    addEvent event Nothing state |> handleFrontendUpdate clientId (currentTime state) msg
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+frontendUpdate clientId delay msg =
+    Action
+        (\instructions ->
+            let
+                event : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                event =
+                    TestEvent (Just clientId) ("Trigger frontend update: " ++ Debug.toString msg)
+            in
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        if SeqDict.member clientId state.frontends then
+                            addEvent event Nothing state |> handleFrontendUpdate clientId (currentTime state) msg
 
-                else
-                    addEvent event (Just (ClientIdNotFound clientId)) state
-            )
+                        else
+                            addEvent event (Just (ClientIdNotFound clientId)) state
+                    )
+        )
 
 
 {-| -}
@@ -793,144 +812,123 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         -> HtmlId
         -> KeyEvent
         -> List KeyOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , keyUp :
         DelayInMs
         -> HtmlId
         -> KeyEvent
         -> List KeyOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , pointerDown :
         DelayInMs
         -> HtmlId
         -> PointerEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , pointerUp :
         DelayInMs
         -> HtmlId
         -> PointerEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , pointerEnter :
         DelayInMs
         -> HtmlId
         -> PointerEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , pointerOut :
         DelayInMs
         -> HtmlId
         -> PointerEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , pointerCancel :
         DelayInMs
         -> HtmlId
         -> PointerEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , pointerMove :
         DelayInMs
         -> HtmlId
         -> PointerEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , pointerLeave :
         DelayInMs
         -> HtmlId
         -> PointerEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , pointerOver :
         DelayInMs
         -> HtmlId
         -> PointerEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , touchStart :
         DelayInMs
         -> HtmlId
         -> TouchEvent
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , touchMove :
         DelayInMs
         -> HtmlId
         -> TouchEvent
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , touchEnd :
         DelayInMs
         -> HtmlId
         -> TouchEvent
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , touchCancel :
         DelayInMs
         -> HtmlId
         -> TouchEvent
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , mouseDown :
         DelayInMs
         -> HtmlId
         -> MouseEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , mouseUp :
         DelayInMs
         -> HtmlId
         -> MouseEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , mouseEnter :
         DelayInMs
         -> HtmlId
         -> MouseEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , mouseOut :
         DelayInMs
         -> HtmlId
         -> MouseEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , mouseMove :
         DelayInMs
         -> HtmlId
         -> MouseEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , mouseLeave :
         DelayInMs
         -> HtmlId
         -> MouseEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , mouseOver :
         DelayInMs
         -> HtmlId
         -> MouseEvent
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , wheel :
         DelayInMs
         -> HtmlId
@@ -938,71 +936,58 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         -> ( Float, Float )
         -> List WheelOptions
         -> List PointerOptions
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , focus :
         DelayInMs
         -> HtmlId
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , blur :
         DelayInMs
         -> HtmlId
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , click :
         DelayInMs
         -> HtmlId
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , input :
         DelayInMs
         -> HtmlId
         -> String
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , clickLink :
         DelayInMs
         -> String
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , resizeWindow :
         DelayInMs
         -> { width : Int, height : Int }
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , checkView :
         DelayInMs
         -> (Test.Html.Query.Single frontendMsg -> Expectation)
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , update :
         DelayInMs
         -> frontendMsg
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , sendToBackend :
         DelayInMs
         -> toBackend
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , snapshotView :
         DelayInMs
         -> { name : String }
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , checkModel :
         DelayInMs
         -> (frontendModel -> Result String ())
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , custom :
         DelayInMs
         -> HtmlId
         -> String
         -> Json.Encode.Value
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     }
 
 
@@ -1093,9 +1078,9 @@ start :
     String
     -> Time.Posix
     -> Config toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> List (Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-start testName startTime2 config instructions =
+start testName startTime2 config actions =
     let
         ( backend, cmd ) =
             config.backendApp.init
@@ -1127,16 +1112,15 @@ start testName startTime2 config instructions =
             }
                 |> addEvent (BackendInitEvent cmd) Nothing
     in
-    foldList instructions (Start state)
+    foldList (List.map (\(Action a) -> a) actions) (Start state)
 
 
 {-| -}
 group :
-    List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-group list instructions =
-    AndThen (\state -> foldList list (Start state)) instructions
+    List (Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+group list =
+    Action (AndThen (\state -> foldList (List.map (\(Action a) -> a) list) (Start state)))
 
 
 {-| -}
@@ -1186,18 +1170,20 @@ getTimers backendSub =
 backendUpdate :
     DelayInMs
     -> backendMsg
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-backendUpdate delayInMs backendMsg instructions =
-    wait (Duration.milliseconds delayInMs) instructions
-        |> NextStep
-            (\state ->
-                handleBackendUpdate
-                    (currentTime state)
-                    state.backendApp
-                    backendMsg
-                    (addEvent (TestEvent Nothing ("Trigger BackendMsg: " ++ Debug.toString backendMsg)) Nothing state)
-            )
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+backendUpdate delayInMs backendMsg =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delayInMs) instructions
+                |> NextStep
+                    (\state ->
+                        handleBackendUpdate
+                            (currentTime state)
+                            state.backendApp
+                            backendMsg
+                            (addEvent (TestEvent Nothing ("Trigger BackendMsg: " ++ Debug.toString backendMsg)) Nothing state)
+                    )
+        )
 
 
 {-| -}
@@ -1283,114 +1269,100 @@ connectFrontend :
         (FrontendActions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
          ->
             List
-                (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                 -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                )
+                (Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         )
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-connectFrontend delay sessionId url windowSize andThenFunc instructions =
-    wait (Duration.milliseconds delay) instructions
-        |> AndThen
-            (\state ->
-                let
-                    state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                    state2 =
-                        { state
-                            | frontends =
-                                SeqDict.insert
-                                    clientId
-                                    { model = frontend
-                                    , sessionId = sessionId
-                                    , pendingEffects = Array.fromList [ { cmds = cmd, stepIndex = Array.length state.history } ]
-                                    , toFrontend = []
-                                    , timers = getTimers subscriptions |> SeqDict.map (\_ _ -> { startTime = currentTime state })
-                                    , url = url
-                                    , windowSize = windowSize
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+connectFrontend delay sessionId url windowSize andThenFunc =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> AndThen
+                    (\state ->
+                        let
+                            state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                            state2 =
+                                { state
+                                    | frontends =
+                                        SeqDict.insert
+                                            clientId
+                                            { model = frontend
+                                            , sessionId = sessionId
+                                            , pendingEffects = Array.fromList [ { cmds = cmd, stepIndex = Array.length state.history } ]
+                                            , toFrontend = []
+                                            , timers = getTimers subscriptions |> SeqDict.map (\_ _ -> { startTime = currentTime state })
+                                            , url = url
+                                            , windowSize = windowSize
+                                            }
+                                            state.frontends
+                                    , counter = state.counter + 1
+                                }
+                                    |> addEvent (FrontendInitEvent clientId cmd) Nothing
+
+                            clientId : ClientId
+                            clientId =
+                                "clientId " ++ String.fromInt state.counter |> Effect.Lamdera.clientIdFromString
+
+                            ( frontend, cmd ) =
+                                state.frontendApp.init
+                                    (normalizeUrl state.domain url |> Maybe.withDefault state.domain)
+                                    (Effect.Browser.Navigation.fromInternalKey MockNavigationKey)
+
+                            subscriptions : Subscription FrontendOnly frontendMsg
+                            subscriptions =
+                                state.frontendApp.subscriptions frontend
+
+                            list :
+                                List
+                                    (Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+                            list =
+                                andThenFunc
+                                    { clientId = clientId
+                                    , keyDown = keyDown clientId
+                                    , keyUp = keyUp clientId
+                                    , pointerDown = userPointerEvent "pointerdown" UserPointerDownEvent clientId
+                                    , pointerUp = userPointerEvent "pointerup" UserPointerUpEvent clientId
+                                    , pointerEnter = userPointerEvent "pointerenter" UserPointerEnterEvent clientId
+                                    , pointerOut = userPointerEvent "pointerout" UserPointerOutEvent clientId
+                                    , pointerCancel = userPointerEvent "pointercancel" UserPointerCancelEvent clientId
+                                    , pointerMove = userPointerEvent "pointermove" UserPointerMoveEvent clientId
+                                    , pointerLeave = userPointerEvent "pointerleave" UserPointerLeaveEvent clientId
+                                    , pointerOver = userPointerEvent "pointerover" UserPointerOverEvent clientId
+                                    , touchCancel = userTouchEvent "touchcancel" UserTouchCancelEvent clientId
+                                    , touchStart = userTouchEvent "touchstart" UserTouchStartEvent clientId
+                                    , touchEnd = userTouchEvent "touchend" UserTouchEndEvent clientId
+                                    , touchMove = userTouchEvent "touchmove" UserTouchMoveEvent clientId
+                                    , mouseEnter = userMouseEvent "mouseenter" UserMouseEnterEvent clientId
+                                    , mouseLeave = userMouseEvent "mouseleave" UserMouseLeaveEvent clientId
+                                    , mouseUp = userMouseEvent "mouseup" UserMouseUpEvent clientId
+                                    , mouseDown = userMouseEvent "mousedown" UserMouseDownEvent clientId
+                                    , mouseMove = userMouseEvent "mousemove" UserMouseMoveEvent clientId
+                                    , mouseOut = userMouseEvent "mouseout" UserMouseOutEvent clientId
+                                    , mouseOver = userMouseEvent "mouseover" UserMouseOverEvent clientId
+                                    , wheel = userWheelEvent clientId
+                                    , focus = focusEvent clientId
+                                    , blur = blurEvent clientId
+                                    , click = click clientId
+                                    , input = input clientId
+                                    , clickLink = clickLink clientId
+                                    , resizeWindow = resizeWindow clientId
+                                    , checkView = checkView clientId
+                                    , update = frontendUpdate clientId
+                                    , sendToBackend = sendToBackend clientId
+                                    , snapshotView = snapshotView clientId
+                                    , checkModel = checkFrontend clientId
+                                    , custom = custom clientId
                                     }
-                                    state.frontends
-                            , counter = state.counter + 1
-                        }
-                            |> addEvent (FrontendInitEvent clientId cmd) Nothing
-
-                    clientId : ClientId
-                    clientId =
-                        "clientId " ++ String.fromInt state.counter |> Effect.Lamdera.clientIdFromString
-
-                    ( frontend, cmd ) =
-                        state.frontendApp.init
-                            (normalizeUrl state.domain url |> Maybe.withDefault state.domain)
-                            (Effect.Browser.Navigation.fromInternalKey MockNavigationKey)
-
-                    subscriptions : Subscription FrontendOnly frontendMsg
-                    subscriptions =
-                        state.frontendApp.subscriptions frontend
-
-                    list :
-                        List
-                            (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                             -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                            )
-                    list =
-                        andThenFunc
-                            { clientId = clientId
-                            , keyDown = keyDown clientId
-                            , keyUp = keyUp clientId
-                            , pointerDown = userPointerEvent "pointerdown" UserPointerDownEvent clientId
-                            , pointerUp = userPointerEvent "pointerup" UserPointerUpEvent clientId
-                            , pointerEnter = userPointerEvent "pointerenter" UserPointerEnterEvent clientId
-                            , pointerOut = userPointerEvent "pointerout" UserPointerOutEvent clientId
-                            , pointerCancel = userPointerEvent "pointercancel" UserPointerCancelEvent clientId
-                            , pointerMove = userPointerEvent "pointermove" UserPointerMoveEvent clientId
-                            , pointerLeave = userPointerEvent "pointerleave" UserPointerLeaveEvent clientId
-                            , pointerOver = userPointerEvent "pointerover" UserPointerOverEvent clientId
-                            , touchCancel = userTouchEvent "touchcancel" UserTouchCancelEvent clientId
-                            , touchStart = userTouchEvent "touchstart" UserTouchStartEvent clientId
-                            , touchEnd = userTouchEvent "touchend" UserTouchEndEvent clientId
-                            , touchMove = userTouchEvent "touchmove" UserTouchMoveEvent clientId
-                            , mouseEnter = userMouseEvent "mouseenter" UserMouseEnterEvent clientId
-                            , mouseLeave = userMouseEvent "mouseleave" UserMouseLeaveEvent clientId
-                            , mouseUp = userMouseEvent "mouseup" UserMouseUpEvent clientId
-                            , mouseDown = userMouseEvent "mousedown" UserMouseDownEvent clientId
-                            , mouseMove = userMouseEvent "mousemove" UserMouseMoveEvent clientId
-                            , mouseOut = userMouseEvent "mouseout" UserMouseOutEvent clientId
-                            , mouseOver = userMouseEvent "mouseover" UserMouseOverEvent clientId
-                            , wheel = userWheelEvent clientId
-                            , focus = focusEvent clientId
-                            , blur = blurEvent clientId
-                            , click = click clientId
-                            , input = input clientId
-                            , clickLink = clickLink clientId
-                            , resizeWindow = resizeWindow clientId
-                            , checkView = checkView clientId
-                            , update = frontendUpdate clientId
-                            , sendToBackend = sendToBackend clientId
-                            , snapshotView = snapshotView clientId
-                            , checkModel = checkFrontend clientId
-                            , custom = custom clientId
-                            }
-                in
-                getClientConnectSubs (state2.backendApp.subscriptions state2.model)
-                    |> List.foldl
-                        (\msg state3 ->
-                            handleBackendUpdate (currentTime state3) state3.backendApp (msg sessionId clientId) state3
-                        )
-                        state2
-                    |> Start
-                    |> foldList list
-            )
-
-
-
---{-| -}
---group :
---    List
---        (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
---         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
---        )
---    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
---group list =
---    AndThen (\state -> foldList list (Start state))
+                        in
+                        getClientConnectSubs (state2.backendApp.subscriptions state2.model)
+                            |> List.foldl
+                                (\msg state3 ->
+                                    handleBackendUpdate (currentTime state3) state3.backendApp (msg sessionId clientId) state3
+                                )
+                                state2
+                            |> Start
+                            |> foldList (List.map (\(Action a) -> a) list)
+                    )
+        )
 
 
 {-| -}
@@ -1702,33 +1674,35 @@ snapshotView :
     ClientId
     -> DelayInMs
     -> { name : String }
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-snapshotView clientId delay data instructions =
-    wait (Duration.milliseconds delay) instructions
-        |> NextStep
-            (\state ->
-                case SeqDict.get clientId state.frontends of
-                    Just frontend ->
-                        { state
-                            | snapshots =
-                                { name = data.name
-                                , body = state.frontendApp.view frontend.model |> .body
-                                , width = frontend.windowSize.width
-                                , height = frontend.windowSize.height
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+snapshotView clientId delay data =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                { state
+                                    | snapshots =
+                                        { name = data.name
+                                        , body = state.frontendApp.view frontend.model |> .body
+                                        , width = frontend.windowSize.width
+                                        , height = frontend.windowSize.height
+                                        }
+                                            :: state.snapshots
                                 }
-                                    :: state.snapshots
-                        }
-                            |> addEvent
-                                (SnapshotEvent { clientId = clientId, name = data.name, isSuccessful = True })
-                                Nothing
+                                    |> addEvent
+                                        (SnapshotEvent { clientId = clientId, name = data.name, isSuccessful = True })
+                                        Nothing
 
-                    Nothing ->
-                        addEvent
-                            (SnapshotEvent { clientId = clientId, name = data.name, isSuccessful = False })
-                            (Just (ClientIdNotFound clientId))
-                            state
-            )
+                            Nothing ->
+                                addEvent
+                                    (SnapshotEvent { clientId = clientId, name = data.name, isSuccessful = False })
+                                    (Just (ClientIdNotFound clientId))
+                                    state
+                    )
+        )
 
 
 {-| -}
@@ -1769,9 +1743,8 @@ keyDown :
     -> HtmlId
     -> KeyEvent
     -> List KeyOptions
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-keyDown clientId delay htmlId key options instructions =
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+keyDown clientId delay htmlId key options =
     let
         event2 =
             List.foldl
@@ -1806,7 +1779,6 @@ keyDown clientId delay htmlId key options instructions =
             , ( "shiftKey", Json.Encode.bool event2.shiftKey )
             ]
         )
-        instructions
 
 
 {-| -}
@@ -1816,9 +1788,8 @@ keyUp :
     -> HtmlId
     -> KeyEvent
     -> List KeyOptions
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-keyUp clientId delay htmlId key options instructions =
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+keyUp clientId delay htmlId key options =
     let
         event2 =
             List.foldl
@@ -1853,7 +1824,6 @@ keyUp clientId delay htmlId key options instructions =
             , ( "shiftKey", Json.Encode.bool event2.shiftKey )
             ]
         )
-        instructions
 
 
 {-| -}
@@ -1873,9 +1843,8 @@ userTouchEvent :
     -> DelayInMs
     -> HtmlId
     -> TouchEvent
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userTouchEvent eventName userEvent2 clientId delay htmlId event instructions =
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+userTouchEvent eventName userEvent2 clientId delay htmlId event =
     let
         touchJson : Touch -> Json.Encode.Value
         touchJson event2 =
@@ -1912,7 +1881,6 @@ userTouchEvent eventName userEvent2 clientId delay htmlId event instructions =
               )
             ]
         )
-        instructions
 
 
 {-| -}
@@ -1924,9 +1892,8 @@ userPointerEvent :
     -> HtmlId
     -> PointerEvent
     -> List PointerOptions
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userPointerEvent eventName userEvent2 clientId delay htmlId event options instructions =
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+userPointerEvent eventName userEvent2 clientId delay htmlId event options =
     let
         event2 =
             projectPointerEventOptions event options
@@ -1981,7 +1948,6 @@ userPointerEvent eventName userEvent2 clientId delay htmlId event options instru
             , ( "tiltY", Json.Encode.float event2.tiltY )
             ]
         )
-        instructions
 
 
 projectPointerEventOptions :
@@ -2088,9 +2054,8 @@ userWheelEvent :
     -> ( Float, Float )
     -> List WheelOptions
     -> List PointerOptions
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userWheelEvent clientId delay htmlId deltaY offsetPos wheelOptions options instructions =
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+userWheelEvent clientId delay htmlId deltaY offsetPos wheelOptions options =
     let
         event2 =
             projectPointerEventOptions offsetPos options
@@ -2165,7 +2130,6 @@ userWheelEvent clientId delay htmlId deltaY offsetPos wheelOptions options instr
               )
             ]
         )
-        instructions
 
 
 custom :
@@ -2174,10 +2138,9 @@ custom :
     -> HtmlId
     -> String
     -> Json.Encode.Value
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-custom clientId delay htmlId eventName value instructions =
-    userEvent delay (UserCustomEvent htmlId value) clientId htmlId ( eventName, value ) instructions
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+custom clientId delay htmlId eventName value =
+    userEvent delay (UserCustomEvent htmlId value) clientId htmlId ( eventName, value )
 
 
 {-| -}
@@ -2189,9 +2152,8 @@ userMouseEvent :
     -> HtmlId
     -> PointerEvent
     -> List PointerOptions
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userMouseEvent eventName userEvent2 clientId delay htmlId event options instructions =
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+userMouseEvent eventName userEvent2 clientId delay htmlId event options =
     let
         event2 =
             projectPointerEventOptions event options
@@ -2238,7 +2200,6 @@ userMouseEvent eventName userEvent2 clientId delay htmlId event options instruct
               )
             ]
         )
-        instructions
 
 
 {-| -}
@@ -2246,8 +2207,7 @@ focusEvent :
     ClientId
     -> DelayInMs
     -> HtmlId
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 focusEvent clientId delay htmlId =
     userEvent delay (UserFocusEvent htmlId) clientId htmlId Test.Html.Event.focus
 
@@ -2257,8 +2217,7 @@ blurEvent :
     ClientId
     -> DelayInMs
     -> HtmlId
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 blurEvent clientId delay htmlId =
     userEvent delay (UserBlurEvent htmlId) clientId htmlId Test.Html.Event.blur
 
@@ -2268,8 +2227,7 @@ click :
     ClientId
     -> DelayInMs
     -> HtmlId
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 click clientId delay htmlId =
     userEvent delay (UserClicksButton htmlId) clientId htmlId Test.Html.Event.click
 
@@ -2280,8 +2238,7 @@ input :
     -> DelayInMs
     -> HtmlId
     -> String
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 input clientId delay htmlId text_ =
     userEvent delay (UserInputsText htmlId text_) clientId htmlId (Test.Html.Event.input text_)
 
@@ -2307,55 +2264,57 @@ clickLink :
     ClientId
     -> DelayInMs
     -> String
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clickLink clientId delay data instructions =
-    let
-        event isSuccessful =
-            UserInputEvent { clientId = clientId, inputType = UserClicksLink data, isSuccessful = isSuccessful }
-    in
-    wait (Duration.milliseconds delay) instructions
-        |> NextStep
-            (\state ->
-                case SeqDict.get clientId state.frontends of
-                    Just frontend ->
-                        case
-                            state.frontendApp.view frontend.model
-                                |> .body
-                                |> Html.div []
-                                |> Test.Html.Query.fromHtml
-                                |> Test.Html.Query.findAll [ Test.Html.Selector.attribute (Html.Attributes.href data) ]
-                                |> Test.Html.Query.count
-                                    (\count ->
-                                        if count > 0 then
-                                            Expect.pass
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+clickLink clientId delay data =
+    Action
+        (\instructions ->
+            let
+                event isSuccessful =
+                    UserInputEvent { clientId = clientId, inputType = UserClicksLink data, isSuccessful = isSuccessful }
+            in
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                case
+                                    state.frontendApp.view frontend.model
+                                        |> .body
+                                        |> Html.div []
+                                        |> Test.Html.Query.fromHtml
+                                        |> Test.Html.Query.findAll [ Test.Html.Selector.attribute (Html.Attributes.href data) ]
+                                        |> Test.Html.Query.count
+                                            (\count ->
+                                                if count > 0 then
+                                                    Expect.pass
 
-                                        else
-                                            Expect.fail ("Expected at least one link pointing to " ++ data)
-                                    )
-                                |> Test.Runner.getFailureReason
-                        of
-                            Nothing ->
-                                case normalizeUrl state.domain data of
-                                    Just url ->
-                                        handleFrontendUpdate
-                                            clientId
-                                            (currentTime state)
-                                            (state.frontendApp.onUrlRequest (Internal url))
-                                            (addEvent (event True) Nothing state)
-
+                                                else
+                                                    Expect.fail ("Expected at least one link pointing to " ++ data)
+                                            )
+                                        |> Test.Runner.getFailureReason
+                                of
                                     Nothing ->
-                                        addEvent (event False) (Just (InvalidUrl data)) state
+                                        case normalizeUrl state.domain data of
+                                            Just url ->
+                                                handleFrontendUpdate
+                                                    clientId
+                                                    (currentTime state)
+                                                    (state.frontendApp.onUrlRequest (Internal url))
+                                                    (addEvent (event True) Nothing state)
 
-                            Just _ ->
-                                addEvent
-                                    (event False)
-                                    (Just (CustomError ("Clicking link failed for " ++ data)))
-                                    state
+                                            Nothing ->
+                                                addEvent (event False) (Just (InvalidUrl data)) state
 
-                    Nothing ->
-                        addEvent (event False) (Just (ClientIdNotFound clientId)) state
-            )
+                                    Just _ ->
+                                        addEvent
+                                            (event False)
+                                            (Just (CustomError ("Clicking link failed for " ++ data)))
+                                            state
+
+                            Nothing ->
+                                addEvent (event False) (Just (ClientIdNotFound clientId)) state
+                    )
+        )
 
 
 {-| -}
@@ -2363,43 +2322,45 @@ resizeWindow :
     ClientId
     -> DelayInMs
     -> { width : Int, height : Int }
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-resizeWindow clientId delay windowSize instructions =
-    let
-        event isSuccessful =
-            UserInputEvent { clientId = clientId, inputType = UserResizesWindow windowSize, isSuccessful = isSuccessful }
-    in
-    wait (Duration.milliseconds delay) instructions
-        |> NextStep
-            (\state ->
-                case SeqDict.get clientId state.frontends of
-                    Just frontend ->
-                        let
-                            msgs : List frontendMsg
-                            msgs =
-                                state.frontendApp.subscriptions frontend.model
-                                    |> getWindowResizeSubscriptions
-                                    |> List.map (\{ msg } -> msg windowSize.width windowSize.height)
-                        in
-                        List.foldl
-                            (handleFrontendUpdate clientId (currentTime state))
-                            (addEvent
-                                (event True)
-                                Nothing
-                                { state
-                                    | frontends =
-                                        SeqDict.insert
-                                            clientId
-                                            { frontend | windowSize = windowSize }
-                                            state.frontends
-                                }
-                            )
-                            msgs
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+resizeWindow clientId delay windowSize =
+    Action
+        (\instructions ->
+            let
+                event isSuccessful =
+                    UserInputEvent { clientId = clientId, inputType = UserResizesWindow windowSize, isSuccessful = isSuccessful }
+            in
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                let
+                                    msgs : List frontendMsg
+                                    msgs =
+                                        state.frontendApp.subscriptions frontend.model
+                                            |> getWindowResizeSubscriptions
+                                            |> List.map (\{ msg } -> msg windowSize.width windowSize.height)
+                                in
+                                List.foldl
+                                    (handleFrontendUpdate clientId (currentTime state))
+                                    (addEvent
+                                        (event True)
+                                        Nothing
+                                        { state
+                                            | frontends =
+                                                SeqDict.insert
+                                                    clientId
+                                                    { frontend | windowSize = windowSize }
+                                                    state.frontends
+                                        }
+                                    )
+                                    msgs
 
-                    Nothing ->
-                        addEvent (event False) (Just (ClientIdNotFound clientId)) state
-            )
+                            Nothing ->
+                                addEvent (event False) (Just (ClientIdNotFound clientId)) state
+                    )
+        )
 
 
 {-| -}
@@ -2409,45 +2370,47 @@ userEvent :
     -> ClientId
     -> HtmlId
     -> ( String, Json.Encode.Value )
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-userEvent delay userInputType clientId htmlId event instructions =
-    let
-        htmlIdString : String
-        htmlIdString =
-            Effect.Browser.Dom.idToString htmlId
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+userEvent delay userInputType clientId htmlId event =
+    Action
+        (\instructions ->
+            let
+                htmlIdString : String
+                htmlIdString =
+                    Effect.Browser.Dom.idToString htmlId
 
-        eventType : Bool -> EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        eventType isSuccessful =
-            UserInputEvent { clientId = clientId, inputType = userInputType, isSuccessful = isSuccessful }
-    in
-    wait (Duration.milliseconds delay) instructions
-        |> NextStep
-            (\state ->
-                case SeqDict.get clientId state.frontends of
-                    Just frontend ->
-                        let
-                            query : Test.Html.Query.Single frontendMsg
-                            query =
-                                state.frontendApp.view frontend.model
-                                    |> .body
-                                    |> Html.div []
-                                    |> Test.Html.Query.fromHtml
-                                    |> Test.Html.Query.find [ Test.Html.Selector.id htmlIdString ]
-                        in
-                        case Test.Html.Event.simulate event query |> Test.Html.Event.toResult of
-                            Ok msg ->
-                                handleFrontendUpdate clientId (currentTime state) msg (addEvent (eventType True) Nothing state)
+                eventType : Bool -> EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                eventType isSuccessful =
+                    UserInputEvent { clientId = clientId, inputType = userInputType, isSuccessful = isSuccessful }
+            in
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                let
+                                    query : Test.Html.Query.Single frontendMsg
+                                    query =
+                                        state.frontendApp.view frontend.model
+                                            |> .body
+                                            |> Html.div []
+                                            |> Test.Html.Query.fromHtml
+                                            |> Test.Html.Query.find [ Test.Html.Selector.id htmlIdString ]
+                                in
+                                case Test.Html.Event.simulate event query |> Test.Html.Event.toResult of
+                                    Ok msg ->
+                                        handleFrontendUpdate clientId (currentTime state) msg (addEvent (eventType True) Nothing state)
 
-                            Err error ->
-                                addEvent
-                                    (eventType False)
-                                    (Just (CustomError ("User input event for " ++ htmlIdString ++ " failed: " ++ error)))
-                                    state
+                                    Err error ->
+                                        addEvent
+                                            (eventType False)
+                                            (Just (CustomError ("User input event for " ++ htmlIdString ++ " failed: " ++ error)))
+                                            state
 
-                    Nothing ->
-                        addEvent (eventType False) (Just (ClientIdNotFound clientId)) state
-            )
+                            Nothing ->
+                                addEvent (eventType False) (Just (ClientIdNotFound clientId)) state
+                    )
+        )
 
 
 {-| -}
@@ -2481,32 +2444,34 @@ sendToBackend :
     ClientId
     -> DelayInMs
     -> toBackend
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-sendToBackend clientId delay toBackend instructions =
-    wait (Duration.milliseconds delay) instructions
-        |> NextStep
-            (\state ->
-                case SeqDict.get clientId state.frontends of
-                    Just frontend ->
-                        handleUpdateFromFrontend
-                            { sessionId = frontend.sessionId
-                            , clientId = clientId
-                            , toBackend = toBackend
-                            , stepIndex = Nothing
-                            }
-                            (addEvent
-                                (ManuallySendToBackend { clientId = clientId, toBackend = toBackend })
-                                Nothing
-                                state
-                            )
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+sendToBackend clientId delay toBackend =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                handleUpdateFromFrontend
+                                    { sessionId = frontend.sessionId
+                                    , clientId = clientId
+                                    , toBackend = toBackend
+                                    , stepIndex = Nothing
+                                    }
+                                    (addEvent
+                                        (ManuallySendToBackend { clientId = clientId, toBackend = toBackend })
+                                        Nothing
+                                        state
+                                    )
 
-                    Nothing ->
-                        addEvent
-                            (ManuallySendToBackend { clientId = clientId, toBackend = toBackend })
-                            (Just (ClientIdNotFound clientId))
-                            state
-            )
+                            Nothing ->
+                                addEvent
+                                    (ManuallySendToBackend { clientId = clientId, toBackend = toBackend })
+                                    (Just (ClientIdNotFound clientId))
+                                    state
+                    )
+        )
 
 
 {-| -}
@@ -2702,22 +2667,20 @@ wait duration =
 This is useful if you need to move the clock forward a week and it would take too long to simulate it perfectly.
 
 -}
-fastForward :
-    Duration
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-fastForward duration instructions =
-    NextStep
-        (\state ->
-            addEvent
-                (TestEvent
+fastForward : Duration -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+fastForward duration =
+    Action
+        (NextStep
+            (\state ->
+                addEvent
+                    (TestEvent
+                        Nothing
+                        ("Fast forward " ++ String.fromFloat (Duration.inSeconds duration) ++ "s (skip timer events)")
+                    )
                     Nothing
-                    ("Fast forward " ++ String.fromFloat (Duration.inSeconds duration) ++ "s (skip timer events)")
-                )
-                Nothing
-                { state | elapsedTime = Quantity.plus state.elapsedTime duration }
+                    { state | elapsedTime = Quantity.plus state.elapsedTime duration }
+            )
         )
-        instructions
 
 
 {-| Sometimes you need to decide what should happen next based on some current state.
@@ -2746,11 +2709,13 @@ In order to do that you can write something like this:
 andThen :
     DelayInMs
     -> (Data frontendModel backendModel -> List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-andThen delay andThenFunc instructions =
-    wait (Duration.milliseconds delay) instructions
-        |> AndThen (\state -> foldList (andThenFunc (stateToData state)) (Start state))
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+andThen delay andThenFunc =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> AndThen (\state -> foldList (andThenFunc (stateToData state)) (Start state))
+        )
 
 
 foldList : List (a -> a) -> a -> a
