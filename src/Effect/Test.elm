@@ -1,6 +1,6 @@
 module Effect.Test exposing
     ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile, Data, FileContents(..)
-    , FrontendActions, backendUpdate, fastForward, group, andThen, Instructions, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
+    , FrontendActions, backendUpdate, fastForward, group, andThen, EndToEndTest, Action, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions
     , startHeadless, HeadlessMsg
@@ -18,7 +18,7 @@ module Effect.Test exposing
 
 ## Control the tests
 
-@docs FrontendActions, backendUpdate, fastForward, group, andThen, Instructions, HttpBody, HttpPart, DelayInMs, KeyEvent, KeyOptions, PointerEvent, PointerOptions
+@docs FrontendActions, backendUpdate, fastForward, group, andThen, EndToEndTest, Action, HttpBody, HttpPart, DelayInMs, KeyEvent, KeyOptions, PointerEvent, PointerOptions
 
 
 ## Check the current state
@@ -564,17 +564,17 @@ type HttpPart
 
 
 {-| -}
-type Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    = NextStep (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-    | AndThen (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+type EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    = NextStep (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    | AndThen (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     | Start (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 
 
 {-| -}
 type Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     = Action
-        (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-         -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+         -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         )
 
 
@@ -781,7 +781,7 @@ testErrorToString error =
 
 
 {-| -}
-toTest : Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Test
+toTest : EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Test
 toTest instructions =
     let
         state =
@@ -877,7 +877,7 @@ gatherWith testFn list =
 This can be used with Effect.Snapshot.uploadSnapshots to perform visual regression testing.
 -}
 toSnapshots :
-    Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> List (Snapshot frontendMsg)
 toSnapshots instructions =
     let
@@ -898,7 +898,7 @@ toSnapshots instructions =
 
 {-| -}
 instructionsToState :
-    Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 instructionsToState inProgress =
     case inProgress of
@@ -1270,7 +1270,7 @@ start :
     -> Time.Posix
     -> Config toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> List (Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 start testName startTime2 config actions =
     let
         ( backend, cmd ) =
@@ -2710,8 +2710,8 @@ userEvent delay userInputType clientId htmlId event =
 {-| -}
 disconnectFrontend :
     ClientId
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 disconnectFrontend clientId instructions =
     wait (Duration.milliseconds 100) instructions
         |> AndThen
@@ -2951,8 +2951,8 @@ If you need to simulate a large passage of time and are finding that it's taking
 -}
 wait :
     Duration
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 wait duration =
     NextStep (simulateStep duration)
 
@@ -3003,7 +3003,7 @@ In order to do that you can write something like this:
 -}
 andThen :
     DelayInMs
-    -> (Data frontendModel backendModel -> List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+    -> (Data frontendModel backendModel -> List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
     -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 andThen delay andThenFunc =
     Action
@@ -3806,7 +3806,7 @@ type Model toBackend frontendMsg frontendModel toFrontend backendMsg backendMode
         { navigationKey : Browser.Navigation.Key
         , currentTest : Maybe (TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         , testResults : List (Result TestError ())
-        , tests : Maybe (Result FileLoadError (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
+        , tests : Maybe (Result FileLoadError (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
         , windowSize : ( Int, Int )
         }
 
@@ -3853,7 +3853,7 @@ type Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     | PressedBackToOverview
     | ShortPauseFinished
     | NoOp
-    | GotFilesForTests (Result FileLoadError (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
+    | GotFilesForTests (Result FileLoadError (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
     | PressedToggleOverlayPosition
     | PressedShowModel
     | PressedHideModel
@@ -3892,7 +3892,7 @@ init _ _ navigationKey =
 
 
 viewTest :
-    Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Int
     -> Int
     -> Int
@@ -3953,7 +3953,7 @@ viewTest test index stepIndex timelineIndex (Model model) =
 
 {-| -}
 update :
-    ViewerWith (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+    ViewerWith (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
     -> Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     ->
@@ -4209,7 +4209,7 @@ update config msg (Model model) =
 
 
 runTests :
-    List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     -> Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     ->
         ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -4862,7 +4862,7 @@ getAt index list =
 
 {-| -}
 overview :
-    List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     -> List (Result TestError ())
     -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 overview tests testResults_ =
@@ -5024,7 +5024,7 @@ defaultFontColor =
 
 {-| -}
 getState :
-    Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 getState instructions =
     case instructions of
@@ -5039,7 +5039,7 @@ getState instructions =
 
 
 {-| -}
-getTestName : Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> String
+getTestName : EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> String
 getTestName instructions =
     case instructions of
         NextStep _ instructions_ ->
@@ -6205,7 +6205,7 @@ getTimelines2 steps =
 {-| -}
 testView :
     Int
-    -> Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> List (Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
 testView windowWidth instructions testView_ =
@@ -6632,7 +6632,7 @@ viewerWith a =
 
 -}
 startViewer :
-    ViewerWith (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+    ViewerWith (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
     -> Program () (Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 startViewer viewerWith2 =
     Browser.application
@@ -6648,7 +6648,7 @@ startViewer viewerWith2 =
 {-| Msg type for a headless end to end test runner.
 -}
 type HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    = HeadlessMsg (Result FileLoadError (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
+    = HeadlessMsg (Result FileLoadError (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
 
 
 {-| Create a headless test runner.
@@ -6667,7 +6667,7 @@ type HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backe
 -}
 startHeadless :
     (Json.Encode.Value -> Cmd (HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
-    -> ViewerWith (List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+    -> ViewerWith (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
     -> Program () () (HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 startHeadless outputResults viewerWith2 =
     Platform.worker
@@ -6766,7 +6766,7 @@ type ArrowKey
 
 -}
 viewer :
-    List (Instructions toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     -> Program () (Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 viewer tests =
     Browser.application
