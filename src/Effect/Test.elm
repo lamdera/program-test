@@ -2988,11 +2988,12 @@ To do that you can write something like this:
         (\data ->
             case List.filterMap isLoginEmail data.httpRequests |> List.head of
                 Just loginEmail ->
-                    [ testApp.connectFrontend
+                    [ Effect.Test.connectFrontend
+                        100
                         sessionIdFromEmail
-                        (loginEmail.loginUrl)
-                        (\( state3, clientIdFromEmail ) ->
-                            ...
+                        "/user-overview"
+                        (\clientIdFromEmail ->
+                            [ ... ]
                         )
                     ]
 
