@@ -2979,37 +2979,40 @@ fastForward duration =
 
 
 {-| Sometimes you need to decide what should happen next based on some current state.
-In order to do that you can write something like this:
+To do that you can write something like this:
 
     import Effect.Test
 
-    state
-        |> Effect.Test.andThen
-            (\state2 ->
-                case List.filterMap isLoginEmail state2.httpRequests |> List.head of
-                    Just loginEmail ->
-                        Effect.Test.continueWith state2
-                                |> testApp.connectFrontend
-                                    sessionIdFromEmail
-                                    (loginEmail.loginUrl)
-                                    (\( state3, clientIdFromEmail ) ->
-                                        ...
-                                    )
+    Effect.Test.andThen
+        100 -- Simulate 100 milliseconds before performing this action
+        (\data ->
+            case List.filterMap isLoginEmail data.httpRequests |> List.head of
+                Just loginEmail ->
+                    [ testApp.connectFrontend
+                        sessionIdFromEmail
+                        (loginEmail.loginUrl)
+                        (\( state3, clientIdFromEmail ) ->
+                            ...
+                        )
+                    ]
 
-                    Nothing ->
-                        Effect.Test.continueWith state2 |> Effect.Test.checkState (\_ -> Err "Should have gotten a login email")
-            )
+                Nothing ->
+                    [ Effect.Test.checkState (\_ -> Err "Should have gotten a login email") ]
+        )
 
 -}
 andThen :
     DelayInMs
-    -> (Data frontendModel backendModel -> List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+    -> (Data frontendModel backendModel -> List (Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
     -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 andThen delay andThenFunc =
     Action
         (\instructions ->
             wait (Duration.milliseconds delay) instructions
-                |> AndThen (\state -> foldList (andThenFunc (stateToData state)) (Start state))
+                |> AndThen
+                    (\state ->
+                        foldList (andThenFunc (stateToData state) |> List.map (\(Action a) -> a)) (Start state)
+                    )
         )
 
 
