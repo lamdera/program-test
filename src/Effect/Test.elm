@@ -405,6 +405,8 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
     , timers : SeqDict Duration { startTime : Time.Posix }
     , testErrors : List TestError
     , httpRequests : List HttpRequest
+    , fileUploads : List { uploadedAt : Time.Posix, uploadedBy : ClientId, upload : FileUpload }
+    , multipleFileUploads : List { uploadedAt : Time.Posix, uploadedBy : ClientId, upload : MultipleFilesUpload }
     , handleHttpRequest : { data : Data frontendModel backendModel, currentRequest : HttpRequest } -> HttpResponse
     , handlePortToJs :
         { currentRequest : PortToJs, data : Data frontendModel backendModel }
@@ -422,6 +424,8 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
 type alias Data frontendModel backendModel =
     { httpRequests : List HttpRequest
     , portRequests : List PortToJs
+    , fileUploads : List { uploadedAt : Time.Posix, uploadedBy : ClientId, upload : FileUpload }
+    , multipleFileUploads : List { uploadedAt : Time.Posix, uploadedBy : ClientId, upload : MultipleFilesUpload }
     , time : Time.Posix
     , backend : backendModel
     , frontends : SeqDict ClientId frontendModel
@@ -434,6 +438,8 @@ stateToData : State toBackend frontendMsg frontendModel toFrontend backendMsg ba
 stateToData state =
     { httpRequests = state.httpRequests
     , portRequests = state.portRequests
+    , fileUploads = state.fileUploads
+    , multipleFileUploads = state.multipleFileUploads
     , time = currentTime state
     , backend = state.model
     , frontends = SeqDict.map (\_ frontend -> frontend.model) state.frontends
@@ -1292,6 +1298,8 @@ start testName startTime2 config actions =
             , timers = getTimers (config.backendApp.subscriptions backend) |> SeqDict.map (\_ _ -> { startTime = startTime2 })
             , testErrors = []
             , httpRequests = []
+            , fileUploads = []
+            , multipleFileUploads = []
             , handleHttpRequest = config.handleHttpRequest
             , handlePortToJs = config.handlePortToJs
             , portRequests = []
@@ -3219,33 +3227,65 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
             }
 
         FileSelectFile mimeTypes msg ->
-            case state.handleFileUpload { mimeTypes = mimeTypes, data = stateToData state } of
+            let
+                fileUpload : FileUpload
+                fileUpload =
+                    state.handleFileUpload { mimeTypes = mimeTypes, data = stateToData state }
+
+                time : Time.Posix
+                time =
+                    currentTime state
+
+                state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                state2 =
+                    { state
+                        | fileUploads =
+                            { uploadedAt = time, uploadedBy = clientId, upload = fileUpload } :: state.fileUploads
+                    }
+            in
+            case fileUpload of
                 UploadFile (FileUploadData file) ->
-                    handleFrontendUpdate clientId (currentTime state) (msg (Effect.Internal.MockFile file)) state
+                    handleFrontendUpdate clientId time (msg (Effect.Internal.MockFile file)) state2
 
                 CancelFileUpload ->
-                    state
+                    state2
 
                 UnhandledFileUpload ->
-                    addTestError FileUploadNotHandled state
+                    addTestError FileUploadNotHandled state2
 
         FileSelectFiles mimeTypes msg ->
-            case state.handleMultipleFilesUpload { mimeTypes = mimeTypes, data = stateToData state } of
+            let
+                fileUpload : MultipleFilesUpload
+                fileUpload =
+                    state.handleMultipleFilesUpload { mimeTypes = mimeTypes, data = stateToData state }
+
+                time : Time.Posix
+                time =
+                    currentTime state
+
+                state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                state2 =
+                    { state
+                        | multipleFileUploads =
+                            { uploadedAt = time, uploadedBy = clientId, upload = fileUpload } :: state.multipleFileUploads
+                    }
+            in
+            case fileUpload of
                 UploadMultipleFiles (FileUploadData file) files ->
                     handleFrontendUpdate
                         clientId
-                        (currentTime state)
+                        time
                         (msg
                             (Effect.Internal.MockFile file)
                             (List.map (\(FileUploadData a) -> Effect.Internal.MockFile a) files)
                         )
-                        state
+                        state2
 
                 CancelMultipleFilesUpload ->
-                    state
+                    state2
 
                 UnhandledMultiFileUpload ->
-                    addTestError MultipleFilesUploadNotHandled state
+                    addTestError MultipleFilesUploadNotHandled state2
 
         Broadcast _ ->
             state
