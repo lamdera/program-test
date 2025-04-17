@@ -3839,7 +3839,7 @@ type alias TestView toBackend frontendMsg frontendModel toFrontend backendMsg ba
     , overlayPosition : OverlayPosition
     , showModel : Bool
     , collapsedFields : SeqDict (List PathNode) CollapsedField
-    , buttonCursor : Maybe { htmlId : HtmlId, x : Float, y : Float }
+    , buttonCursor : Maybe { htmlId : HtmlId, x : Float, y : Float, width : Float, height : Float }
     }
 
 
@@ -4197,8 +4197,10 @@ update config msg (Model model) =
                                 Ok { element } ->
                                     Just
                                         { htmlId = htmlId
-                                        , x = element.x + element.width / 2
-                                        , y = element.y + element.height / 2
+                                        , x = element.x
+                                        , y = element.y
+                                        , width = element.width
+                                        , height = element.height
                                         }
 
                                 Err _ ->
@@ -4338,12 +4340,66 @@ getButtonPosition :
 getButtonPosition step =
     case step.eventType of
         UserInputEvent { inputType } ->
-            case inputType of
-                UserClicksButton htmlId ->
+            let
+                shouldGetButtonPosition =
+                    case inputType of
+                        UserClicksButton htmlId ->
+                            Just htmlId
+
+                        UserPointerDownEvent htmlId _ ->
+                            Just htmlId
+
+                        UserPointerUpEvent htmlId _ ->
+                            Just htmlId
+
+                        UserPointerEnterEvent htmlId _ ->
+                            Just htmlId
+
+                        UserPointerLeaveEvent htmlId _ ->
+                            Just htmlId
+
+                        UserPointerOutEvent htmlId _ ->
+                            Just htmlId
+
+                        UserPointerMoveEvent htmlId _ ->
+                            Just htmlId
+
+                        UserPointerOverEvent htmlId _ ->
+                            Just htmlId
+
+                        UserPointerCancelEvent htmlId _ ->
+                            Just htmlId
+
+                        UserMouseEnterEvent htmlId _ ->
+                            Just htmlId
+
+                        UserMouseLeaveEvent htmlId _ ->
+                            Just htmlId
+
+                        UserMouseOutEvent htmlId _ ->
+                            Just htmlId
+
+                        UserMouseMoveEvent htmlId _ ->
+                            Just htmlId
+
+                        UserMouseOverEvent htmlId _ ->
+                            Just htmlId
+
+                        UserMouseUpEvent htmlId _ ->
+                            Just htmlId
+
+                        UserMouseDownEvent htmlId _ ->
+                            Just htmlId
+
+                        _ ->
+                            Nothing
+            in
+            case shouldGetButtonPosition of
+                Just htmlId ->
                     Browser.Dom.getElement (Effect.Browser.Dom.idToString htmlId)
                         |> Task.attempt (GotButtonPosition htmlId)
 
-                _ ->
+                Nothing ->
                     Cmd.none
 
         _ ->
@@ -6286,15 +6342,33 @@ testView windowWidth instructions testView_ =
                        )
                     ++ (case currentStep.eventType of
                             UserInputEvent { inputType } ->
+                                let
+                                    drawCursorWithOffset : HtmlId -> ( Float, Float ) -> List (Html msg)
+                                    drawCursorWithOffset htmlId ( offsetX, offsetY ) =
+                                        case testView_.buttonCursor of
+                                            Just buttonCursor ->
+                                                if buttonCursor.htmlId == htmlId then
+                                                    [ drawCursor ( buttonCursor.x + offsetX, buttonCursor.y + offsetY ) ]
+
+                                                else
+                                                    []
+
+                                            Nothing ->
+                                                []
+                                in
                                 case inputType of
-                                    UserPointerDownEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserPointerDownEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
                                     UserClicksButton htmlId ->
                                         case testView_.buttonCursor of
                                             Just buttonCursor ->
                                                 if buttonCursor.htmlId == htmlId then
-                                                    [ drawCursor ( buttonCursor.x, buttonCursor.y ) ]
+                                                    [ drawCursor
+                                                        ( buttonCursor.x + buttonCursor.width / 2
+                                                        , buttonCursor.y + buttonCursor.height / 2
+                                                        )
+                                                    ]
 
                                                 else
                                                     []
@@ -6314,26 +6388,26 @@ testView windowWidth instructions testView_ =
                                     UserResizesWindow _ ->
                                         []
 
-                                    UserPointerUpEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserPointerUpEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserPointerEnterEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserPointerEnterEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserPointerLeaveEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserPointerLeaveEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserPointerOutEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserPointerOutEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserPointerMoveEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserPointerMoveEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserPointerOverEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserPointerOverEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserPointerCancelEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserPointerCancelEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
                                     UserTouchCancelEvent _ _ ->
                                         []
@@ -6347,26 +6421,26 @@ testView windowWidth instructions testView_ =
                                     UserTouchMoveEvent _ _ ->
                                         []
 
-                                    UserMouseEnterEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserMouseEnterEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserMouseLeaveEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserMouseLeaveEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserMouseOutEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserMouseOutEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserMouseMoveEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserMouseMoveEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserMouseOverEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserMouseOverEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserMouseUpEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserMouseUpEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
-                                    UserMouseDownEvent _ pointerEvent ->
-                                        [ drawCursor pointerEvent ]
+                                    UserMouseDownEvent htmlId offset ->
+                                        drawCursorWithOffset htmlId offset
 
                                     UserFocusEvent _ ->
                                         []
