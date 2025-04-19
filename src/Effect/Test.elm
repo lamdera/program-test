@@ -323,8 +323,7 @@ configForSandbox data =
 {-| Possible simulated user actions for when `Effect.File.Select.file` is triggered.
 -}
 type FileUpload
-    = CancelFileUpload
-    | UploadFile FileData
+    = UploadFile FileData
     | UnhandledFileUpload
 
 
@@ -361,8 +360,7 @@ uploadBytesFile name mimeType content lastModified =
 {-| Possible simulated user actions for when `Effect.File.Select.files` is triggered.
 -}
 type MultipleFilesUpload
-    = CancelMultipleFilesUpload
-    | UploadMultipleFiles FileData (List FileData)
+    = UploadMultipleFiles FileData (List FileData)
     | UnhandledMultiFileUpload
 
 
@@ -3247,9 +3245,6 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                 UploadFile (FileUploadData file) ->
                     handleFrontendUpdate clientId time (msg (Effect.Internal.MockFile file)) state2
 
-                CancelFileUpload ->
-                    state2
-
                 UnhandledFileUpload ->
                     addTestError FileUploadNotHandled state2
 
@@ -3280,9 +3275,6 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                             (List.map (\(FileUploadData a) -> Effect.Internal.MockFile a) files)
                         )
                         state2
-
-                CancelMultipleFilesUpload ->
-                    state2
 
                 UnhandledMultiFileUpload ->
                     addTestError MultipleFilesUploadNotHandled state2

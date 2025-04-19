@@ -31,7 +31,7 @@ config =
     Effect.Test.configForElement
         { flags = ()
         , frontendApp =
-            { init = \flags _ _ -> Main.app.init flags
+            { init = Main.app.init
             , update = Main.app.update
             , subscriptions = Main.app.subscriptions
             , view = Main.app.view
@@ -39,8 +39,8 @@ config =
         , noOpMsg = Main.MorePlease
         , handleHttpRequest = handleHttpRequest
         , handlePortToJs = always Nothing
-        , handleFileUpload = always CancelFileUpload
-        , handleMultipleFilesUpload = always CancelMultipleFilesUpload
+        , handleFileUpload = always UnhandledFileUpload
+        , handleMultipleFilesUpload = always UnhandledMultiFileUpload
         , domain = unsafeUrl
         }
 
@@ -77,7 +77,7 @@ handleHttpRequest { currentRequest, data } =
         UnhandledHttpRequest
 
 
-tests : List (Effect.Test.Instructions Never Main.Msg Main.Model Never Never ())
+tests : List (Effect.Test.EndToEndTest Never Main.Msg Main.Model Never Never ())
 tests =
     [ Effect.Test.start
         "View quotes"
