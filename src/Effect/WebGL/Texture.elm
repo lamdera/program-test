@@ -1,6 +1,6 @@
 module Effect.WebGL.Texture exposing
     ( Texture, load, Error(..), size
-    , loadWith, Options, defaultOptions, loadBytesWith, rgb, rgba, alpha, luminance, luminanceAlpha
+    , loadWith, Options, defaultOptions, loadBytesWith, Format, rgb, rgba, alpha, luminance, luminanceAlpha
     , Resize, linear, nearest
     , nearestMipmapLinear, nearestMipmapNearest
     , linearMipmapNearest, linearMipmapLinear
@@ -19,7 +19,7 @@ module Effect.WebGL.Texture exposing
 
 # Custom Loading
 
-@docs loadWith, Options, defaultOptions, loadBytesWith, rgb, rgba, alpha, luminance, luminanceAlpha
+@docs loadWith, Options, defaultOptions, loadBytesWith, Format, rgb, rgba, alpha, luminance, luminanceAlpha
 
 
 ## Resizing
