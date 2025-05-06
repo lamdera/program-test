@@ -1,4 +1,4 @@
-module Effect.LocalDev exposing (ConnectionMsg, Model, Msg(..), WireMsg, localDev)
+module Effect.LocalDev exposing (ConnectionMsg, Model, Msg(..), NormalModelData, WireMsg, localDev)
 
 import Array exposing (Array)
 import Browser exposing (UrlRequest)
@@ -187,6 +187,7 @@ type alias Config frontendMsg backendMsg toFrontend toBackend frontendModel back
     , setLiveStatus : (Bool -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , setClientId : (String -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , rpcIn : (Json.Value -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
+    , mkrrc : NormalModelData frontendModel backendModel -> Json.Value -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
     , onConnection : (ConnectionMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , onDisconnection : (ConnectionMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , localDevGotEvent : (Json.Value -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
@@ -216,7 +217,6 @@ type alias Config frontendMsg backendMsg toFrontend toBackend frontendModel back
         , updateFromFrontend : String -> String -> toBackend -> backendModel -> ( backendModel, Cmd backendMsg )
         , subscriptions : backendModel -> Sub backendMsg
         }
-    , process : (String -> String -> Cmd backendMsg) -> Json.Value -> backendModel -> ( backendModel, Cmd backendMsg )
     }
 
 
@@ -644,29 +644,8 @@ update portsAndWire msg m =
                     ( m, Cmd.none )
 
         RPCIn rpcArgsJson ->
-            let
-                ( newModel, newBeCmds ) =
-                    portsAndWire.process
-                        (\k v ->
-                            let
-                                x =
-                                    log k v
-                            in
-                            Cmd.none
-                        )
-                        rpcArgsJson
-                        m.bem
-            in
-            ( { m | bem = newModel, bemDirty = True }, Cmd.map BEMsg newBeCmds )
+            portsAndWire.mkrrc m rpcArgsJson
 
-        {- }
-
-               ( m, Cmd.none )
-
-
-
-           -
-        -}
         SetNodeTypeLeader bool ->
             ( { m
                 | nodeType =
