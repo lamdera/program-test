@@ -1,4 +1,4 @@
-module Effect.LocalDev exposing (main)
+module Effect.LocalDev exposing (localDev)
 
 import Array exposing (Array)
 import Browser exposing (UrlRequest)
@@ -175,7 +175,7 @@ type alias Flags =
     { s : String, c : String, nt : String, b : Maybe Bytes }
 
 
-type alias PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel =
+type alias PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel =
     { send_ToBackend : Bytes -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
     , receive_ToBackend : (( SessionId, ClientId, Bytes ) -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , save_BackendModel : { t : String, f : Bool, b : Bytes } -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
@@ -187,7 +187,6 @@ type alias PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend to
     , setLiveStatus : (Bool -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , setClientId : (String -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , rpcIn : (Json.Value -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , rpcOut : Json.Value -> Cmd backendMsg
     , onConnection : (ConnectionMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , onDisconnection : (ConnectionMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , localDevGotEvent : (Json.Value -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
@@ -217,18 +216,11 @@ type alias PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend to
         , updateFromFrontend : String -> String -> toBackend -> backendModel -> ( backendModel, Cmd backendMsg )
         , subscriptions : backendModel -> Sub backendMsg
         }
-    , process :
-        (String -> String -> Cmd backendMsg)
-        -> (Json.Value -> Cmd backendMsg)
-        -> Json.Value
-        -> (rpcArgs -> backendModel -> ( rpcResult, backendModel, Cmd backendMsg ))
-        -> { a | userModel : backendModel }
-        -> ( { a | userModel : backendModel }, Cmd backendMsg )
-    , lamdera_handleEndpoints : rpcArgs -> backendModel -> ( rpcResult, backendModel, Cmd backendMsg )
+    , process : (String -> String -> Cmd backendMsg) -> Json.Value -> backendModel -> ( backendModel, Cmd backendMsg )
     }
 
 
-init : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+init : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 init portsAndWire flags url key =
     if flags.nt == "f" then
         ( WaitingOnRecordingStatus flags url key
@@ -248,7 +240,7 @@ init portsAndWire flags url key =
         normalInit portsAndWire flags url key |> Tuple.mapFirst NormalModel
 
 
-normalInit : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+normalInit : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 normalInit portsAndWire flags url key =
     let
         ensureOutputInclusion : Msg frontendMsg backendMsg toFrontend toBackend -> Bool
@@ -423,7 +415,7 @@ normalInit portsAndWire flags url key =
     )
 
 
-recordingInitCmds : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
+recordingInitCmds : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
 recordingInitCmds portsAndWire =
     Cmd.batch
         [ portsAndWire.localDevStartRecording ()
@@ -461,7 +453,7 @@ type LiveStatus
     | Offline
 
 
-update : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Msg frontendMsg backendMsg toFrontend toBackend -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+update : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Msg frontendMsg backendMsg toFrontend toBackend -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 update portsAndWire msg m =
     let
         log t v =
@@ -653,9 +645,6 @@ update portsAndWire msg m =
 
         RPCIn rpcArgsJson ->
             let
-                model =
-                    { userModel = m.bem }
-
                 ( newModel, newBeCmds ) =
                     portsAndWire.process
                         (\k v ->
@@ -665,12 +654,10 @@ update portsAndWire msg m =
                             in
                             Cmd.none
                         )
-                        portsAndWire.rpcOut
                         rpcArgsJson
-                        portsAndWire.lamdera_handleEndpoints
-                        model
+                        m.bem
             in
-            ( { m | bem = newModel.userModel, bemDirty = True }, Cmd.map BEMsg newBeCmds )
+            ( { m | bem = newModel, bemDirty = True }, Cmd.map BEMsg newBeCmds )
 
         {- }
 
@@ -1239,7 +1226,7 @@ initRecording =
     }
 
 
-receivedMsgFromLocalDev : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bytes -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+receivedMsgFromLocalDev : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bytes -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 receivedMsgFromLocalDev portsAndWire payload ({ devbar } as model) =
     Bytes.Decode.decode
         (Bytes.Decode.unsignedInt8
@@ -1371,7 +1358,7 @@ encodeString text =
         ]
 
 
-broadcastEvent : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> ClientId -> String -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
+broadcastEvent : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> ClientId -> String -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
 broadcastEvent portsAndWire clientId eventText =
     portsAndWire.send_ToFrontend
         { t = "ToFrontend"
@@ -1388,7 +1375,7 @@ broadcastEvent portsAndWire clientId eventText =
         }
 
 
-resetBackend : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+resetBackend : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 resetBackend portsAndWire model =
     let
         ( newBem, newBeCmds ) =
@@ -1402,7 +1389,7 @@ resetBackend portsAndWire model =
     )
 
 
-subscriptions : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
+subscriptions : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
 subscriptions portsAndWire { nodeType, fem, bem, bemDirty, devbar, clientId, recordedEvents } =
     Sub.batch
         [ Sub.map FEMsg (portsAndWire.userFrontendApp.subscriptions fem)
@@ -1474,7 +1461,7 @@ yForLocation location =
             style "bottom" "5px"
 
 
-lamderaUI : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
+lamderaUI : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
 lamderaUI portsAndWire devbar nodeType =
     case devbar.liveStatus of
         Online ->
@@ -1610,7 +1597,7 @@ resetNotification showReset =
         text ""
 
 
-lamderaPane : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+lamderaPane : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 lamderaPane portsAndWire devbar nodeType =
     div
         [ style "font-family" "system-ui, Helvetica Neue, sans-serif"
@@ -1664,7 +1651,7 @@ withOverlay dismiss html =
         html
 
 
-envIndicator : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+envIndicator : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 envIndicator wireAndPorts =
     let
         ( label, color ) =
@@ -1709,7 +1696,7 @@ eyeClosed =
         [ S.path [ A.d "M228,175a8,8,0,0,1-10.92-3l-19-33.2A123.23,123.23,0,0,1,162,155.46l5.87,35.22a8,8,0,0,1-6.58,9.21A8.4,8.4,0,0,1,160,200a8,8,0,0,1-7.88-6.69l-5.77-34.58a133.06,133.06,0,0,1-36.68,0l-5.77,34.58A8,8,0,0,1,96,200a8.4,8.4,0,0,1-1.32-.11,8,8,0,0,1-6.58-9.21L94,155.46a123.23,123.23,0,0,1-36.06-16.69L39,172A8,8,0,1,1,25.06,164l20-35a153.47,153.47,0,0,1-19.3-20A8,8,0,1,1,38.22,99c16.6,20.54,45.64,45,89.78,45s73.18-24.49,89.78-45A8,8,0,1,1,230.22,109a153.47,153.47,0,0,1-19.3,20l20,35A8,8,0,0,1,228,175Z" ] [] ]
 
 
-lamderaDevBar : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bool -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
+lamderaDevBar : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bool -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
 lamderaDevBar portsAndWire topDown devbar nodeType =
     case topDown of
         True ->
@@ -1739,7 +1726,7 @@ lamderaDevBar portsAndWire topDown devbar nodeType =
             ]
 
 
-pill : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+pill : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 pill portsAndWire devbar nodeType =
     div []
         [ div
@@ -1870,7 +1857,7 @@ spacer width =
     span [ style "width" (String.fromInt width ++ "px"), style "display" "inline-block" ] []
 
 
-expandedUI : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NodeType -> Bool -> DevBar -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+expandedUI : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NodeType -> Bool -> DevBar -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 expandedUI portsAndWire nodeType topDown devbar =
     let
         modeText : String
@@ -2105,7 +2092,7 @@ buttonDevLink label url color =
         ]
 
 
-mapDocument : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> (frontendMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Browser.Document frontendMsg -> Browser.Document (Msg frontendMsg backendMsg toFrontend toBackend)
+mapDocument : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> (frontendMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Browser.Document frontendMsg -> Browser.Document (Msg frontendMsg backendMsg toFrontend toBackend)
 mapDocument portsAndWire model msg { title, body } =
     { title = title
     , body =
@@ -2324,8 +2311,8 @@ lightCharcoal =
     "#434a4d"
 
 
-main : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Program Flags (Model frontendModel backendModel) (Msg frontendMsg backendMsg toFrontend toBackend)
-main portsAndWire =
+localDev : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Program Flags (Model frontendModel backendModel) (Msg frontendMsg backendMsg toFrontend toBackend)
+localDev portsAndWire =
     Browser.application
         { init = init portsAndWire
         , view =
@@ -2369,7 +2356,7 @@ main portsAndWire =
         }
 
 
-waitingOnRecordingStatusUpdate : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> Bytes -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+waitingOnRecordingStatusUpdate : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> Bytes -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 waitingOnRecordingStatusUpdate portsAndWire flags url key payload =
     Bytes.Decode.decode
         (Bytes.Decode.unsignedInt8
@@ -4539,13 +4526,34 @@ urlToStringNoDomain url =
             url
 
 
+{-| Copied from here <https://github.com/elmcraft/core-extra/blob/57fa91ab5cbce33c26ba6739be479c533ede063e/src/List/Extra.elm#L667>
+-}
+listFindIndex : (a -> Bool) -> List a -> Maybe Int
+listFindIndex =
+    findIndexHelp 0
+
+
+findIndexHelp : Int -> (a -> Bool) -> List a -> Maybe Int
+findIndexHelp index predicate list =
+    case list of
+        [] ->
+            Nothing
+
+        x :: xs ->
+            if predicate x then
+                Just index
+
+            else
+                findIndexHelp (index + 1) predicate xs
+
+
 eventToString : Int -> Settings -> List ClientId -> List EventType2 -> List Expression
 eventToString depth settings clients events =
     List.map
         (\event ->
             let
                 client clientId =
-                    case List.Extra.findIndex (\a -> a == clientId) clients of
+                    case listFindIndex (\a -> a == clientId) clients of
                         Just index ->
                             "tab" ++ String.fromInt (index + 1)
 
@@ -4811,6 +4819,31 @@ stringToJsonCode data =
                     ( True, Codegen.apply [ Codegen.fun "stringToJson", Codegen.string data ] )
 
 
+{-| Copied from here <https://github.com/elmcraft/core-extra/blob/57fa91ab5cbce33c26ba6739be479c533ede063e/src/List/Extra.elm#L455>
+-}
+listUnique : List a -> List a
+listUnique list =
+    uniqueHelp identity [] list []
+
+
+uniqueHelp : (a -> b) -> List b -> List a -> List a -> List a
+uniqueHelp f existing remaining accumulator =
+    case remaining of
+        [] ->
+            List.reverse accumulator
+
+        first :: rest ->
+            let
+                computedFirst =
+                    f first
+            in
+            if List.member computedFirst existing then
+                uniqueHelp f existing rest accumulator
+
+            else
+                uniqueHelp f (computedFirst :: existing) rest (first :: accumulator)
+
+
 testCode :
     String
     -> Settings
@@ -4826,7 +4859,7 @@ testCode testName settings events overriddenHttpRequests =
     let
         clients : List ClientId
         clients =
-            List.map .clientId events |> List.Extra.unique
+            List.map .clientId events |> listUnique
 
         events2 : List Expression
         events2 =
@@ -5381,6 +5414,22 @@ loadTestsFile msg =
         }
 
 
+{-| Copied from here <https://github.com/elmcraft/core-extra/blob/57fa91ab5cbce33c26ba6739be479c533ede063e/src/List/Extra.elm#L603C1-L614C36>
+-}
+listFind : (a -> Bool) -> List a -> Maybe a
+listFind predicate list =
+    case list of
+        [] ->
+            Nothing
+
+        first :: rest ->
+            if predicate first then
+                Just first
+
+            else
+                listFind predicate rest
+
+
 parseCodeHelper : String -> Int -> Int -> Result ParseError ParsedCode
 parseCodeHelper code fileRequestsStart testsStart =
     let
@@ -5390,12 +5439,12 @@ parseCodeHelper code fileRequestsStart testsStart =
 
         testsEndIndex : Maybe Int
         testsEndIndex =
-            case List.Extra.find (\index -> index > testsStart) (String.indexes "\n    ]" code) of
+            case listFind (\index -> index > testsStart) (String.indexes "\n    ]" code) of
                 Just index ->
                     Just index
 
                 Nothing ->
-                    case List.Extra.find (\index -> index > testsStart) (String.indexes "\n    []" code) of
+                    case listFind (\index -> index > testsStart) (String.indexes "\n    []" code) of
                         Just index ->
                             index + String.length "\n    [" |> Just
 
@@ -5403,7 +5452,7 @@ parseCodeHelper code fileRequestsStart testsStart =
                             Nothing
     in
     case
-        ( List.Extra.find (\index -> index > fileRequestsStart) fromListIndices
+        ( listFind (\index -> index > fileRequestsStart) fromListIndices
         , testsEndIndex
         )
     of
