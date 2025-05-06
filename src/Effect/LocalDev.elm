@@ -1,7 +1,7 @@
 module Effect.LocalDev exposing (main)
 
 import Array exposing (Array)
-import Browser
+import Browser exposing (UrlRequest)
 import Browser.Dom
 import Browser.Events
 import Browser.Navigation
@@ -171,19 +171,11 @@ next location =
             TopLeft
 
 
-userFrontendApp =
-    Frontend.app
-
-
-userBackendApp =
-    Backend.app
-
-
 type alias Flags =
     { s : String, c : String, nt : String, b : Maybe Bytes }
 
 
-type alias PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel =
+type alias PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel =
     { send_ToBackend : Bytes -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
     , receive_ToBackend : (( SessionId, ClientId, Bytes ) -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , save_BackendModel : { t : String, f : Bool, b : Bytes } -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
@@ -195,7 +187,7 @@ type alias PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendMode
     , setLiveStatus : (Bool -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , setClientId : (String -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , rpcIn : (Json.Value -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , rpcOut : Json.Value -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
+    , rpcOut : Json.Value -> Cmd backendMsg
     , onConnection : (ConnectionMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , onDisconnection : (ConnectionMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , localDevGotEvent : (Json.Value -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
@@ -210,10 +202,33 @@ type alias PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendMode
     , w3_encode_ToBackend : toBackend -> Bytes.Encode.Encoder
     , w3_decode_ToBackend : Bytes.Decode.Decoder toBackend
     , envMeta : ( String, String )
+    , userFrontendApp :
+        { init : Url -> Browser.Navigation.Key -> ( frontendModel, Cmd frontendMsg )
+        , view : frontendModel -> Browser.Document frontendMsg
+        , update : frontendMsg -> frontendModel -> ( frontendModel, Cmd frontendMsg )
+        , updateFromBackend : toFrontend -> frontendModel -> ( frontendModel, Cmd frontendMsg )
+        , subscriptions : frontendModel -> Sub frontendMsg
+        , onUrlRequest : UrlRequest -> frontendMsg
+        , onUrlChange : Url -> frontendMsg
+        }
+    , userBackendApp :
+        { init : ( backendModel, Cmd backendMsg )
+        , update : backendMsg -> backendModel -> ( backendModel, Cmd backendMsg )
+        , updateFromFrontend : String -> String -> toBackend -> backendModel -> ( backendModel, Cmd backendMsg )
+        , subscriptions : backendModel -> Sub backendMsg
+        }
+    , process :
+        (String -> String -> Cmd backendMsg)
+        -> (Json.Value -> Cmd backendMsg)
+        -> Json.Value
+        -> (rpcArgs -> backendModel -> ( rpcResult, backendModel, Cmd backendMsg ))
+        -> { a | userModel : backendModel }
+        -> ( { a | userModel : backendModel }, Cmd backendMsg )
+    , lamdera_handleEndpoints : rpcArgs -> backendModel -> ( rpcResult, backendModel, Cmd backendMsg )
     }
 
 
-init : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+init : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 init portsAndWire flags url key =
     if flags.nt == "f" then
         ( WaitingOnRecordingStatus flags url key
@@ -233,7 +248,7 @@ init portsAndWire flags url key =
         normalInit portsAndWire flags url key |> Tuple.mapFirst NormalModel
 
 
-normalInit : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+normalInit : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 normalInit portsAndWire flags url key =
     let
         ensureOutputInclusion : Msg frontendMsg backendMsg toFrontend toBackend -> Bool
@@ -249,10 +264,10 @@ normalInit portsAndWire flags url key =
                 v
 
         ( ifem, iFeCmds ) =
-            userFrontendApp.init url key
+            portsAndWire.userFrontendApp.init url key
 
         ( ibem, iBeCmds ) =
-            userBackendApp.init
+            portsAndWire.userBackendApp.init
 
         ( fem, newFeCmds ) =
             case LD.debugR "fe" ifem of
@@ -408,7 +423,7 @@ normalInit portsAndWire flags url key =
     )
 
 
-recordingInitCmds : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
+recordingInitCmds : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
 recordingInitCmds portsAndWire =
     Cmd.batch
         [ portsAndWire.localDevStartRecording ()
@@ -446,7 +461,7 @@ type LiveStatus
     | Offline
 
 
-update : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Msg frontendMsg backendMsg toFrontend toBackend -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+update : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Msg frontendMsg backendMsg toFrontend toBackend -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 update portsAndWire msg m =
     let
         log t v =
@@ -464,7 +479,7 @@ update portsAndWire msg m =
                     log "F   " frontendMsg
 
                 ( newFem, newFeCmds ) =
-                    userFrontendApp.update frontendMsg m.fem
+                    portsAndWire.userFrontendApp.update frontendMsg m.fem
             in
             ( { m | fem = storeFE m newFem }
             , Cmd.map FEMsg newFeCmds
@@ -482,7 +497,7 @@ update portsAndWire msg m =
                             log "  B " backendMsg
 
                         ( newBem, newBeCmds ) =
-                            userBackendApp.update backendMsg m.bem
+                            portsAndWire.userBackendApp.update backendMsg m.bem
                     in
                     ( { m | bem = newBem, bemDirty = True }
                     , Cmd.batch
@@ -554,7 +569,7 @@ update portsAndWire msg m =
         FENewUrl url ->
             let
                 ( newModel, newCmds ) =
-                    update portsAndWire (FEMsg (userFrontendApp.onUrlChange url)) m
+                    update portsAndWire (FEMsg (portsAndWire.userFrontendApp.onUrlChange url)) m
             in
             ( { newModel | originalUrl = url }, newCmds )
 
@@ -578,7 +593,7 @@ update portsAndWire msg m =
                                     log " ▶️B " toBackend
 
                                 ( newBem, newBeCmds ) =
-                                    userBackendApp.updateFromFrontend s c toBackend m.bem
+                                    portsAndWire.userBackendApp.updateFromFrontend s c toBackend m.bem
                             in
                             ( { m | bem = newBem, bemDirty = True }
                             , Cmd.batch
@@ -605,7 +620,7 @@ update portsAndWire msg m =
                                 log "F◀️  " toFrontend
 
                             ( newFem, newFeCmds ) =
-                                userFrontendApp.updateFromBackend toFrontend m.fem
+                                portsAndWire.userFrontendApp.updateFromBackend toFrontend m.fem
                         in
                         ( { m | fem = storeFE m newFem }
                         , Cmd.map FEMsg newFeCmds
@@ -642,7 +657,7 @@ update portsAndWire msg m =
                     { userModel = m.bem }
 
                 ( newModel, newBeCmds ) =
-                    LamderaRPC.process
+                    portsAndWire.process
                         (\k v ->
                             let
                                 x =
@@ -652,7 +667,7 @@ update portsAndWire msg m =
                         )
                         portsAndWire.rpcOut
                         rpcArgsJson
-                        RPC.lamdera_handleEndpoints
+                        portsAndWire.lamdera_handleEndpoints
                         model
             in
             ( { m | bem = newModel.userModel, bemDirty = True }, Cmd.map BEMsg newBeCmds )
@@ -718,10 +733,10 @@ update portsAndWire msg m =
         ResetDebugStoreBoth ->
             let
                 ( newFem, newFeCmds ) =
-                    userFrontendApp.init m.originalUrl m.originalKey
+                    portsAndWire.userFrontendApp.init m.originalUrl m.originalKey
 
                 ( newBem, newBeCmds ) =
-                    userBackendApp.init
+                    portsAndWire.userBackendApp.init
             in
             ( { m
                 | fem = LD.debugS "fe" newFem
@@ -736,7 +751,7 @@ update portsAndWire msg m =
         ResetDebugStoreFE ->
             let
                 ( newFem, newFeCmds ) =
-                    userFrontendApp.init m.originalUrl m.originalKey
+                    portsAndWire.userFrontendApp.init m.originalUrl m.originalKey
             in
             ( { m
                 | fem = LD.debugS "fe" newFem
@@ -751,7 +766,7 @@ update portsAndWire msg m =
                 devbar =
                     m.devbar
             in
-            resetBackend { m | devbar = LD.debugS "d" { devbar | isRecordingEvents = Nothing } }
+            resetBackend portsAndWire { m | devbar = LD.debugS "d" { devbar | isRecordingEvents = Nothing } }
 
         ToggledFreezeMode ->
             let
@@ -1103,7 +1118,7 @@ update portsAndWire msg m =
                 ( { m | showFileReadWriteError = True }, Cmd.none )
 
         NotifiedFollowersOfRecordingStart ->
-            resetBackend m
+            resetBackend portsAndWire m
 
         PressedStopRecording ->
             let
@@ -1224,7 +1239,7 @@ initRecording =
     }
 
 
-receivedMsgFromLocalDev : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bytes -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+receivedMsgFromLocalDev : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bytes -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 receivedMsgFromLocalDev portsAndWire payload ({ devbar } as model) =
     Bytes.Decode.decode
         (Bytes.Decode.unsignedInt8
@@ -1234,6 +1249,7 @@ receivedMsgFromLocalDev portsAndWire payload ({ devbar } as model) =
                         0 ->
                             -- Start recording
                             resetBackend
+                                portsAndWire
                                 { model | devbar = LD.debugS "d" { devbar | isRecordingEvents = Just initRecording } }
                                 |> Bytes.Decode.succeed
 
@@ -1355,7 +1371,7 @@ encodeString text =
         ]
 
 
-broadcastEvent : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> ClientId -> String -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
+broadcastEvent : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> ClientId -> String -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
 broadcastEvent portsAndWire clientId eventText =
     portsAndWire.send_ToFrontend
         { t = "ToFrontend"
@@ -1372,11 +1388,11 @@ broadcastEvent portsAndWire clientId eventText =
         }
 
 
-resetBackend : NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
-resetBackend model =
+resetBackend : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+resetBackend portsAndWire model =
     let
         ( newBem, newBeCmds ) =
-            userBackendApp.init
+            portsAndWire.userBackendApp.init
     in
     ( { model | bem = newBem, bemDirty = True }
     , Cmd.batch
@@ -1386,12 +1402,12 @@ resetBackend model =
     )
 
 
-subscriptions : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
+subscriptions : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
 subscriptions portsAndWire { nodeType, fem, bem, bemDirty, devbar, clientId, recordedEvents } =
     Sub.batch
-        [ Sub.map FEMsg (userFrontendApp.subscriptions fem)
+        [ Sub.map FEMsg (portsAndWire.userFrontendApp.subscriptions fem)
         , if nodeType == Leader then
-            Sub.map BEMsg (userBackendApp.subscriptions bem)
+            Sub.map BEMsg (portsAndWire.userBackendApp.subscriptions bem)
 
           else
             Sub.none
@@ -1458,7 +1474,7 @@ yForLocation location =
             style "bottom" "5px"
 
 
-lamderaUI : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
+lamderaUI : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
 lamderaUI portsAndWire devbar nodeType =
     case devbar.liveStatus of
         Online ->
@@ -1594,7 +1610,7 @@ resetNotification showReset =
         text ""
 
 
-lamderaPane : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+lamderaPane : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 lamderaPane portsAndWire devbar nodeType =
     div
         [ style "font-family" "system-ui, Helvetica Neue, sans-serif"
@@ -1648,7 +1664,7 @@ withOverlay dismiss html =
         html
 
 
-envIndicator : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+envIndicator : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 envIndicator wireAndPorts =
     let
         ( label, color ) =
@@ -1693,7 +1709,7 @@ eyeClosed =
         [ S.path [ A.d "M228,175a8,8,0,0,1-10.92-3l-19-33.2A123.23,123.23,0,0,1,162,155.46l5.87,35.22a8,8,0,0,1-6.58,9.21A8.4,8.4,0,0,1,160,200a8,8,0,0,1-7.88-6.69l-5.77-34.58a133.06,133.06,0,0,1-36.68,0l-5.77,34.58A8,8,0,0,1,96,200a8.4,8.4,0,0,1-1.32-.11,8,8,0,0,1-6.58-9.21L94,155.46a123.23,123.23,0,0,1-36.06-16.69L39,172A8,8,0,1,1,25.06,164l20-35a153.47,153.47,0,0,1-19.3-20A8,8,0,1,1,38.22,99c16.6,20.54,45.64,45,89.78,45s73.18-24.49,89.78-45A8,8,0,1,1,230.22,109a153.47,153.47,0,0,1-19.3,20l20,35A8,8,0,0,1,228,175Z" ] [] ]
 
 
-lamderaDevBar : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bool -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
+lamderaDevBar : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bool -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
 lamderaDevBar portsAndWire topDown devbar nodeType =
     case topDown of
         True ->
@@ -1723,7 +1739,7 @@ lamderaDevBar portsAndWire topDown devbar nodeType =
             ]
 
 
-pill : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+pill : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 pill portsAndWire devbar nodeType =
     div []
         [ div
@@ -1854,7 +1870,7 @@ spacer width =
     span [ style "width" (String.fromInt width ++ "px"), style "display" "inline-block" ] []
 
 
-expandedUI : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NodeType -> Bool -> DevBar -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+expandedUI : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NodeType -> Bool -> DevBar -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 expandedUI portsAndWire nodeType topDown devbar =
     let
         modeText : String
@@ -2089,7 +2105,7 @@ buttonDevLink label url color =
         ]
 
 
-mapDocument : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> (frontendMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Browser.Document frontendMsg -> Browser.Document (Msg frontendMsg backendMsg toFrontend toBackend)
+mapDocument : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> (frontendMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Browser.Document frontendMsg -> Browser.Document (Msg frontendMsg backendMsg toFrontend toBackend)
 mapDocument portsAndWire model msg { title, body } =
     { title = title
     , body =
@@ -2308,7 +2324,7 @@ lightCharcoal =
     "#434a4d"
 
 
-main : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Program Flags (Model frontendModel backendModel) (Msg frontendMsg backendMsg toFrontend toBackend)
+main : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Program Flags (Model frontendModel backendModel) (Msg frontendMsg backendMsg toFrontend toBackend)
 main portsAndWire =
     Browser.application
         { init = init portsAndWire
@@ -2319,7 +2335,7 @@ main portsAndWire =
                         { title = "", body = [] }
 
                     NormalModel model2 ->
-                        mapDocument portsAndWire model2 FEMsg (userFrontendApp.view model2.fem)
+                        mapDocument portsAndWire model2 FEMsg (portsAndWire.userFrontendApp.view model2.fem)
         , update =
             \msg model ->
                 case model of
@@ -2348,12 +2364,12 @@ main portsAndWire =
 
                     NormalModel model2 ->
                         subscriptions portsAndWire model2
-        , onUrlRequest = \ureq -> FEMsg (userFrontendApp.onUrlRequest ureq)
+        , onUrlRequest = \ureq -> FEMsg (portsAndWire.userFrontendApp.onUrlRequest ureq)
         , onUrlChange = \url -> FENewUrl url
         }
 
 
-waitingOnRecordingStatusUpdate : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> Bytes -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+waitingOnRecordingStatusUpdate : PortsAndWire rpcArgs rpcResult a frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> Bytes -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 waitingOnRecordingStatusUpdate portsAndWire flags url key payload =
     Bytes.Decode.decode
         (Bytes.Decode.unsignedInt8
