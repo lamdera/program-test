@@ -1,4 +1,4 @@
-module Effect.LocalDev exposing (localDev)
+module Effect.LocalDev exposing (ConnectionMsg, Model, Msg(..), WireMsg, localDev)
 
 import Array exposing (Array)
 import Browser exposing (UrlRequest)
