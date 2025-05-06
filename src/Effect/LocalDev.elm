@@ -175,7 +175,7 @@ type alias Flags =
     { s : String, c : String, nt : String, b : Maybe Bytes }
 
 
-type alias PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel =
+type alias Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel =
     { send_ToBackend : Bytes -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
     , receive_ToBackend : (( SessionId, ClientId, Bytes ) -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
     , save_BackendModel : { t : String, f : Bool, b : Bytes } -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
@@ -220,7 +220,7 @@ type alias PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendMode
     }
 
 
-init : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+init : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 init portsAndWire flags url key =
     if flags.nt == "f" then
         ( WaitingOnRecordingStatus flags url key
@@ -240,7 +240,7 @@ init portsAndWire flags url key =
         normalInit portsAndWire flags url key |> Tuple.mapFirst NormalModel
 
 
-normalInit : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+normalInit : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 normalInit portsAndWire flags url key =
     let
         ensureOutputInclusion : Msg frontendMsg backendMsg toFrontend toBackend -> Bool
@@ -415,7 +415,7 @@ normalInit portsAndWire flags url key =
     )
 
 
-recordingInitCmds : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
+recordingInitCmds : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
 recordingInitCmds portsAndWire =
     Cmd.batch
         [ portsAndWire.localDevStartRecording ()
@@ -453,7 +453,7 @@ type LiveStatus
     | Offline
 
 
-update : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Msg frontendMsg backendMsg toFrontend toBackend -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+update : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Msg frontendMsg backendMsg toFrontend toBackend -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 update portsAndWire msg m =
     let
         log t v =
@@ -1226,7 +1226,7 @@ initRecording =
     }
 
 
-receivedMsgFromLocalDev : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bytes -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+receivedMsgFromLocalDev : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bytes -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 receivedMsgFromLocalDev portsAndWire payload ({ devbar } as model) =
     Bytes.Decode.decode
         (Bytes.Decode.unsignedInt8
@@ -1358,7 +1358,7 @@ encodeString text =
         ]
 
 
-broadcastEvent : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> ClientId -> String -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
+broadcastEvent : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> ClientId -> String -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
 broadcastEvent portsAndWire clientId eventText =
     portsAndWire.send_ToFrontend
         { t = "ToFrontend"
@@ -1375,7 +1375,7 @@ broadcastEvent portsAndWire clientId eventText =
         }
 
 
-resetBackend : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+resetBackend : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 resetBackend portsAndWire model =
     let
         ( newBem, newBeCmds ) =
@@ -1389,7 +1389,7 @@ resetBackend portsAndWire model =
     )
 
 
-subscriptions : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
+subscriptions : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
 subscriptions portsAndWire { nodeType, fem, bem, bemDirty, devbar, clientId, recordedEvents } =
     Sub.batch
         [ Sub.map FEMsg (portsAndWire.userFrontendApp.subscriptions fem)
@@ -1461,7 +1461,7 @@ yForLocation location =
             style "bottom" "5px"
 
 
-lamderaUI : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
+lamderaUI : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
 lamderaUI portsAndWire devbar nodeType =
     case devbar.liveStatus of
         Online ->
@@ -1597,7 +1597,7 @@ resetNotification showReset =
         text ""
 
 
-lamderaPane : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+lamderaPane : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 lamderaPane portsAndWire devbar nodeType =
     div
         [ style "font-family" "system-ui, Helvetica Neue, sans-serif"
@@ -1651,7 +1651,7 @@ withOverlay dismiss html =
         html
 
 
-envIndicator : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+envIndicator : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 envIndicator wireAndPorts =
     let
         ( label, color ) =
@@ -1696,7 +1696,7 @@ eyeClosed =
         [ S.path [ A.d "M228,175a8,8,0,0,1-10.92-3l-19-33.2A123.23,123.23,0,0,1,162,155.46l5.87,35.22a8,8,0,0,1-6.58,9.21A8.4,8.4,0,0,1,160,200a8,8,0,0,1-7.88-6.69l-5.77-34.58a133.06,133.06,0,0,1-36.68,0l-5.77,34.58A8,8,0,0,1,96,200a8.4,8.4,0,0,1-1.32-.11,8,8,0,0,1-6.58-9.21L94,155.46a123.23,123.23,0,0,1-36.06-16.69L39,172A8,8,0,1,1,25.06,164l20-35a153.47,153.47,0,0,1-19.3-20A8,8,0,1,1,38.22,99c16.6,20.54,45.64,45,89.78,45s73.18-24.49,89.78-45A8,8,0,1,1,230.22,109a153.47,153.47,0,0,1-19.3,20l20,35A8,8,0,0,1,228,175Z" ] [] ]
 
 
-lamderaDevBar : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bool -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
+lamderaDevBar : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bool -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
 lamderaDevBar portsAndWire topDown devbar nodeType =
     case topDown of
         True ->
@@ -1726,7 +1726,7 @@ lamderaDevBar portsAndWire topDown devbar nodeType =
             ]
 
 
-pill : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+pill : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 pill portsAndWire devbar nodeType =
     div []
         [ div
@@ -1857,7 +1857,7 @@ spacer width =
     span [ style "width" (String.fromInt width ++ "px"), style "display" "inline-block" ] []
 
 
-expandedUI : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NodeType -> Bool -> DevBar -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
+expandedUI : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NodeType -> Bool -> DevBar -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
 expandedUI portsAndWire nodeType topDown devbar =
     let
         modeText : String
@@ -2092,7 +2092,7 @@ buttonDevLink label url color =
         ]
 
 
-mapDocument : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> (frontendMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Browser.Document frontendMsg -> Browser.Document (Msg frontendMsg backendMsg toFrontend toBackend)
+mapDocument : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> (frontendMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Browser.Document frontendMsg -> Browser.Document (Msg frontendMsg backendMsg toFrontend toBackend)
 mapDocument portsAndWire model msg { title, body } =
     { title = title
     , body =
@@ -2311,7 +2311,7 @@ lightCharcoal =
     "#434a4d"
 
 
-localDev : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Program Flags (Model frontendModel backendModel) (Msg frontendMsg backendMsg toFrontend toBackend)
+localDev : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Program Flags (Model frontendModel backendModel) (Msg frontendMsg backendMsg toFrontend toBackend)
 localDev portsAndWire =
     Browser.application
         { init = init portsAndWire
@@ -2356,7 +2356,7 @@ localDev portsAndWire =
         }
 
 
-waitingOnRecordingStatusUpdate : PortsAndWire frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> Bytes -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+waitingOnRecordingStatusUpdate : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> Bytes -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 waitingOnRecordingStatusUpdate portsAndWire flags url key payload =
     Bytes.Decode.decode
         (Bytes.Decode.unsignedInt8
