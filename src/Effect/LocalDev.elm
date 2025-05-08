@@ -1,5 +1,11 @@
 module Effect.LocalDev exposing (ConnectionMsg, Model, Msg(..), NormalModelData, WireMsg, localDev)
 
+{-| Ignore this module, it's used by LocalDev.elm for running lamdera live
+
+@docs ConnectionMsg, Model, Msg, NormalModelData, WireMsg, localDev
+
+-}
+
 import Array exposing (Array)
 import Browser exposing (UrlRequest)
 import Browser.Dom
@@ -36,14 +42,17 @@ import Time
 import Url
 
 
+{-| -}
 type alias WireMsg =
     { t : String, s : String, c : String, b : Bytes }
 
 
+{-| -}
 type alias ConnectionMsg =
     { s : SessionId, c : ClientId }
 
 
+{-| -}
 type Msg frontendMsg backendMsg toFrontend toBackend
     = FEMsg frontendMsg
     | BEMsg backendMsg
@@ -100,11 +109,13 @@ type Msg frontendMsg backendMsg toFrontend toBackend
     | PressedCloseModal
 
 
+{-| -}
 type Model frontendModel backendModel
     = WaitingOnRecordingStatus Flags Url Key
     | NormalModel (NormalModelData frontendModel backendModel)
 
 
+{-| -}
 type alias NormalModelData frontendModel backendModel =
     { fem : frontendModel
     , bem : backendModel
@@ -2286,6 +2297,7 @@ lightCharcoal =
     "#434a4d"
 
 
+{-| -}
 localDev : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Program Flags (Model frontendModel backendModel) (Msg frontendMsg backendMsg toFrontend toBackend)
 localDev portsAndWire =
     Browser.application
