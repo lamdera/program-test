@@ -243,10 +243,6 @@ init portsAndWire flags url key =
 normalInit : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 normalInit portsAndWire flags url key =
     let
-        ensureOutputInclusion : Msg frontendMsg backendMsg toFrontend toBackend -> Bool
-        ensureOutputInclusion =
-            shouldProxy
-
         log : String -> b -> b
         log t v =
             if devbar.logging then
@@ -2534,30 +2530,6 @@ getAppSnapshotLegacy appId snapshot =
 --     , timeout = Nothing
 --     }
 --     |> Task.map (\v -> ( v, version ))
-
-
-{-| Used directly by the core CORS modification to decide which Msg types need
-
-the CORS flag set for subsequent Cmd's they'll initiate
-
--}
-shouldProxy : Msg frontendMsg backendMsg toFrontend toBackend -> Bool
-shouldProxy msg =
-    case msg of
-        BEMsg _ ->
-            True
-
-        FEtoBE _ ->
-            True
-
-        FEtoBEDelayed _ ->
-            True
-
-        ReceivedToBackend _ ->
-            True
-
-        _ ->
-            False
 
 
 showVersion ( major, minor, patch ) =
