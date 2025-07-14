@@ -2583,7 +2583,7 @@ justs =
 eventDecoder : ClientId -> Decoder Event
 eventDecoder clientId =
     Json.succeed (Event False clientId)
-        |> andMap "timestamp" (Json.Decode.map Time.millisToPosix Json.Decode.int)
+        |> andMap "timestamp" timestampDecoder
         |> andMap "eventType" eventTypeDecoder
 
 
@@ -2592,8 +2592,13 @@ fullEventDecoder =
     Json.succeed Event
         |> andMap "isHidden" Json.Decode.bool
         |> andMap "clientId" Json.Decode.string
-        |> andMap "timestamp" (Json.Decode.map Time.millisToPosix Json.Decode.int)
+        |> andMap "timestamp" timestampDecoder
         |> andMap "eventType" eventTypeDecoder
+
+
+timestampDecoder : Decoder Time.Posix
+timestampDecoder =
+    Json.Decode.map (\timestamp -> Time.millisToPosix (round timestamp)) Json.Decode.float
 
 
 eventEncoder : Event -> Json.Encode.Value
