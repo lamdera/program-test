@@ -62,6 +62,7 @@ type Msg frontendMsg backendMsg toFrontend toBackend
     | FEtoBEDelayed toBackend
     | FENewUrl Url
     | OnConnection ConnectionMsg
+    | OnConnectionDelayed ConnectionMsg
     | OnDisconnection ConnectionMsg
     | ReceivedToBackend ( SessionId, ClientId, Bytes )
     | ReceivedToFrontend WireMsg
@@ -129,6 +130,7 @@ type alias NormalModelData frontendModel backendModel =
     , recordedEvents : LoadedData
     , showFileReadWriteError : Bool
     , lastCopied : Maybe String
+    , waitingConnections : Set ClientId
     }
 
 
@@ -240,7 +242,14 @@ init portsAndWire flags url key =
                 { t = "ToFrontend"
                 , s = "LocalDev"
                 , c = "b"
-                , b = Bytes.Encode.encode (Bytes.Encode.unsignedInt8 3)
+                , b =
+                    Bytes.Encode.encode
+                        (Bytes.Encode.sequence
+                            [ Bytes.Encode.unsignedInt8 3
+                            , encodeString flags.s
+                            , encodeString flags.c
+                            ]
+                        )
                 }
             , Process.sleep 2000
                 |> Task.perform (\() -> TimedOutWaitingOnRecordingStatus)
@@ -397,6 +406,7 @@ normalInit portsAndWire flags url key =
       , recordedEvents = recorded
       , showFileReadWriteError = False
       , lastCopied = Nothing
+      , waitingConnections = Set.empty
       }
     , Cmd.batch
         [ Cmd.map FEMsg newFeCmds
@@ -573,10 +583,30 @@ update portsAndWire msg m =
             ( { newModel | originalUrl = url }, newCmds )
 
         OnConnection d ->
-            ( m, Lamdera.clientConnected_ d.s d.c )
+            if m.nodeType == Follower then
+                ( m, Cmd.none )
+
+            else if d.c == m.clientId then
+                ( m, Lamdera.clientConnected_ d.s d.c )
+
+            else
+                ( { m | waitingConnections = Set.insert d.c m.waitingConnections }
+                , delayMsg 2000 (OnConnectionDelayed d)
+                )
+
+        OnConnectionDelayed d ->
+            if Set.member d.c m.waitingConnections then
+                ( { m | waitingConnections = Set.remove d.c m.waitingConnections }
+                , Lamdera.clientConnected_ d.s d.c
+                )
+
+            else
+                ( m, Cmd.none )
 
         OnDisconnection d ->
-            ( m, Lamdera.clientDisconnected_ d.s d.c )
+            ( { m | waitingConnections = Set.remove d.c m.waitingConnections }
+            , Lamdera.clientDisconnected_ d.s d.c
+            )
 
         ReceivedToBackend ( s, c, bytes ) ->
             case m.nodeType of
@@ -1273,53 +1303,60 @@ receivedMsgFromLocalDev portsAndWire payload ({ devbar } as model) =
 
                         3 ->
                             -- Request if there is a recording in progress
-                            ( model
-                            , case model.nodeType of
-                                Leader ->
-                                    case model.devbar.isRecordingEvents of
-                                        Just recording ->
-                                            if recording.recordingStopped then
-                                                portsAndWire.send_ToFrontend
-                                                    { t = "ToFrontend"
-                                                    , s = "LocalDev"
-                                                    , c = "b"
-                                                    , b =
-                                                        Bytes.Encode.encode
-                                                            (Bytes.Encode.unsignedInt8 5)
-                                                    }
+                            Bytes.Decode.map2
+                                (\sessionId clientId ->
+                                    ( model
+                                    , case model.nodeType of
+                                        Leader ->
+                                            Cmd.batch
+                                                [ case model.devbar.isRecordingEvents of
+                                                    Just recording ->
+                                                        if recording.recordingStopped then
+                                                            portsAndWire.send_ToFrontend
+                                                                { t = "ToFrontend"
+                                                                , s = "LocalDev"
+                                                                , c = clientId
+                                                                , b =
+                                                                    Bytes.Encode.encode
+                                                                        (Bytes.Encode.unsignedInt8 5)
+                                                                }
 
-                                            else
-                                                portsAndWire.send_ToFrontend
-                                                    { t = "ToFrontend"
-                                                    , s = "LocalDev"
-                                                    , c = "b"
-                                                    , b =
-                                                        Bytes.Encode.encode
-                                                            (Bytes.Encode.sequence
-                                                                [ Bytes.Encode.unsignedInt8 4
-                                                                , Json.Encode.array
-                                                                    eventEncoder
-                                                                    recording.history
-                                                                    |> Json.Encode.encode 0
-                                                                    |> encodeString
-                                                                ]
-                                                            )
-                                                    }
+                                                        else
+                                                            portsAndWire.send_ToFrontend
+                                                                { t = "ToFrontend"
+                                                                , s = "LocalDev"
+                                                                , c = clientId
+                                                                , b =
+                                                                    Bytes.Encode.encode
+                                                                        (Bytes.Encode.sequence
+                                                                            [ Bytes.Encode.unsignedInt8 4
+                                                                            , Json.Encode.array
+                                                                                eventEncoder
+                                                                                recording.history
+                                                                                |> Json.Encode.encode 0
+                                                                                |> encodeString
+                                                                            ]
+                                                                        )
+                                                                }
 
-                                        Nothing ->
-                                            portsAndWire.send_ToFrontend
-                                                { t = "ToFrontend"
-                                                , s = "LocalDev"
-                                                , c = "b"
-                                                , b =
-                                                    Bytes.Encode.encode
-                                                        (Bytes.Encode.unsignedInt8 5)
-                                                }
+                                                    Nothing ->
+                                                        portsAndWire.send_ToFrontend
+                                                            { t = "ToFrontend"
+                                                            , s = "LocalDev"
+                                                            , c = clientId
+                                                            , b =
+                                                                Bytes.Encode.encode
+                                                                    (Bytes.Encode.unsignedInt8 5)
+                                                            }
+                                                , sendMsg (OnConnectionDelayed { s = sessionId, c = clientId })
+                                                ]
 
-                                Follower ->
-                                    Cmd.none
-                            )
-                                |> Bytes.Decode.succeed
+                                        Follower ->
+                                            Cmd.none
+                                    )
+                                )
+                                decodeString
+                                decodeString
 
                         _ ->
                             Bytes.Decode.succeed ( model, Cmd.none )
@@ -2388,6 +2425,11 @@ waitingOnRecordingStatusUpdate portsAndWire flags url key payload =
         )
         payload
         |> Maybe.withDefault ( WaitingOnRecordingStatus flags url key, Cmd.none )
+
+
+sendMsg : b -> Cmd b
+sendMsg msg =
+    Task.succeed msg |> Task.perform identity
 
 
 delayMsg : Float -> b -> Cmd b
