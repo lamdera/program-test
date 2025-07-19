@@ -31,14 +31,19 @@ module Effect.Browser exposing
 -}
 
 import Browser
+import Browser.Events
 import Browser.Navigation as Navigation
+import Duration
 import Effect.Browser.Navigation
 import Effect.Command exposing (Command, FrontendOnly)
-import Effect.Internal
+import Effect.Internal exposing (Subscription(..), Visibility(..))
 import Effect.Lamdera
 import Effect.Subscription exposing (Subscription)
 import Html exposing (Html)
+import Http
+import Time
 import Url
+import Websocket
 
 
 
@@ -117,7 +122,7 @@ element { init, view, update, subscriptions } =
             \msg model ->
                 update msg model
                     |> Tuple.mapSecond (Effect.Lamdera.toCmd (\_ -> Cmd.none) (\_ _ -> Cmd.none) (\_ -> Cmd.none))
-        , subscriptions = \model -> subscriptions model |> Effect.Internal.toSub
+        , subscriptions = \model -> subscriptions model |> toSub
         }
 
 
@@ -146,7 +151,7 @@ document { init, view, update, subscriptions } =
             \msg model ->
                 update msg model
                     |> Tuple.mapSecond (Effect.Lamdera.toCmd (\_ -> Cmd.none) (\_ _ -> Cmd.none) (\_ -> Cmd.none))
-        , subscriptions = \model -> subscriptions model |> Effect.Internal.toSub
+        , subscriptions = \model -> subscriptions model |> toSub
         }
 
 
@@ -242,7 +247,7 @@ application { init, view, update, subscriptions, onUrlRequest, onUrlChange } =
             \msg model ->
                 update msg model
                     |> Tuple.mapSecond (Effect.Lamdera.toCmd (\_ -> Cmd.none) (\_ _ -> Cmd.none) (\_ -> Cmd.none))
-        , subscriptions = \model -> subscriptions model |> Effect.Internal.toSub
+        , subscriptions = \model -> subscriptions model |> toSub
         , onUrlRequest = onUrlRequest
         , onUrlChange = onUrlChange
         }
@@ -317,3 +322,72 @@ for figuring that out!
 -}
 type alias UrlRequest =
     Browser.UrlRequest
+
+
+toSub : Subscription restriction msg -> Sub msg
+toSub sub =
+    case sub of
+        SubBatch subs ->
+            List.map toSub subs |> Sub.batch
+
+        SubNone ->
+            Sub.none
+
+        TimeEvery duration msg ->
+            Time.every (Duration.inMilliseconds duration) msg
+
+        OnAnimationFrame msg ->
+            Browser.Events.onAnimationFrame msg
+
+        OnAnimationFrameDelta msg ->
+            Browser.Events.onAnimationFrameDelta (Duration.milliseconds >> msg)
+
+        OnKeyPress decoder ->
+            Browser.Events.onKeyPress decoder
+
+        OnKeyDown decoder ->
+            Browser.Events.onKeyDown decoder
+
+        OnKeyUp decoder ->
+            Browser.Events.onKeyUp decoder
+
+        OnClick decoder ->
+            Browser.Events.onClick decoder
+
+        OnMouseMove decoder ->
+            Browser.Events.onMouseMove decoder
+
+        OnMouseDown decoder ->
+            Browser.Events.onMouseDown decoder
+
+        OnMouseUp decoder ->
+            Browser.Events.onMouseUp decoder
+
+        OnVisibilityChange msg ->
+            Browser.Events.onVisibilityChange
+                (\visibility ->
+                    case visibility of
+                        Browser.Events.Visible ->
+                            msg Visible
+
+                        Browser.Events.Hidden ->
+                            msg Hidden
+                )
+
+        OnResize msg ->
+            Browser.Events.onResize msg
+
+        SubPort _ portFunction _ ->
+            portFunction
+
+        OnConnect msg ->
+            Sub.none
+
+        OnDisconnect msg ->
+            Sub.none
+
+        HttpTrack string function ->
+            Http.track string function
+
+        WebsocketListen connection onData onClose ->
+            Websocket.listen connection onData onClose

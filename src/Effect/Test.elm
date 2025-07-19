@@ -99,6 +99,7 @@ import Test.Runner
 import Time
 import Url exposing (Url)
 import WebGLFix.Texture
+import Websocket
 
 
 {-| Configure the end to end test before starting it
@@ -3774,6 +3775,15 @@ runTask maybeClientId state task =
                 |> runTask maybeClientId state
 
         EndXrSession function ->
+            function () |> runTask maybeClientId state
+
+        WebsocketCreateHandle url function ->
+            function (Websocket.Connection "" url) |> runTask maybeClientId state
+
+        WebsocketSendString _ _ function ->
+            function (Ok ()) |> runTask maybeClientId state
+
+        WebsocketClose _ function ->
             function () |> runTask maybeClientId state
 
 
