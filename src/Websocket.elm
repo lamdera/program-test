@@ -248,7 +248,7 @@ subMap : (a -> b) -> MySub a -> MySub b
 subMap func sub =
     case sub of
         Listen url onData onClose ->
-            Listen url (onData >> func) (onClose >> func)
+            Listen url (\a -> onData a |> func) (\a -> onClose a |> func)
 
 
 cmdMap : (a -> b) -> MyCmd a -> MyCmd b
@@ -258,7 +258,7 @@ cmdMap f cmd =
             SentData connection_ data
 
         OpenConnection url onOpen ->
-            OpenConnection url (onOpen >> f)
+            OpenConnection url (\a -> onOpen a |> f)
 
         CloseConnection connection_ ->
             CloseConnection connection_

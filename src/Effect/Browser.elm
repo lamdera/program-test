@@ -340,7 +340,7 @@ toSub sub =
             Browser.Events.onAnimationFrame msg
 
         OnAnimationFrameDelta msg ->
-            Browser.Events.onAnimationFrameDelta (Duration.milliseconds >> msg)
+            Browser.Events.onAnimationFrameDelta (\a -> Duration.milliseconds a |> msg)
 
         OnKeyPress decoder ->
             Browser.Events.onKeyPress decoder
@@ -380,10 +380,10 @@ toSub sub =
         SubPort _ portFunction _ ->
             portFunction
 
-        OnConnect msg ->
+        OnConnect _ ->
             Sub.none
 
-        OnDisconnect msg ->
+        OnDisconnect _ ->
             Sub.none
 
         HttpTrack string function ->
