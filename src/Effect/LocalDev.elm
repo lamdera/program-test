@@ -460,6 +460,216 @@ type LiveStatus
     | Offline
 
 
+waitingOnRecordingStatusUpdate : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> Bytes -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+waitingOnRecordingStatusUpdate portsAndWire flags url key payload =
+    Bytes.Decode.decode
+        (Bytes.Decode.unsignedInt8
+            |> Bytes.Decode.andThen
+                (\flag ->
+                    case flag of
+                        4 ->
+                            -- Response if there is a recording in progress
+                            Bytes.Decode.map
+                                (\text ->
+                                    case Json.Decode.decodeString (Json.Decode.array fullEventDecoder) text of
+                                        Ok history ->
+                                            let
+                                                ( { devbar } as model, cmd ) =
+                                                    normalInit portsAndWire flags url key
+                                            in
+                                            ( { model
+                                                | devbar =
+                                                    { devbar
+                                                        | isRecordingEvents =
+                                                            Just { history = history, recordingStopped = False }
+                                                    }
+                                              }
+                                                |> NormalModel
+                                            , Cmd.batch [ cmd, recordingInitCmds portsAndWire ]
+                                            )
+
+                                        Err _ ->
+                                            normalInit portsAndWire flags url key |> Tuple.mapFirst NormalModel
+                                )
+                                decodeString
+
+                        5 ->
+                            -- Response if there is no recording in progress
+                            normalInit portsAndWire flags url key
+                                |> Tuple.mapFirst NormalModel
+                                |> Bytes.Decode.succeed
+
+                        _ ->
+                            Bytes.Decode.succeed ( WaitingOnRecordingStatus flags url key, Cmd.none )
+                )
+        )
+        payload
+        |> Maybe.withDefault ( WaitingOnRecordingStatus flags url key, Cmd.none )
+
+
+receivedMsgFromLocalDev : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bytes -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+receivedMsgFromLocalDev portsAndWire payload ({ devbar } as model) =
+    Bytes.Decode.decode
+        (Bytes.Decode.unsignedInt8
+            |> Bytes.Decode.andThen
+                (\flag ->
+                    case flag of
+                        0 ->
+                            -- Start recording
+                            resetBackend
+                                portsAndWire
+                                { model | devbar = LD.debugS "d" { devbar | isRecordingEvents = Just initRecording } }
+                                |> Bytes.Decode.succeed
+
+                        1 ->
+                            -- Stop recording
+                            decodeString
+                                |> Bytes.Decode.map
+                                    (\clientId ->
+                                        if clientId == model.clientId then
+                                            ( model, Cmd.none )
+
+                                        else
+                                            ( { model
+                                                | devbar =
+                                                    LD.debugS "d"
+                                                        { devbar | isRecordingEvents = Nothing }
+                                              }
+                                            , portsAndWire.localDevStopRecording ()
+                                            )
+                                    )
+
+                        2 ->
+                            -- Got a user event
+                            Bytes.Decode.map2
+                                (\clientId json ->
+                                    case
+                                        ( model.devbar.isRecordingEvents
+                                        , Json.Decode.decodeString (eventDecoder clientId) json
+                                        )
+                                    of
+                                        ( Just recording, Ok event ) ->
+                                            ( { model
+                                                | devbar =
+                                                    { devbar
+                                                        | isRecordingEvents =
+                                                            addEvent event recording |> Just
+                                                    }
+                                                        |> LD.debugS "d"
+                                              }
+                                            , Cmd.none
+                                            )
+
+                                        _ ->
+                                            ( model, Cmd.none )
+                                )
+                                decodeString
+                                decodeString
+
+                        3 ->
+                            -- Request if there is a recording in progress
+                            ( model
+                            , case model.nodeType of
+                                Leader ->
+                                    case model.devbar.isRecordingEvents of
+                                        Just recording ->
+                                            if recording.recordingStopped then
+                                                portsAndWire.send_ToFrontend
+                                                    { t = "ToFrontend"
+                                                    , s = "LocalDev"
+                                                    , c = "b"
+                                                    , b =
+                                                        Bytes.Encode.encode
+                                                            (Bytes.Encode.unsignedInt8 5)
+                                                    }
+
+                                            else
+                                                portsAndWire.send_ToFrontend
+                                                    { t = "ToFrontend"
+                                                    , s = "LocalDev"
+                                                    , c = "b"
+                                                    , b =
+                                                        Bytes.Encode.encode
+                                                            (Bytes.Encode.sequence
+                                                                [ Bytes.Encode.unsignedInt8 4
+                                                                , Json.Encode.array
+                                                                    eventEncoder
+                                                                    recording.history
+                                                                    |> Json.Encode.encode 0
+                                                                    |> encodeString
+                                                                ]
+                                                            )
+                                                    }
+
+                                        Nothing ->
+                                            portsAndWire.send_ToFrontend
+                                                { t = "ToFrontend"
+                                                , s = "LocalDev"
+                                                , c = "b"
+                                                , b =
+                                                    Bytes.Encode.encode
+                                                        (Bytes.Encode.unsignedInt8 5)
+                                                }
+
+                                Follower ->
+                                    Cmd.none
+                            )
+                                |> Bytes.Decode.succeed
+
+                        _ ->
+                            Bytes.Decode.succeed ( model, Cmd.none )
+                )
+        )
+        payload
+        |> Maybe.withDefault ( model, Cmd.none )
+
+
+decodeString : Bytes.Decode.Decoder String
+decodeString =
+    Bytes.Decode.andThen
+        Bytes.Decode.string
+        (Bytes.Decode.unsignedInt32 Bytes.BE)
+
+
+encodeString : String -> Bytes.Encode.Encoder
+encodeString text =
+    Bytes.Encode.sequence
+        [ Bytes.Encode.unsignedInt32 Bytes.BE (Bytes.Encode.getStringWidth text)
+        , Bytes.Encode.string text
+        ]
+
+
+broadcastEvent : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> ClientId -> String -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
+broadcastEvent portsAndWire clientId eventText =
+    portsAndWire.send_ToFrontend
+        { t = "ToFrontend"
+        , s = "LocalDev"
+        , c = "b"
+        , b =
+            Bytes.Encode.encode
+                (Bytes.Encode.sequence
+                    [ Bytes.Encode.unsignedInt8 2
+                    , encodeString clientId
+                    , encodeString eventText
+                    ]
+                )
+        }
+
+
+resetBackend : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
+resetBackend portsAndWire model =
+    let
+        ( newBem, newBeCmds ) =
+            portsAndWire.userBackendApp.init
+    in
+    ( { model | bem = newBem, bemDirty = True }
+    , Cmd.batch
+        [ Cmd.map BEMsg newBeCmds
+        , trigger (PersistBackend True)
+        ]
+    )
+
+
 update : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Msg frontendMsg backendMsg toFrontend toBackend -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
 update portsAndWire msg m =
     let
@@ -1212,167 +1422,14 @@ initRecording =
     }
 
 
-receivedMsgFromLocalDev : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bytes -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
-receivedMsgFromLocalDev portsAndWire payload ({ devbar } as model) =
-    Bytes.Decode.decode
-        (Bytes.Decode.unsignedInt8
-            |> Bytes.Decode.andThen
-                (\flag ->
-                    case flag of
-                        0 ->
-                            -- Start recording
-                            resetBackend
-                                portsAndWire
-                                { model | devbar = LD.debugS "d" { devbar | isRecordingEvents = Just initRecording } }
-                                |> Bytes.Decode.succeed
-
-                        1 ->
-                            -- Stop recording
-                            decodeString
-                                |> Bytes.Decode.map
-                                    (\clientId ->
-                                        if clientId == model.clientId then
-                                            ( model, Cmd.none )
-
-                                        else
-                                            ( { model
-                                                | devbar =
-                                                    LD.debugS "d"
-                                                        { devbar | isRecordingEvents = Nothing }
-                                              }
-                                            , portsAndWire.localDevStopRecording ()
-                                            )
-                                    )
-
-                        2 ->
-                            -- Got a user event
-                            Bytes.Decode.map2
-                                (\clientId json ->
-                                    case
-                                        ( model.devbar.isRecordingEvents
-                                        , Json.Decode.decodeString (eventDecoder clientId) json
-                                        )
-                                    of
-                                        ( Just recording, Ok event ) ->
-                                            ( { model
-                                                | devbar =
-                                                    { devbar
-                                                        | isRecordingEvents =
-                                                            addEvent event recording |> Just
-                                                    }
-                                                        |> LD.debugS "d"
-                                              }
-                                            , Cmd.none
-                                            )
-
-                                        _ ->
-                                            ( model, Cmd.none )
-                                )
-                                decodeString
-                                decodeString
-
-                        3 ->
-                            -- Request if there is a recording in progress
-                            ( model
-                            , case model.nodeType of
-                                Leader ->
-                                    case model.devbar.isRecordingEvents of
-                                        Just recording ->
-                                            if recording.recordingStopped then
-                                                portsAndWire.send_ToFrontend
-                                                    { t = "ToFrontend"
-                                                    , s = "LocalDev"
-                                                    , c = "b"
-                                                    , b =
-                                                        Bytes.Encode.encode
-                                                            (Bytes.Encode.unsignedInt8 5)
-                                                    }
-
-                                            else
-                                                portsAndWire.send_ToFrontend
-                                                    { t = "ToFrontend"
-                                                    , s = "LocalDev"
-                                                    , c = "b"
-                                                    , b =
-                                                        Bytes.Encode.encode
-                                                            (Bytes.Encode.sequence
-                                                                [ Bytes.Encode.unsignedInt8 4
-                                                                , Json.Encode.array
-                                                                    eventEncoder
-                                                                    recording.history
-                                                                    |> Json.Encode.encode 0
-                                                                    |> encodeString
-                                                                ]
-                                                            )
-                                                    }
-
-                                        Nothing ->
-                                            portsAndWire.send_ToFrontend
-                                                { t = "ToFrontend"
-                                                , s = "LocalDev"
-                                                , c = "b"
-                                                , b =
-                                                    Bytes.Encode.encode
-                                                        (Bytes.Encode.unsignedInt8 5)
-                                                }
-
-                                Follower ->
-                                    Cmd.none
-                            )
-                                |> Bytes.Decode.succeed
-
-                        _ ->
-                            Bytes.Decode.succeed ( model, Cmd.none )
-                )
-        )
-        payload
-        |> Maybe.withDefault ( model, Cmd.none )
+delayMsg : Float -> b -> Cmd b
+delayMsg time msg =
+    Process.sleep time |> Task.perform (always msg)
 
 
-decodeString : Bytes.Decode.Decoder String
-decodeString =
-    Bytes.Decode.andThen
-        Bytes.Decode.string
-        (Bytes.Decode.unsignedInt32 Bytes.BE)
-
-
-encodeString : String -> Bytes.Encode.Encoder
-encodeString text =
-    Bytes.Encode.sequence
-        [ Bytes.Encode.unsignedInt32 Bytes.BE (Bytes.Encode.getStringWidth text)
-        , Bytes.Encode.string text
-        ]
-
-
-broadcastEvent : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> ClientId -> String -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
-broadcastEvent portsAndWire clientId eventText =
-    portsAndWire.send_ToFrontend
-        { t = "ToFrontend"
-        , s = "LocalDev"
-        , c = "b"
-        , b =
-            Bytes.Encode.encode
-                (Bytes.Encode.sequence
-                    [ Bytes.Encode.unsignedInt8 2
-                    , encodeString clientId
-                    , encodeString eventText
-                    ]
-                )
-        }
-
-
-resetBackend : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
-resetBackend portsAndWire model =
-    let
-        ( newBem, newBeCmds ) =
-            portsAndWire.userBackendApp.init
-    in
-    ( { model | bem = newBem, bemDirty = True }
-    , Cmd.batch
-        [ Cmd.map BEMsg newBeCmds
-        , trigger (PersistBackend True)
-        ]
-    )
+trigger : a -> Cmd a
+trigger msg =
+    Process.sleep 0 |> Task.perform (always msg)
 
 
 subscriptions : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
@@ -2341,63 +2398,6 @@ localDev portsAndWire =
         , onUrlRequest = \ureq -> FEMsg (portsAndWire.userFrontendApp.onUrlRequest ureq)
         , onUrlChange = \url -> FENewUrl url
         }
-
-
-waitingOnRecordingStatusUpdate : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> Bytes -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
-waitingOnRecordingStatusUpdate portsAndWire flags url key payload =
-    Bytes.Decode.decode
-        (Bytes.Decode.unsignedInt8
-            |> Bytes.Decode.andThen
-                (\flag ->
-                    case flag of
-                        4 ->
-                            -- Response if there is a recording in progress
-                            Bytes.Decode.map
-                                (\text ->
-                                    case Json.Decode.decodeString (Json.Decode.array fullEventDecoder) text of
-                                        Ok history ->
-                                            let
-                                                ( { devbar } as model, cmd ) =
-                                                    normalInit portsAndWire flags url key
-                                            in
-                                            ( { model
-                                                | devbar =
-                                                    { devbar
-                                                        | isRecordingEvents =
-                                                            Just { history = history, recordingStopped = False }
-                                                    }
-                                              }
-                                                |> NormalModel
-                                            , Cmd.batch [ cmd, recordingInitCmds portsAndWire ]
-                                            )
-
-                                        Err _ ->
-                                            normalInit portsAndWire flags url key |> Tuple.mapFirst NormalModel
-                                )
-                                decodeString
-
-                        5 ->
-                            -- Response if there is no recording in progress
-                            normalInit portsAndWire flags url key
-                                |> Tuple.mapFirst NormalModel
-                                |> Bytes.Decode.succeed
-
-                        _ ->
-                            Bytes.Decode.succeed ( WaitingOnRecordingStatus flags url key, Cmd.none )
-                )
-        )
-        payload
-        |> Maybe.withDefault ( WaitingOnRecordingStatus flags url key, Cmd.none )
-
-
-delayMsg : Float -> b -> Cmd b
-delayMsg time msg =
-    Process.sleep time |> Task.perform (always msg)
-
-
-trigger : a -> Cmd a
-trigger msg =
-    Process.sleep 0 |> Task.perform (always msg)
 
 
 required : String -> Json.Decoder a -> Json.Decoder (a -> b) -> Json.Decoder b
