@@ -2159,43 +2159,48 @@ mapDocument portsAndWire model msg { title, body } =
                         portsAndWire
                         model.devbar
                         model.nodeType
-                    ++ [ if model.showFileReadWriteError then
-                            Html.div
-                                [ Html.Attributes.style "position" "fixed"
-                                , Html.Attributes.style "top" "0"
-                                , Html.Attributes.style "left" "0"
-                                , Html.Attributes.style "width" "100vw"
-                                , Html.Attributes.style "height" "100vh"
-                                , Html.Attributes.style "background-color" "#000000aa"
-                                , Html.Attributes.style "display" "flex"
-                                , Html.Attributes.style "justify-content" "center"
-                                , Html.Attributes.style "align-items" "center"
-                                , style "z-index" "1001"
-                                , Html.Events.onClick PressedCloseModal
-                                ]
-                                [ Html.div
-                                    [ Html.Attributes.style "padding" "20px 30px"
-                                    , Html.Attributes.style "border-radius" "5px"
-                                    , Html.Attributes.style "color" white
-                                    , Html.Attributes.style "background-color" charcoal
-                                    , Html.Attributes.style "font-family" "sans-serif"
-                                    , Html.Events.stopPropagationOn
-                                        "click"
-                                        (Json.Decode.succeed ( Noop, True ))
-                                    ]
-                                    [ Html.text "In order to record a test, please stop lamdera live and instead run one of the following:"
-                                    , Html.br [] []
-                                    , Html.br [] []
-                                    , copyableCode model "Terminal" "EXPERIMENTAL=1 lamdera live"
-                                    , copyableCode model "PowerShell" "$Env:EXPERIMENTAL=1\nlamdera live"
-                                    , copyableCode model "Command Prompt" "set EXPERIMENTAL=1\nlamdera live"
-                                    ]
-                                ]
-
-                         else
-                            Html.text ""
-                       ]
+                    ++ fileReadWriteErrorView model
     }
+
+
+fileReadWriteErrorView : NormalModelData frontendModel backendModel -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
+fileReadWriteErrorView model =
+    if model.showFileReadWriteError then
+        [ Html.div
+            [ Html.Attributes.style "position" "fixed"
+            , Html.Attributes.style "top" "0"
+            , Html.Attributes.style "left" "0"
+            , Html.Attributes.style "width" "100vw"
+            , Html.Attributes.style "height" "100vh"
+            , Html.Attributes.style "background-color" "#000000aa"
+            , Html.Attributes.style "display" "flex"
+            , Html.Attributes.style "justify-content" "center"
+            , Html.Attributes.style "align-items" "center"
+            , Html.Attributes.style "z-index" "1001"
+            , Html.Events.onClick PressedCloseModal
+            ]
+            [ Html.div
+                [ Html.Attributes.style "padding" "20px 30px"
+                , Html.Attributes.style "border-radius" "5px"
+                , Html.Attributes.style "color" white
+                , Html.Attributes.style "background-color" charcoal
+                , Html.Attributes.style "font-family" "sans-serif"
+                , Html.Events.stopPropagationOn
+                    "click"
+                    (Json.Decode.succeed ( Noop, True ))
+                ]
+                [ Html.text "In order to record a test, please stop lamdera live and instead run one of the following:"
+                , Html.br [] []
+                , Html.br [] []
+                , copyableCode model "Terminal" "EXPERIMENTAL=1 lamdera live"
+                , copyableCode model "PowerShell" "$Env:EXPERIMENTAL=1\nlamdera live"
+                , copyableCode model "Command Prompt" "set EXPERIMENTAL=1\nlamdera live"
+                ]
+            ]
+        ]
+
+    else
+        []
 
 
 copyableCode : NormalModelData frontendModel backendModel -> String -> String -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
