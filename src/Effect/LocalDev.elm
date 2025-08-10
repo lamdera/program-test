@@ -140,7 +140,7 @@ init config =
 
 normalInit : InitConfig msg -> ( NormalModelData, Cmd msg )
 normalInit config =
-                        let
+    let
         recorded : LoadedData
         recorded =
             { copyCounter = 0
@@ -163,15 +163,15 @@ normalInit config =
         [ config.initCmds
         , if config.isLeader then
             case config.devBar.isRecordingEvents of
-                    Just recording ->
-                        if recording.recordingStopped then
+                Just recording ->
+                    if recording.recordingStopped then
                         loadTestsFile GotTestFile |> Cmd.map (config.mapMsg << TestEditorMsg)
 
-                        else
+                    else
                         recordingInitCmds config
 
-                    Nothing ->
-                        Cmd.none
+                Nothing ->
+                    Cmd.none
 
           else
             Cmd.none
@@ -260,7 +260,7 @@ waitingOnRecordingStatusUpdate config initCmds payload localDevModel =
                                             ( newLocalDevModel
                                                 |> config.setDevBar
                                                     { isRecordingEvents =
-                                                            Just { history = history, recordingStopped = False }
+                                                        Just { history = history, recordingStopped = False }
                                                     }
                                                 |> config.debugSaveDevBar
                                             , Cmd.batch
@@ -339,7 +339,7 @@ receivedMsgFromLocalDev config payload localDevModel =
                                             ( localDevModel
                                                 |> config.setDevBar
                                                     { isRecordingEvents =
-                                                            addEvent event recording |> Just
+                                                        addEvent event recording |> Just
                                                     }
                                                 |> config.debugSaveDevBar
                                             , Cmd.none
@@ -356,37 +356,9 @@ receivedMsgFromLocalDev config payload localDevModel =
                             ( localDevModel
                             , if config.isLeader then
                                 case config.devBar.isRecordingEvents of
-                                        Just recording ->
-                                            if recording.recordingStopped then
+                                    Just recording ->
+                                        if recording.recordingStopped then
                                             config.sendToFrontend
-                                                    { t = "ToFrontend"
-                                                    , s = "LocalDev"
-                                                    , c = "b"
-                                                    , b =
-                                                        Bytes.Encode.encode
-                                                            (Bytes.Encode.unsignedInt8 5)
-                                                    }
-
-                                            else
-                                            config.sendToFrontend
-                                                    { t = "ToFrontend"
-                                                    , s = "LocalDev"
-                                                    , c = "b"
-                                                    , b =
-                                                        Bytes.Encode.encode
-                                                            (Bytes.Encode.sequence
-                                                                [ Bytes.Encode.unsignedInt8 4
-                                                                , Json.Encode.array
-                                                                    eventEncoder
-                                                                    recording.history
-                                                                    |> Json.Encode.encode 0
-                                                                    |> encodeString
-                                                                ]
-                                                            )
-                                                    }
-
-                                        Nothing ->
-                                        config.sendToFrontend
                                                 { t = "ToFrontend"
                                                 , s = "LocalDev"
                                                 , c = "b"
@@ -395,8 +367,36 @@ receivedMsgFromLocalDev config payload localDevModel =
                                                         (Bytes.Encode.unsignedInt8 5)
                                                 }
 
+                                        else
+                                            config.sendToFrontend
+                                                { t = "ToFrontend"
+                                                , s = "LocalDev"
+                                                , c = "b"
+                                                , b =
+                                                    Bytes.Encode.encode
+                                                        (Bytes.Encode.sequence
+                                                            [ Bytes.Encode.unsignedInt8 4
+                                                            , Json.Encode.array
+                                                                eventEncoder
+                                                                recording.history
+                                                                |> Json.Encode.encode 0
+                                                                |> encodeString
+                                                            ]
+                                                        )
+                                                }
+
+                                    Nothing ->
+                                        config.sendToFrontend
+                                            { t = "ToFrontend"
+                                            , s = "LocalDev"
+                                            , c = "b"
+                                            , b =
+                                                Bytes.Encode.encode
+                                                    (Bytes.Encode.unsignedInt8 5)
+                                            }
+
                               else
-                                    Cmd.none
+                                Cmd.none
                             )
                                 |> Bytes.Decode.succeed
 
@@ -468,7 +468,7 @@ resumeNormalInitFromUpdate config initCmds localDevModel =
         |> Tuple.mapFirst
             (\normalModel ->
                 config.setModel (NormalModel normalModel) localDevModel
-    )
+            )
 
 
 initConfigFromUpdateConfig : UpdateConfig msg model -> Cmd msg -> InitConfig msg
@@ -673,18 +673,18 @@ subscriptions config model =
 normalSubscriptions : SubscriptionsConfig msg -> Sub msg
 normalSubscriptions config =
     case config.devBar.isRecordingEvents of
-            Just recording ->
-                Sub.batch
+        Just recording ->
+            Sub.batch
                 [ config.gotEvent (config.mapMsg << GotEvent)
-                    , if recording.recordingStopped then
+                , if recording.recordingStopped then
                     Browser.Events.onMouseUp (Json.Decode.succeed (config.mapMsg (TestEditorMsg MouseUpEvent)))
 
-                      else
-                        Sub.none
-                    ]
+                  else
+                    Sub.none
+                ]
 
-            Nothing ->
-                Sub.none
+        Nothing ->
+            Sub.none
 
 
 
@@ -695,7 +695,7 @@ type alias ViewConfig =
     { charcoal : String
     , grey : String
     , white : String
-                    }
+    }
 
 
 eye : Html msg
@@ -727,17 +727,17 @@ recordingPill devBar =
     if devBar.isRecordingEvents /= Nothing then
         Just PressedStopRecording
 
-              else
+    else
         Nothing
 
 
 recordingButton : DevBar -> (Msg -> Html msg) -> (Msg -> Html msg) -> Html msg
 recordingButton devBar stopFun startFun =
     case devBar.isRecordingEvents of
-            Just _ ->
+        Just _ ->
             stopFun PressedStopRecording
 
-            Nothing ->
+        Nothing ->
             startFun PressedStartRecording
 
 
@@ -756,13 +756,13 @@ maybeTestEditorView config devBar model =
             devBar.isRecordingEvents
                 |> Maybe.andThen
                     (\recording ->
-                if recording.recordingStopped then
+                        if recording.recordingStopped then
                             Just
                                 [ testEditorView config recording normalModel.recordedEvents
-                        |> Html.map TestEditorMsg
-                    ]
+                                    |> Html.map TestEditorMsg
+                                ]
 
-                else
+                        else
                             Nothing
                     )
 
@@ -775,41 +775,41 @@ fileReadWriteErrorView config model =
 
         NormalModel normalModel ->
             if normalModel.showFileReadWriteError then
-        [ Html.div
-            [ Html.Attributes.style "position" "fixed"
-            , Html.Attributes.style "top" "0"
-            , Html.Attributes.style "left" "0"
-            , Html.Attributes.style "width" "100vw"
-            , Html.Attributes.style "height" "100vh"
-            , Html.Attributes.style "background-color" "#000000aa"
-            , Html.Attributes.style "display" "flex"
-            , Html.Attributes.style "justify-content" "center"
-            , Html.Attributes.style "align-items" "center"
-            , Html.Attributes.style "z-index" "1001"
-            , Html.Events.onClick PressedCloseModal
-            ]
-            [ Html.div
-                [ Html.Attributes.style "padding" "20px 30px"
-                , Html.Attributes.style "border-radius" "5px"
+                [ Html.div
+                    [ Html.Attributes.style "position" "fixed"
+                    , Html.Attributes.style "top" "0"
+                    , Html.Attributes.style "left" "0"
+                    , Html.Attributes.style "width" "100vw"
+                    , Html.Attributes.style "height" "100vh"
+                    , Html.Attributes.style "background-color" "#000000aa"
+                    , Html.Attributes.style "display" "flex"
+                    , Html.Attributes.style "justify-content" "center"
+                    , Html.Attributes.style "align-items" "center"
+                    , Html.Attributes.style "z-index" "1001"
+                    , Html.Events.onClick PressedCloseModal
+                    ]
+                    [ Html.div
+                        [ Html.Attributes.style "padding" "20px 30px"
+                        , Html.Attributes.style "border-radius" "5px"
                         , Html.Attributes.style "color" config.white
                         , Html.Attributes.style "background-color" config.charcoal
-                , Html.Attributes.style "font-family" "sans-serif"
-                , Html.Events.stopPropagationOn
-                    "click"
-                    (Json.Decode.succeed ( Noop, True ))
-                ]
-                [ Html.text "In order to record a test, please stop lamdera live and instead run one of the following:"
-                , Html.br [] []
-                , Html.br [] []
+                        , Html.Attributes.style "font-family" "sans-serif"
+                        , Html.Events.stopPropagationOn
+                            "click"
+                            (Json.Decode.succeed ( Noop, True ))
+                        ]
+                        [ Html.text "In order to record a test, please stop lamdera live and instead run one of the following:"
+                        , Html.br [] []
+                        , Html.br [] []
                         , copyableCode config normalModel "Terminal" "EXPERIMENTAL=1 lamdera live"
                         , copyableCode config normalModel "PowerShell" "$Env:EXPERIMENTAL=1\nlamdera live"
                         , copyableCode config normalModel "Command Prompt" "set EXPERIMENTAL=1\nlamdera live"
+                        ]
+                    ]
                 ]
-            ]
-        ]
 
-    else
-        []
+            else
+                []
 
 
 copyableCode : ViewConfig -> NormalModelData -> String -> String -> Html Msg
