@@ -12,6 +12,8 @@ module Effect.LocalDev exposing
     , initDevBar
     , isFullyInitialized
     , maybeTestEditorView
+    , onConnection
+    , onDisconnection
     , receivedToFrontend
     , recordingButton
     , recordingPill
@@ -55,6 +57,11 @@ import Url
 
 
 {-| -}
+type alias ConnectionMsg =
+    { s : SessionId, c : ClientId }
+
+
+{-| -}
 type alias WireMsg =
     { t : String, s : String, c : String, b : Bytes }
 
@@ -62,6 +69,8 @@ type alias WireMsg =
 {-| -}
 type Msg
     = Noop
+    | OnConnectionDelayed ConnectionMsg
+      --
     | PressedStartRecording
     | NotifiedFollowersOfRecordingStart
     | PressedStopRecording
@@ -85,6 +94,7 @@ type alias NormalModelData =
     { recordedEvents : LoadedData
     , showFileReadWriteError : Bool
     , lastCopied : Maybe String
+    , waitingConnections : Set ClientId
     }
 
 
@@ -104,11 +114,13 @@ type alias RecordingState =
 
 
 type alias InitConfig msg =
-    { devBar : DevBar
+    { clientId : ClientId
+    , devBar : DevBar
     , initCmds : Cmd msg
     , isLeader : Bool
     , mapMsg : Msg -> msg
     , sendToFrontend : WireMsg -> Cmd msg
+    , sessionId : SessionId
     , startRecording : () -> Cmd msg
     }
 
@@ -130,7 +142,14 @@ init config =
                 { t = "ToFrontend"
                 , s = "LocalDev"
                 , c = "b"
-                , b = Bytes.Encode.encode (Bytes.Encode.unsignedInt8 3)
+                , b =
+                    Bytes.Encode.encode
+                        (Bytes.Encode.sequence
+                            [ Bytes.Encode.unsignedInt8 3
+                            , encodeString config.sessionId
+                            , encodeString config.clientId
+                            ]
+                        )
                 }
             , Process.sleep 2000
                 |> Task.perform (\() -> config.mapMsg TimedOutWaitingOnRecordingStatus)
@@ -158,6 +177,7 @@ normalInit config =
     ( { recordedEvents = recorded
       , showFileReadWriteError = False
       , lastCopied = Nothing
+      , waitingConnections = Set.empty
       }
     , Cmd.batch
         [ config.initCmds
@@ -209,6 +229,7 @@ type alias UpdateConfig msg model =
     , devBar : DevBar
     , isLeader : Bool
     , mapMsg : Msg -> msg
+    , onConnection : ConnectionMsg -> Cmd msg
     , originalUrl : Url
     , resetBackend : model -> ( model, Cmd msg )
     , sendToFrontend : WireMsg -> Cmd msg
@@ -220,6 +241,51 @@ type alias UpdateConfig msg model =
     , startRecording : () -> Cmd msg
     , stopRecording : () -> Cmd msg
     }
+
+
+onConnection : UpdateConfig msg model -> ConnectionMsg -> Model msg -> (model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+onConnection config msg model localDevHandler localDevModel =
+    case model of
+        WaitingOnRecordingStatus _ ->
+            ( localDevModel, Cmd.none )
+
+        NormalModel normalModel ->
+            if config.isLeader then
+                if msg.c == config.clientId then
+                    localDevHandler localDevModel
+
+                else
+                    ( localDevModel
+                        |> config.setModel
+                            (NormalModel
+                                { normalModel
+                                    | waitingConnections =
+                                        Set.insert msg.c normalModel.waitingConnections
+                                }
+                            )
+                    , delayMsg 2000 (config.mapMsg (OnConnectionDelayed msg))
+                    )
+
+            else
+                ( localDevModel, Cmd.none )
+
+
+onDisconnection : UpdateConfig msg model -> ConnectionMsg -> Model msg -> (model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+onDisconnection config msg model localDevHandler localDevModel =
+    case model of
+        WaitingOnRecordingStatus _ ->
+            ( localDevModel, Cmd.none )
+
+        NormalModel normalModel ->
+            localDevModel
+                |> config.setModel
+                    (NormalModel
+                        { normalModel
+                            | waitingConnections =
+                                Set.remove msg.c normalModel.waitingConnections
+                        }
+                    )
+                |> localDevHandler
 
 
 receivedToFrontend : UpdateConfig msg model -> WireMsg -> Model msg -> (model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
@@ -353,15 +419,18 @@ receivedMsgFromLocalDev config payload localDevModel =
 
                         3 ->
                             -- Request if there is a recording in progress
+                            Bytes.Decode.map2
+                                (\sessionId clientId ->
                             ( localDevModel
                             , if config.isLeader then
-                                case config.devBar.isRecordingEvents of
+                                        Cmd.batch
+                                            [ case config.devBar.isRecordingEvents of
                                     Just recording ->
                                         if recording.recordingStopped then
                                             config.sendToFrontend
                                                 { t = "ToFrontend"
                                                 , s = "LocalDev"
-                                                , c = "b"
+                                                            , c = clientId
                                                 , b =
                                                     Bytes.Encode.encode
                                                         (Bytes.Encode.unsignedInt8 5)
@@ -371,7 +440,7 @@ receivedMsgFromLocalDev config payload localDevModel =
                                             config.sendToFrontend
                                                 { t = "ToFrontend"
                                                 , s = "LocalDev"
-                                                , c = "b"
+                                                            , c = clientId
                                                 , b =
                                                     Bytes.Encode.encode
                                                         (Bytes.Encode.sequence
@@ -389,16 +458,20 @@ receivedMsgFromLocalDev config payload localDevModel =
                                         config.sendToFrontend
                                             { t = "ToFrontend"
                                             , s = "LocalDev"
-                                            , c = "b"
+                                                        , c = clientId
                                             , b =
                                                 Bytes.Encode.encode
                                                     (Bytes.Encode.unsignedInt8 5)
                                             }
+                                            , sendMsg (config.mapMsg (OnConnectionDelayed { s = sessionId, c = clientId }))
+                                            ]
 
                               else
                                 Cmd.none
                             )
-                                |> Bytes.Decode.succeed
+                                )
+                                decodeString
+                                decodeString
 
                         _ ->
                             Bytes.Decode.succeed ( localDevModel, Cmd.none )
@@ -473,11 +546,13 @@ resumeNormalInitFromUpdate config initCmds localDevModel =
 
 initConfigFromUpdateConfig : UpdateConfig msg model -> Cmd msg -> InitConfig msg
 initConfigFromUpdateConfig config initCmds =
-    { devBar = config.devBar
+    { clientId = config.clientId
+    , devBar = config.devBar
     , initCmds = initCmds
     , isLeader = config.isLeader
     , mapMsg = config.mapMsg
     , sendToFrontend = config.sendToFrontend
+    , sessionId = config.sessionId
     , startRecording = config.startRecording
     }
 
@@ -487,6 +562,22 @@ normalUpdate config msg m localDevModel =
     case msg of
         Noop ->
             ( localDevModel, Cmd.none )
+
+        OnConnectionDelayed d ->
+            if Set.member d.c m.waitingConnections then
+                ( localDevModel
+                    |> config.setModel
+                        (NormalModel
+                            { m
+                                | waitingConnections =
+                                    Set.remove d.c m.waitingConnections
+                            }
+                        )
+                , config.onConnection d
+                )
+
+            else
+                ( localDevModel, Cmd.none )
 
         PressedStartRecording ->
             ( localDevModel, loadTestsFile CheckFileReadWriteEnabled |> Cmd.map config.mapMsg )
@@ -641,6 +732,11 @@ initRecording =
     { history = Array.empty
     , recordingStopped = False
     }
+
+
+sendMsg : b -> Cmd b
+sendMsg msg =
+    Task.succeed msg |> Task.perform identity
 
 
 delayMsg : Float -> b -> Cmd b
