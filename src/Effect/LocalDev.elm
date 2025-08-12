@@ -421,54 +421,54 @@ receivedMsgFromLocalDev config payload localDevModel =
                             -- Request if there is a recording in progress
                             Bytes.Decode.map2
                                 (\sessionId clientId ->
-                            ( localDevModel
-                            , if config.isLeader then
+                                    ( localDevModel
+                                    , if config.isLeader then
                                         Cmd.batch
                                             [ case config.devBar.isRecordingEvents of
-                                    Just recording ->
-                                        if recording.recordingStopped then
-                                            config.sendToFrontend
-                                                { t = "ToFrontend"
-                                                , s = "LocalDev"
+                                                Just recording ->
+                                                    if recording.recordingStopped then
+                                                        config.sendToFrontend
+                                                            { t = "ToFrontend"
+                                                            , s = "LocalDev"
                                                             , c = clientId
-                                                , b =
-                                                    Bytes.Encode.encode
-                                                        (Bytes.Encode.unsignedInt8 5)
-                                                }
+                                                            , b =
+                                                                Bytes.Encode.encode
+                                                                    (Bytes.Encode.unsignedInt8 5)
+                                                            }
 
-                                        else
-                                            config.sendToFrontend
-                                                { t = "ToFrontend"
-                                                , s = "LocalDev"
+                                                    else
+                                                        config.sendToFrontend
+                                                            { t = "ToFrontend"
+                                                            , s = "LocalDev"
                                                             , c = clientId
-                                                , b =
-                                                    Bytes.Encode.encode
-                                                        (Bytes.Encode.sequence
-                                                            [ Bytes.Encode.unsignedInt8 4
-                                                            , Json.Encode.array
-                                                                eventEncoder
-                                                                recording.history
-                                                                |> Json.Encode.encode 0
-                                                                |> encodeString
-                                                            ]
-                                                        )
-                                                }
+                                                            , b =
+                                                                Bytes.Encode.encode
+                                                                    (Bytes.Encode.sequence
+                                                                        [ Bytes.Encode.unsignedInt8 4
+                                                                        , Json.Encode.array
+                                                                            eventEncoder
+                                                                            recording.history
+                                                                            |> Json.Encode.encode 0
+                                                                            |> encodeString
+                                                                        ]
+                                                                    )
+                                                            }
 
-                                    Nothing ->
-                                        config.sendToFrontend
-                                            { t = "ToFrontend"
-                                            , s = "LocalDev"
+                                                Nothing ->
+                                                    config.sendToFrontend
+                                                        { t = "ToFrontend"
+                                                        , s = "LocalDev"
                                                         , c = clientId
-                                            , b =
-                                                Bytes.Encode.encode
-                                                    (Bytes.Encode.unsignedInt8 5)
-                                            }
+                                                        , b =
+                                                            Bytes.Encode.encode
+                                                                (Bytes.Encode.unsignedInt8 5)
+                                                        }
                                             , sendMsg (config.mapMsg (OnConnectionDelayed { s = sessionId, c = clientId }))
                                             ]
 
-                              else
-                                Cmd.none
-                            )
+                                      else
+                                        Cmd.none
+                                    )
                                 )
                                 decodeString
                                 decodeString
