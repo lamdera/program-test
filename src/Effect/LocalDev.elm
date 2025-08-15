@@ -2412,7 +2412,6 @@ eventsToEvent2Helper state =
     maybeToList state.previousEvent
         ++ state.rest
         |> List.reverse
-        |> List.map .eventType
 
 
 maybeToList : Maybe a -> List a
@@ -2426,10 +2425,10 @@ maybeToList maybe =
 
 
 eventsToEvent2 :
-    { previousEvent : Maybe { eventType : EventType2, time : Int }, rest : List { eventType : EventType2, time : Int } }
+    { previousEvent : Maybe EventType2, previousTime : Int, rest : List EventType2 }
     -> List Event
     -> List EventType2
-eventsToEvent2 ({ previousEvent, rest } as state) events =
+eventsToEvent2 ({ previousEvent, previousTime, rest } as state) events =
     case events of
         [] ->
             eventsToEvent2Helper { previousEvent = previousEvent, rest = rest }
@@ -2441,115 +2440,125 @@ eventsToEvent2 ({ previousEvent, rest } as state) events =
 
                 delay2 : Int
                 delay2 =
-                    case previousEvent of
-                        Just { time } ->
-                            timestamp2 - time
-
-                        Nothing ->
-                            0
+                    timestamp2 - previousTime
             in
             case eventType of
                 Input input ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = Input2 clientId delay2 input, time = timestamp2 }
+                        { previousEvent = Just (Input2 clientId delay2 input)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 KeyDown keyDown ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = KeyDown2 clientId delay2 keyDown, time = timestamp2 }
+                        { previousEvent = Just (KeyDown2 clientId delay2 keyDown)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 KeyUp keyUp ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = KeyUp2 clientId delay2 keyUp, time = timestamp2 }
+                        { previousEvent = Just (KeyUp2 clientId delay2 keyUp)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 PointerDown a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = PointerDown2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (PointerDown2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 PointerUp a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = PointerUp2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (PointerUp2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 PointerMove a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = PointerMove2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (PointerMove2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 PointerLeave a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = PointerLeave2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (PointerLeave2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 PointerCancel a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = PointerCancel2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (PointerCancel2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 PointerOver a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = PointerOver2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (PointerOver2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 PointerEnter a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = PointerEnter2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (PointerEnter2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 PointerOut a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = PointerOut2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (PointerOut2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 TouchStart a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = TouchStart2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (TouchStart2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 TouchCancel a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = TouchCancel2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (TouchCancel2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 TouchMove a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = TouchMove2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (TouchMove2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 TouchEnd a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = TouchEnd2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (TouchEnd2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
@@ -2557,32 +2566,34 @@ eventsToEvent2 ({ previousEvent, rest } as state) events =
                 Connect connect ->
                     { previousEvent =
                         Just
-                            { eventType =
-                                Connect2
-                                    clientId
-                                    delay2
-                                    connect
-                                    (eventsToEvent2 { previousEvent = Nothing, rest = [] } events2)
-                            , time = timestamp2
-                            }
+                            (Connect2
+                                clientId
+                                delay2
+                                connect
+                                (eventsToEvent2
+                                    { previousEvent = Nothing
+                                    , previousTime = timestamp2
+                                    , rest = []
+                                    }
+                                    events2
+                                )
+                            )
                     , rest = maybeToList previousEvent ++ rest
                     }
                         |> eventsToEvent2Helper
 
                 Click mouseEvent ->
                     eventsToEvent2
-                        { previousEvent =
-                            Just
-                                { eventType = Click2 clientId delay2 { targetId = mouseEvent.targetId }
-                                , time = timestamp2
-                                }
+                        { previousEvent = Just (Click2 clientId delay2 { targetId = mouseEvent.targetId })
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 ClickLink linkEvent ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = ClickLink2 clientId delay2 linkEvent, time = timestamp2 }
+                        { previousEvent = Just (ClickLink2 clientId delay2 linkEvent)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
@@ -2597,110 +2608,118 @@ eventsToEvent2 ({ previousEvent, rest } as state) events =
                     eventsToEvent2
                         { previousEvent =
                             Just
-                                { eventType =
-                                    Input2
-                                        clientId
-                                        delay2
-                                        { targetId = pasteEvent.targetId
-                                        , text = pasteEvent.text
-                                        }
-                                , time = timestamp2
-                                }
+                                (Input2
+                                    clientId
+                                    delay2
+                                    { targetId = pasteEvent.targetId
+                                    , text = pasteEvent.text
+                                    }
+                                )
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 FromJsPort fromJsPort ->
                     eventsToEvent2
-                        { previousEvent =
-                            { eventType = FromJsPort2 clientId delay2 { port_ = fromJsPort.port_, data = fromJsPort.data }
-                            , time = timestamp2
-                            }
-                                |> Just
+                        { previousEvent = Just (FromJsPort2 clientId delay2 { port_ = fromJsPort.port_, data = fromJsPort.data })
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 WindowResize resizeEvent ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = WindowResize2 clientId delay2 resizeEvent, time = timestamp2 }
+                        { previousEvent = Just (WindowResize2 clientId delay2 resizeEvent)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 CheckView checkView ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = CheckView2 clientId delay2 checkView, time = timestamp2 }
+                        { previousEvent = Just (CheckView2 clientId delay2 checkView)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 MouseDown a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = MouseDown2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (MouseDown2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 MouseUp a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = MouseUp2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (MouseUp2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 MouseMove a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = MouseMove2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (MouseMove2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 MouseLeave a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = MouseLeave2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (MouseLeave2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 MouseOver a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = MouseOver2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (MouseOver2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 MouseEnter a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = MouseEnter2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (MouseEnter2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 MouseOut a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = MouseOut2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (MouseOut2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 Focus a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = Focus2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (Focus2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 Blur a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = Blur2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (Blur2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
 
                 Wheel a ->
                     eventsToEvent2
-                        { previousEvent = Just { eventType = Wheel2 clientId delay2 a, time = timestamp2 }
+                        { previousEvent = Just (Wheel2 clientId delay2 a)
+                        , previousTime = timestamp2
                         , rest = maybeToList previousEvent ++ rest
                         }
                         events2
@@ -3207,13 +3226,19 @@ testCode :
         }
 testCode testName settings events overriddenHttpRequests =
     let
+        firstTime : Int
+        firstTime =
+            List.map (\a -> Time.posixToMillis a.timestamp) events
+                |> List.minimum
+                |> Maybe.withDefault 0
+
         clients : List ClientId
         clients =
             List.map .clientId events |> listUnique
 
         events2 : List Expression
         events2 =
-            eventsToEvent2 { previousEvent = Nothing, rest = [] } events
+            eventsToEvent2 { previousEvent = Nothing, previousTime = firstTime, rest = [] } events
                 |> eventToString 0 settings clients
 
         singleFileEvents : List UploadedFile
@@ -3254,10 +3279,7 @@ testCode testName settings events overriddenHttpRequests =
         Codegen.apply
             [ Codegen.fqFun [ "T" ] "start"
             , Codegen.string testName
-            , List.map (\a -> Time.posixToMillis a.timestamp) events
-                |> List.minimum
-                |> Maybe.withDefault 0
-                |> millisToPosix
+            , millisToPosix firstTime
             , case
                 List.filterMap
                     (\( isEmpty, fieldAndExpression ) ->
