@@ -1,13 +1,28 @@
-module Effect.LocalDev exposing (ConnectionMsg, Model, Msg(..), NormalModelData, WireMsg, localDev)
-
-{-| Ignore this module, it's used by LocalDev.elm for running lamdera live
-
-@docs ConnectionMsg, Model, Msg, NormalModelData, WireMsg, localDev
-
--}
+module Effect.LocalDev exposing
+    ( DevBar
+    , InitConfig
+    , Model
+    , Msg
+    , SubscriptionsConfig
+    , UpdateConfig
+    , ViewConfig
+    , fileReadWriteErrorView
+    , hideFreezeAndResetButtons
+    , init
+    , initDevBar
+    , isFullyInitialized
+    , maybeTestEditorView
+    , onConnection
+    , onDisconnection
+    , receivedToFrontend
+    , recordingButton
+    , recordingPill
+    , resetDebugStoreBE
+    , subscriptions
+    , update
+    )
 
 import Array exposing (Array)
-import Browser exposing (UrlRequest)
 import Browser.Dom
 import Browser.Events
 import Browser.Navigation
@@ -21,30 +36,24 @@ import Elm.Pretty
 import Elm.Syntax.Declaration exposing (Declaration(..))
 import Elm.Syntax.Expression exposing (Expression(..))
 import Elm.Syntax.Node as Node exposing (Node(..))
-import Html exposing (..)
-import Html.Attributes exposing (..)
-import Html.Events exposing (onClick, onMouseEnter, onMouseLeave)
-import Html.Lazy
+import Html exposing (Html)
+import Html.Attributes
+import Html.Events
 import Http
 import Json.Decode
 import Json.Encode
-import Lamdera exposing (ClientId, Key, SessionId, Url)
+import Lamdera exposing (ClientId, SessionId, Url)
 import Lamdera.Debug as LD
 import Lamdera.Json as Json exposing (Decoder)
-import Lamdera.Wire3 as Wire exposing (Bytes)
+import Lamdera.Wire3 exposing (Bytes)
 import Pretty
 import Process
 import Set exposing (Set)
 import Svg as S
 import Svg.Attributes as A
-import Task exposing (Task)
+import Task
 import Time
 import Url
-
-
-{-| -}
-type alias WireMsg =
-    { t : String, s : String, c : String, b : Bytes }
 
 
 {-| -}
@@ -53,50 +62,15 @@ type alias ConnectionMsg =
 
 
 {-| -}
-type Msg frontendMsg backendMsg toFrontend toBackend
-    = FEMsg frontendMsg
-    | BEMsg backendMsg
-    | BEtoFE ClientId toFrontend
-    | BEtoFEDelayed ClientId toFrontend
-    | FEtoBE toBackend
-    | FEtoBEDelayed toBackend
-    | FENewUrl Url
-    | OnConnection ConnectionMsg
-    | OnDisconnection ConnectionMsg
-    | ReceivedToBackend ( SessionId, ClientId, Bytes )
-    | ReceivedToFrontend WireMsg
-    | ReceivedBackendModel Bytes
-    | RPCIn Json.Value
-    | SetNodeTypeLeader Bool
-    | SetLiveStatus Bool
-    | ReceivedClientId String
-    | ExpandedDevbar
-    | CollapsedDevbar
-    | ResetDebugStoreBoth
-    | ResetDebugStoreFE
-    | ResetDebugStoreBE
-    | ToggledFreezeMode
-    | ToggledNetworkDelay
-    | ToggledLogging
-    | QRCodeShow
-    | QRCodeHide
-    | ClickedLocation
-    | PersistBackend Bool
-    | Reload
-    | EnvClicked
-    | EnvModeSelected String
-    | EnvCleared
-    | ModelResetCleared
-    | VersionCheck LD.Posix
-    | VersionCheckResult (Result LD.HttpError VersionCheck)
-      -- Snapshots
-    | LoadLatestSnapshotFilename
-    | LoadLatestSnapshotFilenamesResult (Result LD.HttpError (List String))
-    | LoadSnapshot String
-    | LoadSnapshotLegacy String
-    | LoadedSnapshot (Result LD.HttpError ( Bytes, Int ))
-    | LoadedSnapshotLegacy (Result LD.HttpError ( List Int, Int ))
-    | Noop
+type alias WireMsg =
+    { t : String, s : String, c : String, b : Bytes }
+
+
+{-| -}
+type Msg
+    = Noop
+    | OnConnectionDelayed ConnectionMsg
+      --
     | PressedStartRecording
     | NotifiedFollowersOfRecordingStart
     | PressedStopRecording
@@ -110,41 +84,22 @@ type Msg frontendMsg backendMsg toFrontend toBackend
 
 
 {-| -}
-type Model frontendModel backendModel
-    = WaitingOnRecordingStatus Flags Url Key
-    | NormalModel (NormalModelData frontendModel backendModel)
+type Model msg
+    = WaitingOnRecordingStatus (Cmd msg)
+    | NormalModel NormalModelData
 
 
 {-| -}
-type alias NormalModelData frontendModel backendModel =
-    { fem : frontendModel
-    , bem : backendModel
-    , bemDirty : Bool
-    , originalUrl : Url
-    , originalKey : Key
-    , sessionId : String
-    , clientId : String
-    , nodeType : NodeType
-    , devbar : DevBar
-    , recordedEvents : LoadedData
+type alias NormalModelData =
+    { recordedEvents : LoadedData
     , showFileReadWriteError : Bool
     , lastCopied : Maybe String
+    , waitingConnections : Set ClientId
     }
 
 
 type alias DevBar =
-    { expanded : Bool
-    , location : Location
-    , freeze : Bool
-    , networkDelay : Bool
-    , logging : Bool
-    , liveStatus : LiveStatus
-    , showModeChanger : Bool
-    , showResetNotification : Bool
-    , versionCheck : VersionCheck
-    , qrCodeShow : Bool
-    , snapshotFilenames : List String
-    , isRecordingEvents : Maybe RecordingState
+    { isRecordingEvents : Maybe RecordingState
     }
 
 
@@ -154,223 +109,57 @@ type alias RecordingState =
     }
 
 
-type VersionCheck
-    = VersionUnchecked
-    | VersionCheckFailed LD.Posix
-    | VersionCheckSucceeded String LD.Posix
+
+-- INIT
 
 
-type Location
-    = TopLeft
-    | TopRight
-    | BottomRight
-    | BottomLeft
-
-
-next location =
-    case location of
-        TopLeft ->
-            TopRight
-
-        TopRight ->
-            BottomRight
-
-        BottomRight ->
-            BottomLeft
-
-        BottomLeft ->
-            TopLeft
-
-
-type alias Flags =
-    { s : String, c : String, nt : String, b : Maybe Bytes }
-
-
-type alias Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel =
-    { send_ToBackend : Bytes -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
-    , receive_ToBackend : (( SessionId, ClientId, Bytes ) -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , save_BackendModel : { t : String, f : Bool, b : Bytes } -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
-    , send_EnvMode : { t : String, v : String } -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
-    , send_ToFrontend : WireMsg -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
-    , receive_ToFrontend : (WireMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , receive_BackendModel : (Bytes -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , setNodeTypeLeader : (Bool -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , setLiveStatus : (Bool -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , setClientId : (String -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , rpcIn : (Json.Value -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , mkrrc : NormalModelData frontendModel backendModel -> Json.Value -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
-    , onConnection : (ConnectionMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , onDisconnection : (ConnectionMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , localDevGotEvent : (Json.Value -> Msg frontendMsg backendMsg toFrontend toBackend) -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-    , localDevStartRecording : () -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
-    , localDevStopRecording : () -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
-    , localDevCopyToClipboard : String -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
-    , currentVersion : ( Int, Int, Int )
-    , w3_encode_BackendModel : backendModel -> Bytes.Encode.Encoder
-    , w3_decode_BackendModel : Bytes.Decode.Decoder backendModel
-    , w3_encode_ToFrontend : toFrontend -> Bytes.Encode.Encoder
-    , w3_decode_ToFrontend : Bytes.Decode.Decoder toFrontend
-    , w3_encode_ToBackend : toBackend -> Bytes.Encode.Encoder
-    , w3_decode_ToBackend : Bytes.Decode.Decoder toBackend
-    , envMeta : ( String, String )
-    , userFrontendApp :
-        { init : Url -> Browser.Navigation.Key -> ( frontendModel, Cmd frontendMsg )
-        , view : frontendModel -> Browser.Document frontendMsg
-        , update : frontendMsg -> frontendModel -> ( frontendModel, Cmd frontendMsg )
-        , updateFromBackend : toFrontend -> frontendModel -> ( frontendModel, Cmd frontendMsg )
-        , subscriptions : frontendModel -> Sub frontendMsg
-        , onUrlRequest : UrlRequest -> frontendMsg
-        , onUrlChange : Url -> frontendMsg
-        }
-    , userBackendApp :
-        { init : ( backendModel, Cmd backendMsg )
-        , update : backendMsg -> backendModel -> ( backendModel, Cmd backendMsg )
-        , updateFromFrontend : String -> String -> toBackend -> backendModel -> ( backendModel, Cmd backendMsg )
-        , subscriptions : backendModel -> Sub backendMsg
-        }
+type alias InitConfig msg =
+    { clientId : ClientId
+    , devBar : DevBar
+    , initCmds : Cmd msg
+    , isLeader : Bool
+    , mapMsg : Msg -> msg
+    , sendToFrontend : WireMsg -> Cmd msg
+    , sessionId : SessionId
+    , startRecording : () -> Cmd msg
     }
 
 
-init : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
-init portsAndWire flags url key =
-    if flags.nt == "f" then
-        ( WaitingOnRecordingStatus flags url key
+initDevBar : DevBar
+initDevBar =
+    { isRecordingEvents = Nothing }
+
+
+init : InitConfig msg -> ( Model msg, Cmd msg )
+init config =
+    if config.isLeader then
+        normalInit config |> Tuple.mapFirst NormalModel
+
+    else
+        ( WaitingOnRecordingStatus config.initCmds
         , Cmd.batch
-            [ portsAndWire.send_ToFrontend
+            [ config.sendToFrontend
                 { t = "ToFrontend"
                 , s = "LocalDev"
                 , c = "b"
-                , b = Bytes.Encode.encode (Bytes.Encode.unsignedInt8 3)
+                , b =
+                    Bytes.Encode.encode
+                        (Bytes.Encode.sequence
+                            [ Bytes.Encode.unsignedInt8 3
+                            , encodeString config.sessionId
+                            , encodeString config.clientId
+                            ]
+                        )
                 }
             , Process.sleep 2000
-                |> Task.perform (\() -> TimedOutWaitingOnRecordingStatus)
+                |> Task.perform (\() -> config.mapMsg TimedOutWaitingOnRecordingStatus)
             ]
         )
 
-    else
-        normalInit portsAndWire flags url key |> Tuple.mapFirst NormalModel
 
-
-normalInit : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
-normalInit portsAndWire flags url key =
+normalInit : InitConfig msg -> ( NormalModelData, Cmd msg )
+normalInit config =
     let
-        log : String -> b -> b
-        log t v =
-            if devbar.logging then
-                Debug.log t v
-
-            else
-                v
-
-        ( ifem, iFeCmds ) =
-            portsAndWire.userFrontendApp.init url key
-
-        ( ibem, iBeCmds ) =
-            portsAndWire.userBackendApp.init
-
-        ( fem, newFeCmds ) =
-            case LD.debugR "fe" ifem of
-                Nothing ->
-                    ( ifem, iFeCmds )
-
-                Just rfem ->
-                    if devbar.freeze then
-                        ( rfem, Cmd.none )
-
-                    else
-                        ( ifem, iFeCmds )
-
-        ( bem, newBeCmds, didReset ) =
-            case flags.b of
-                Nothing ->
-                    let
-                        _ =
-                            Debug.log "☀️ Initializing new app" ""
-                    in
-                    -- No existing model, brand new app
-                    ( ibem, iBeCmds, False )
-
-                Just backendModelBytes ->
-                    case Wire.bytesDecode portsAndWire.w3_decode_BackendModel backendModelBytes of
-                        Just restoredBem ->
-                            ( restoredBem
-                            , Cmd.none
-                            , False
-                            )
-
-                        Nothing ->
-                            -- Prior backend model has failed to restore, notify the user of a resulting reset
-                            ( ibem, iBeCmds, True )
-
-        _ =
-            case flags.b of
-                Nothing ->
-                    bem
-
-                Just backendModelBytes ->
-                    if Bytes.width backendModelBytes > 1024 then
-                        let
-                            -- The backend model is really large now, it's not useful to
-                            -- log to the console anymore and slows things down
-                            _ =
-                                log "☀️ Restored BackendModel <print skipped for 1MB+ model size>" ()
-                        in
-                        bem
-
-                    else
-                        log "☀️ Restored BackendModel" bem
-
-        devbarInit : DevBar
-        devbarInit =
-            { expanded = False
-            , location = BottomLeft
-            , freeze = False
-            , networkDelay = False
-            , logging = True
-            , liveStatus = Online
-            , showModeChanger = False
-            , showResetNotification = didReset
-            , versionCheck = VersionUnchecked
-            , qrCodeShow = False
-            , snapshotFilenames = []
-            , isRecordingEvents = Nothing
-            }
-
-        devbar : DevBar
-        devbar =
-            case LD.debugR "d" devbarInit of
-                Nothing ->
-                    devbarInit
-
-                Just restoredDevbar ->
-                    { restoredDevbar
-                      -- Avoid scenario where we persisted while expanded and now
-                      -- every refresh it's opening up again without cursor
-                        | expanded = False
-
-                        -- If we've just loaded the page, then we must have connectivity,
-                        -- so avoid an odd scenario where we persisted debvar while disconnected
-                        , liveStatus = Online
-
-                        -- Data might have reset since our last refresh
-                        , showResetNotification = didReset
-                    }
-
-        nodeType =
-            case flags.nt of
-                "l" ->
-                    Leader
-
-                "f" ->
-                    Follower
-
-                _ ->
-                    let
-                        _ =
-                            Debug.log "error" ("decodeNodeType saw an unexpected value: " ++ flags.nt)
-                    in
-                    Follower
-
         recorded : LoadedData
         recorded =
             { copyCounter = 0
@@ -385,835 +174,195 @@ normalInit portsAndWire flags url key =
             , commitStatus = NotCommitted
             }
     in
-    ( { fem = fem
-      , bem = bem
-      , bemDirty = True
-      , originalKey = key
-      , originalUrl = url
-      , nodeType = nodeType
-      , sessionId = flags.s
-      , clientId = flags.c
-      , devbar = devbar
-      , recordedEvents = recorded
+    ( { recordedEvents = recorded
       , showFileReadWriteError = False
       , lastCopied = Nothing
+      , waitingConnections = Set.empty
       }
     , Cmd.batch
-        [ Cmd.map FEMsg newFeCmds
-        , if nodeType == Leader then
-            Cmd.batch
-                [ Cmd.map BEMsg newBeCmds
-                , case devbar.isRecordingEvents of
-                    Just recording ->
-                        if recording.recordingStopped then
-                            loadTestsFile GotTestFile |> Cmd.map TestEditorMsg
+        [ config.initCmds
+        , if config.isLeader then
+            case config.devBar.isRecordingEvents of
+                Just recording ->
+                    if recording.recordingStopped then
+                        loadTestsFile GotTestFile |> Cmd.map (config.mapMsg << TestEditorMsg)
 
-                        else
-                            recordingInitCmds portsAndWire
+                    else
+                        recordingInitCmds config
 
-                    Nothing ->
-                        Cmd.none
-                ]
+                Nothing ->
+                    Cmd.none
 
           else
             Cmd.none
-        , LD.now |> Task.perform VersionCheck
         ]
     )
 
 
-recordingInitCmds : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
-recordingInitCmds portsAndWire =
+recordingInitCmds : InitConfig msg -> Cmd msg
+recordingInitCmds config =
     Cmd.batch
-        [ portsAndWire.localDevStartRecording ()
+        [ config.startRecording ()
         , Task.map2 Tuple.pair Time.now Browser.Dom.getViewport
-            |> Task.perform GotTimeAndViewport
+            |> Task.perform (config.mapMsg << GotTimeAndViewport)
         ]
 
 
-storeFE : NormalModelData frontendModel backendModel -> c -> c
-storeFE m newFem =
-    if m.devbar.freeze then
-        LD.debugS "fe" newFem
-
-    else
-        newFem
-
-
-type NodeType
-    = Follower
-    | Leader
-
-
-nodeTypeToString : NodeType -> String
-nodeTypeToString nodeType =
-    case nodeType of
-        Follower ->
-            "Follower"
-
-        Leader ->
-            "Leader"
-
-
-type LiveStatus
-    = Online
-    | Offline
-
-
-update : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Msg frontendMsg backendMsg toFrontend toBackend -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
-update portsAndWire msg m =
-    let
-        log t v =
-            if m.devbar.logging then
-                Debug.log t v
-
-            else
-                v
-    in
-    case msg of
-        --case msg of
-        FEMsg frontendMsg ->
-            let
-                x =
-                    log "F   " frontendMsg
-
-                ( newFem, newFeCmds ) =
-                    portsAndWire.userFrontendApp.update frontendMsg m.fem
-            in
-            ( { m | fem = storeFE m newFem }
-            , Cmd.map FEMsg newFeCmds
-            )
-
-        BEMsg backendMsg ->
-            case m.nodeType of
-                Follower ->
-                    -- Followers don't run BE messages
-                    ( m, Cmd.none )
-
-                Leader ->
-                    let
-                        x =
-                            log "  B " backendMsg
-
-                        ( newBem, newBeCmds ) =
-                            portsAndWire.userBackendApp.update backendMsg m.bem
-                    in
-                    ( { m | bem = newBem, bemDirty = True }
-                    , Cmd.batch
-                        [ Cmd.map BEMsg newBeCmds
-                        ]
-                    )
-
-        BEtoFE clientId toFrontend ->
-            case m.nodeType of
-                Follower ->
-                    -- Followers don't broadcast ToFrontends
-                    ( m, Cmd.none )
-
-                Leader ->
-                    let
-                        _ =
-                            log " ◀️B " toFrontend
-                    in
-                    if m.devbar.networkDelay then
-                        ( m, delayMsg 500 (BEtoFEDelayed clientId toFrontend) )
-
-                    else
-                        ( m
-                        , Cmd.batch
-                            [ portsAndWire.send_ToFrontend
-                                { t = "ToFrontend"
-                                , b = toFrontend |> portsAndWire.w3_encode_ToFrontend |> Wire.bytesEncode
-                                , s = ""
-                                , c = clientId
-                                }
-                            ]
-                        )
-
-        BEtoFEDelayed clientId toFrontend ->
-            case m.nodeType of
-                Follower ->
-                    ( m, Cmd.none )
-
-                Leader ->
-                    ( m
-                    , Cmd.batch
-                        [ portsAndWire.send_ToFrontend
-                            { t = "ToFrontend"
-                            , b = toFrontend |> portsAndWire.w3_encode_ToFrontend |> Wire.bytesEncode
-                            , s = ""
-                            , c = clientId
-                            }
-                        ]
-                    )
-
-        FEtoBE toBackend ->
-            if m.devbar.networkDelay then
-                ( m, delayMsg 500 (FEtoBEDelayed toBackend) )
-
-            else
-                let
-                    _ =
-                        log "F▶️  " toBackend
-                in
-                ( m, Cmd.batch [ portsAndWire.send_ToBackend (Wire.bytesEncode (portsAndWire.w3_encode_ToBackend toBackend)) ] )
-
-        FEtoBEDelayed toBackend ->
-            let
-                _ =
-                    log "F▶️ ⏱" toBackend
-            in
-            ( m, Cmd.batch [ portsAndWire.send_ToBackend (Wire.bytesEncode (portsAndWire.w3_encode_ToBackend toBackend)) ] )
-
-        FENewUrl url ->
-            let
-                ( newModel, newCmds ) =
-                    update portsAndWire (FEMsg (portsAndWire.userFrontendApp.onUrlChange url)) m
-            in
-            ( { newModel | originalUrl = url }, newCmds )
-
-        OnConnection d ->
-            ( m, Lamdera.clientConnected_ d.s d.c )
-
-        OnDisconnection d ->
-            ( m, Lamdera.clientDisconnected_ d.s d.c )
-
-        ReceivedToBackend ( s, c, bytes ) ->
-            case m.nodeType of
-                Follower ->
-                    -- Followers don't run BE messages
-                    ( m, Cmd.none )
-
-                Leader ->
-                    case Wire.bytesDecode portsAndWire.w3_decode_ToBackend bytes of
-                        Just toBackend ->
-                            let
-                                _ =
-                                    log " ▶️B " toBackend
-
-                                ( newBem, newBeCmds ) =
-                                    portsAndWire.userBackendApp.updateFromFrontend s c toBackend m.bem
-                            in
-                            ( { m | bem = newBem, bemDirty = True }
-                            , Cmd.batch
-                                [ Cmd.map BEMsg newBeCmds
-                                ]
-                            )
-
-                        Nothing ->
-                            let
-                                x =
-                                    log "❌ ReceivedToBackend" "failed to decode provided msg!"
-                            in
-                            ( m, Cmd.none )
-
-        ReceivedToFrontend args ->
-            if args.s == "LocalDev" then
-                receivedMsgFromLocalDev portsAndWire args.b m
-
-            else
-                case Wire.bytesDecode portsAndWire.w3_decode_ToFrontend args.b of
-                    Just toFrontend ->
-                        let
-                            x =
-                                log "F◀️  " toFrontend
-
-                            ( newFem, newFeCmds ) =
-                                portsAndWire.userFrontendApp.updateFromBackend toFrontend m.fem
-                        in
-                        ( { m | fem = storeFE m newFem }
-                        , Cmd.map FEMsg newFeCmds
-                        )
-
-                    Nothing ->
-                        let
-                            x =
-                                log "❌ ReceivedToFrontend" "failed to decode provided msg!"
-                        in
-                        ( m, Cmd.none )
-
-        ReceivedBackendModel bytes ->
-            case Wire.bytesDecode portsAndWire.w3_decode_BackendModel bytes of
-                Just newBem ->
-                    let
-                        x =
-                            log "❇️ ReceivedBackendModel" newBem
-                    in
-                    ( { m | bem = newBem }
-                    , Cmd.none
-                    )
-
-                Nothing ->
-                    let
-                        x =
-                            log "❌ ReceivedBackendModel" "failed to decode provided msg!"
-                    in
-                    ( m, Cmd.none )
-
-        RPCIn rpcArgsJson ->
-            portsAndWire.mkrrc m rpcArgsJson
-
-        SetNodeTypeLeader bool ->
-            ( { m
-                | nodeType =
-                    case bool of
-                        True ->
-                            Leader
-
-                        False ->
-                            Follower
-              }
-            , Cmd.none
-            )
-
-        SetLiveStatus bool ->
-            let
-                devbar =
-                    m.devbar
-            in
-            ( { m
-                | devbar =
-                    { devbar
-                        | liveStatus =
-                            case bool of
-                                True ->
-                                    Online
-
-                                False ->
-                                    Offline
-                    }
-              }
-            , Cmd.none
-            )
-
-        ReceivedClientId clientId ->
-            ( { m | clientId = clientId }, Cmd.none )
-
-        ExpandedDevbar ->
-            let
-                devbar =
-                    m.devbar
-            in
-            ( { m | devbar = { devbar | expanded = True } }, Cmd.none )
-
-        CollapsedDevbar ->
-            let
-                devbar =
-                    m.devbar
-            in
-            ( { m | devbar = { devbar | expanded = False } }, Cmd.none )
-
-        ResetDebugStoreBoth ->
-            let
-                ( newFem, newFeCmds ) =
-                    portsAndWire.userFrontendApp.init m.originalUrl m.originalKey
-
-                ( newBem, newBeCmds ) =
-                    portsAndWire.userBackendApp.init
-            in
-            ( { m
-                | fem = LD.debugS "fe" newFem
-                , bem = newBem
-                , bemDirty = True
-              }
-            , Cmd.batch
-                [ trigger (PersistBackend True)
-                ]
-            )
-
-        ResetDebugStoreFE ->
-            let
-                ( newFem, newFeCmds ) =
-                    portsAndWire.userFrontendApp.init m.originalUrl m.originalKey
-            in
-            ( { m
-                | fem = LD.debugS "fe" newFem
-              }
-            , Cmd.batch
-                [ Cmd.map FEMsg newFeCmds
-                ]
-            )
-
-        ResetDebugStoreBE ->
-            let
-                devbar =
-                    m.devbar
-            in
-            resetBackend portsAndWire { m | devbar = LD.debugS "d" { devbar | isRecordingEvents = Nothing } }
-
-        ToggledFreezeMode ->
-            let
-                devbar =
-                    m.devbar
-
-                newDevbar =
-                    { devbar | freeze = not m.devbar.freeze }
-
-                newFem =
-                    if newDevbar.freeze then
-                        LD.debugS "fe" m.fem
-
-                    else
-                        m.fem
-            in
-            ( { m | devbar = LD.debugS "d" newDevbar, fem = newFem }
-            , Cmd.none
-            )
-
-        ToggledNetworkDelay ->
-            let
-                devbar =
-                    m.devbar
-
-                newDevbar =
-                    { devbar | networkDelay = not m.devbar.networkDelay }
-            in
-            ( { m | devbar = LD.debugS "d" newDevbar }
-            , Cmd.none
-            )
-
-        ToggledLogging ->
-            let
-                devbar =
-                    m.devbar
-
-                newDevbar =
-                    { devbar | logging = not m.devbar.logging }
-            in
-            ( { m | devbar = LD.debugS "d" newDevbar }
-            , Cmd.none
-            )
-
-        QRCodeShow ->
-            let
-                devbar =
-                    m.devbar
-
-                newDevbar =
-                    { devbar | qrCodeShow = True }
-            in
-            ( { m | devbar = newDevbar }
-            , Cmd.none
-            )
-
-        QRCodeHide ->
-            let
-                devbar =
-                    m.devbar
-
-                newDevbar =
-                    { devbar | qrCodeShow = False }
-            in
-            ( { m | devbar = newDevbar }
-            , Cmd.none
-            )
-
-        ClickedLocation ->
-            let
-                devbar =
-                    m.devbar
-
-                newDevbar =
-                    { devbar | location = next m.devbar.location }
-            in
-            ( { m | devbar = LD.debugS "d" newDevbar }
-            , Cmd.none
-            )
-
-        PersistBackend reload ->
-            let
-                persistBeState : NodeType -> backendModel -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
-                persistBeState nodeType bem =
-                    case nodeType of
-                        Follower ->
-                            Cmd.none
-
-                        Leader ->
-                            portsAndWire.save_BackendModel
-                                { t = "p"
-                                , f = reload
-                                , b = Wire.bytesEncode (portsAndWire.w3_encode_BackendModel bem)
-                                }
-            in
-            if m.bemDirty then
-                ( { m | bemDirty = False }
-                , Cmd.batch
-                    [ persistBeState m.nodeType m.bem
-                    , if reload then
-                        delayMsg 200 Reload
-
-                      else
-                        Cmd.none
-                    ]
-                )
-
-            else
-                ( m, Cmd.none )
-
-        Reload ->
-            ( m, LD.browserReload )
-
-        EnvClicked ->
-            let
-                devbar =
-                    m.devbar
-            in
-            ( { m | devbar = { devbar | showModeChanger = not devbar.showModeChanger } }, Cmd.none )
-
-        EnvModeSelected env ->
-            ( m, portsAndWire.send_EnvMode { t = "env", v = env } )
-
-        EnvCleared ->
-            let
-                devbar =
-                    m.devbar
-            in
-            ( { m | devbar = { devbar | showModeChanger = False } }, Cmd.none )
-
-        ModelResetCleared ->
-            let
-                devbar =
-                    m.devbar
-            in
-            ( { m | devbar = { devbar | showResetNotification = False } }, Cmd.none )
-
-        VersionCheck timeCurrent ->
-            let
-                check =
-                    ( m
-                    , getLatestVersion timeCurrent
-                        |> Task.onError (\err -> Task.succeed <| VersionCheckFailed timeCurrent)
-                        |> Task.attempt VersionCheckResult
-                    )
-
-                recheckIfLongerThanHours hours timeOld =
-                    if (LD.posixToMillis timeCurrent - LD.posixToMillis timeOld) > (hours * 1000 * 60 * 60) then
-                        check
-
-                    else
-                        ( m, Cmd.none )
-            in
-            case m.devbar.versionCheck of
-                VersionUnchecked ->
-                    check
-
-                VersionCheckFailed t ->
-                    recheckIfLongerThanHours 1 t
-
-                VersionCheckSucceeded v t ->
-                    recheckIfLongerThanHours 24 t
-
-        VersionCheckResult res ->
-            case res of
-                Ok val ->
-                    let
-                        devbar =
-                            m.devbar
-                    in
-                    case val of
-                        VersionUnchecked ->
-                            -- Not possible, not mapped in decoder
-                            ( m, Cmd.none )
-
-                        VersionCheckFailed time ->
-                            ( { m | devbar = LD.debugS "d" { devbar | versionCheck = val } }, Cmd.none )
-
-                        VersionCheckSucceeded v time ->
-                            ( { m | devbar = LD.debugS "d" { devbar | versionCheck = val } }, Cmd.none )
-
-                Err err ->
-                    -- Not possible, errors remapped to VersionCheckFailed
-                    ( m, Cmd.none )
-
-        LoadLatestSnapshotFilename ->
-            ( m
-            , getAppSnapshotFilenames "dashboard"
-                |> Task.attempt LoadLatestSnapshotFilenamesResult
-            )
-
-        LoadLatestSnapshotFilenamesResult res ->
-            case res of
-                Ok filenames ->
-                    ( { m | devbar = m.devbar |> (\d -> { d | snapshotFilenames = filenames |> List.drop 2 }) }
-                    , Cmd.none
-                    )
-
-                Err error ->
-                    let
-                        _ =
-                            Debug.log "LoadLatestSnapshotFilenamesResult" error
-                    in
-                    ( m, Cmd.none )
-
-        LoadSnapshot filename ->
-            ( m, getAppSnapshot filename |> Task.attempt LoadedSnapshot )
-
-        LoadSnapshotLegacy filename ->
-            ( m, getAppSnapshotLegacy "ascii-collab" filename |> Task.attempt LoadedSnapshotLegacy )
-
-        LoadedSnapshot res ->
-            Debug.todo "neutered LoadedSnapshot"
-
-        -- let
-        --     evergreenResult =
-        --         case res of
-        --             Ok ( bytes, version ) ->
-        --                 let
-        --                     x =
-        --                         Debug.log
-        --                             ("running LamderaGenerated.decodeAndUpgradeBackendModel for v"
-        --                                 ++ String.fromInt version
-        --                                 ++ " and bytes size"
-        --                             )
-        --                             ( version, Bytes.width bytes )
-        --                     y =
-        --                         LamderaGenerated.debug bytes
-        --                             |> Debug.log "manual debug result"
-        --                 in
-        --                 LamderaGenerated.decodeAndUpgradeBackendModel version bytes
-        --             Err err ->
-        --                 DecoderError <| Debug.toString err
-        --     evergreenTest =
-        --         case evergreenResult of
-        --             AlreadyCurrent ( valueType, cmds ) ->
-        --                 "AlreadyCurrent"
-        --             Upgraded ( valueType, cmds ) ->
-        --                 "Upgraded"
-        --             UnknownVersion ( int, string, bytes_ ) ->
-        --                 "UnknownVersion: " ++ String.fromInt int ++ ", " ++ string
-        --             UnknownType string ->
-        --                 "UnknownType: " ++ string
-        --             DecoderError string ->
-        --                 "DecoderError: " ++ string
-        --     _ =
-        --         Debug.log "evergreenResult" evergreenTest
-        -- in
-        -- case evergreenResult of
-        --     AlreadyCurrent ( valueType, cmds ) ->
-        --         let
-        --             _ =
-        --                 Debug.log "NON-MIGRATED RESTORE SUCCESS!" ()
-        --         in
-        --         ( { m | bem = valueType, bemDirty = True }, Cmd.none )
-        --     Upgraded ( valueType, cmds ) ->
-        --         let
-        --             _ =
-        --                 Debug.log "MIGRATION SUCCESS!" ()
-        --         in
-        --         ( { m | bem = valueType, bemDirty = True }, Cmd.none )
-        --     _ ->
-        --         ( m, Cmd.none )
-        LoadedSnapshotLegacy res ->
-            Debug.todo "neutered LoadedSnapshotLegacy"
-
-        -- let
-        --     evergreenResult =
-        --         case res of
-        --             Ok ( intList, version ) ->
-        --                 LamderaGenerated.decodeAndUpgradeBackendModel version (Wire2.intListToBytes intList)
-        --
-        --             Err err ->
-        --                 DecoderError <| Debug.toString err
-        --
-        --     evergreenTest =
-        --         case evergreenResult of
-        --             AlreadyCurrent ( valueType, cmds ) ->
-        --                 "AlreadyCurrent"
-        --
-        --             Upgraded ( valueType, cmds ) ->
-        --                 "Upgraded"
-        --
-        --             UnknownVersion ( int, string, bytes_ ) ->
-        --                 "UnknownVersion: " ++ String.fromInt int ++ ", " ++ string
-        --
-        --             UnknownType string ->
-        --                 "UnknownType: " ++ string
-        --
-        --             DecoderError string ->
-        --                 "DecoderError: " ++ string
-        --
-        --     _ =
-        --         Debug.log "evergreenResult" evergreenTest
-        -- in
-        -- case evergreenResult of
-        --     AlreadyCurrent ( valueType, cmds ) ->
-        --         ( { m | bem = valueType }, Cmd.none )
-        --
-        --     Upgraded ( valueType, cmds ) ->
-        --         let
-        --             _ =
-        --                 Debug.log "RESTORING SUCCESS DECODE!!!!!" ()
-        --         in
-        --         ( { m | bem = valueType }, Cmd.none )
-        --
-        --     _ ->
-        --         ( m, Cmd.none )
-        Noop ->
-            ( m, Cmd.none )
-
-        PressedStartRecording ->
-            ( m, loadTestsFile CheckFileReadWriteEnabled )
-
-        CheckFileReadWriteEnabled result ->
-            let
-                fileReadWriteWorks =
-                    case result of
-                        Ok _ ->
-                            True
-
-                        Err (Http.BadStatus 404) ->
-                            True
-
-                        Err _ ->
-                            False
-            in
-            if fileReadWriteWorks then
-                let
-                    devBar =
-                        m.devbar
-                in
-                ( { m
-                    | devbar =
-                        LD.debugS "d" { devBar | isRecordingEvents = Just initRecording, freeze = False }
-                  }
-                , Cmd.batch
-                    [ portsAndWire.send_ToFrontend
-                        { t = "ToFrontend"
-                        , s = "LocalDev"
-                        , c = "b"
-                        , b = Bytes.Encode.encode (Bytes.Encode.unsignedInt8 0)
-                        }
-                    , delayMsg 1000 NotifiedFollowersOfRecordingStart
-                    ]
-                )
-
-            else
-                ( { m | showFileReadWriteError = True }, Cmd.none )
-
-        NotifiedFollowersOfRecordingStart ->
-            resetBackend portsAndWire m
-
-        PressedStopRecording ->
-            let
-                devBar =
-                    m.devbar
-            in
-            case devBar.isRecordingEvents of
-                Just recording ->
-                    ( { m
-                        | devbar =
-                            LD.debugS "d"
-                                { devBar
-                                    | isRecordingEvents = Just { recording | recordingStopped = True }
-                                    , expanded = False
-                                }
-                      }
-                    , Cmd.batch
-                        [ loadTestsFile (\result -> GotTestFile result |> TestEditorMsg)
-                        , portsAndWire.localDevStopRecording ()
-                        , portsAndWire.send_ToFrontend
-                            { t = "ToFrontend"
-                            , s = "LocalDev"
-                            , c = "b"
-                            , b =
-                                Bytes.Encode.encode
-                                    (Bytes.Encode.sequence
-                                        [ Bytes.Encode.unsignedInt8 1
-                                        , encodeString m.clientId
-                                        ]
-                                    )
-                            }
-                        ]
-                    )
-
-                Nothing ->
-                    ( m, Cmd.none )
-
-        GotEvent json ->
-            case m.devbar.isRecordingEvents of
-                Just recording ->
-                    if recording.recordingStopped then
-                        ( m, Cmd.none )
-
-                    else
-                        ( m, Json.Encode.encode 0 json |> broadcastEvent portsAndWire m.clientId )
-
-                _ ->
-                    ( m, Cmd.none )
-
-        TestEditorMsg testEditorMsg ->
-            case m.devbar.isRecordingEvents of
-                Just recording ->
-                    let
-                        ( testEditor2, maybeDevbar, cmd ) =
-                            updateLoaded testEditorMsg m.recordedEvents recording
-                    in
-                    ( { m
-                        | recordedEvents = testEditor2
-                        , devbar =
-                            case maybeDevbar of
-                                Change recording2 ->
-                                    let
-                                        devbar =
-                                            m.devbar
-                                    in
-                                    LD.debugS "d" { devbar | isRecordingEvents = recording2 }
-
-                                NoChange ->
-                                    m.devbar
-                      }
-                    , Cmd.map TestEditorMsg cmd
-                    )
-
-                Nothing ->
-                    ( m, Cmd.none )
-
-        GotTimeAndViewport ( time, { viewport } ) ->
-            case m.devbar.isRecordingEvents of
-                Just recording ->
-                    if recording.recordingStopped then
-                        ( m, Cmd.none )
-
-                    else
-                        ( m
-                        , { isHidden = False
-                          , clientId = m.clientId
-                          , timestamp = time
-                          , eventType =
-                                Connect
-                                    { url = Url.toString m.originalUrl
-                                    , sessionId = m.sessionId
-                                    , windowWidth = round viewport.width
-                                    , windowHeight = round viewport.height
-                                    }
-                          }
-                            |> eventEncoder
-                            |> Json.Encode.encode 0
-                            |> broadcastEvent portsAndWire m.clientId
-                        )
-
-                Nothing ->
-                    ( m, Cmd.none )
-
-        TimedOutWaitingOnRecordingStatus ->
-            ( m, Cmd.none )
-
-        PressedCopy text ->
-            ( { m | lastCopied = Just text }, portsAndWire.localDevCopyToClipboard text )
-
-        PressedCloseModal ->
-            ( { m | showFileReadWriteError = False }, Cmd.none )
-
-
-initRecording : RecordingState
-initRecording =
-    { history = Array.empty
-    , recordingStopped = False
+isFullyInitialized : Model msg -> Bool
+isFullyInitialized model =
+    case model of
+        WaitingOnRecordingStatus _ ->
+            False
+
+        NormalModel _ ->
+            True
+
+
+
+-- UPDATE
+
+
+type alias UpdateConfig msg model =
+    { clientId : ClientId
+    , copyToClipboard : String -> Cmd msg
+    , debugSaveDevBar : model -> model
+    , devBar : DevBar
+    , isLeader : Bool
+    , mapMsg : Msg -> msg
+    , onConnection : ConnectionMsg -> Cmd msg
+    , originalUrl : Url
+    , resetBackend : model -> ( model, Cmd msg )
+    , sendToFrontend : WireMsg -> Cmd msg
+    , sessionId : SessionId
+    , setDevBar : DevBar -> model -> model
+    , setExpanded : Bool -> model -> model
+    , setFreeze : Bool -> model -> model
+    , setModel : Model msg -> model -> model
+    , startRecording : () -> Cmd msg
+    , stopRecording : () -> Cmd msg
     }
 
 
-receivedMsgFromLocalDev : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bytes -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
-receivedMsgFromLocalDev portsAndWire payload ({ devbar } as model) =
+onConnection : UpdateConfig msg model -> ConnectionMsg -> Model msg -> (model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+onConnection config msg model localDevHandler localDevModel =
+    case model of
+        WaitingOnRecordingStatus _ ->
+            ( localDevModel, Cmd.none )
+
+        NormalModel normalModel ->
+            if config.isLeader then
+                if msg.c == config.clientId then
+                    localDevHandler localDevModel
+
+                else
+                    ( localDevModel
+                        |> config.setModel
+                            (NormalModel
+                                { normalModel
+                                    | waitingConnections =
+                                        Set.insert msg.c normalModel.waitingConnections
+                                }
+                            )
+                    , delayMsg 2000 (config.mapMsg (OnConnectionDelayed msg))
+                    )
+
+            else
+                ( localDevModel, Cmd.none )
+
+
+onDisconnection : UpdateConfig msg model -> ConnectionMsg -> Model msg -> (model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+onDisconnection config msg model localDevHandler localDevModel =
+    case model of
+        WaitingOnRecordingStatus _ ->
+            ( localDevModel, Cmd.none )
+
+        NormalModel normalModel ->
+            localDevModel
+                |> config.setModel
+                    (NormalModel
+                        { normalModel
+                            | waitingConnections =
+                                Set.remove msg.c normalModel.waitingConnections
+                        }
+                    )
+                |> localDevHandler
+
+
+receivedToFrontend : UpdateConfig msg model -> WireMsg -> Model msg -> (model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+receivedToFrontend config msg model localDevHandler localDevModel =
+    case model of
+        WaitingOnRecordingStatus initCmds ->
+            if msg.s == "LocalDev" then
+                waitingOnRecordingStatusUpdate config initCmds msg.b localDevModel
+
+            else
+                ( localDevModel, Cmd.none )
+
+        NormalModel _ ->
+            if msg.s == "LocalDev" then
+                receivedMsgFromLocalDev config msg.b localDevModel
+
+            else
+                localDevHandler localDevModel
+
+
+waitingOnRecordingStatusUpdate : UpdateConfig msg model -> Cmd msg -> Bytes -> model -> ( model, Cmd msg )
+waitingOnRecordingStatusUpdate config initCmds payload localDevModel =
+    Bytes.Decode.decode
+        (Bytes.Decode.unsignedInt8
+            |> Bytes.Decode.andThen
+                (\flag ->
+                    case flag of
+                        4 ->
+                            -- Response if there is a recording in progress
+                            Bytes.Decode.map
+                                (\text ->
+                                    case Json.Decode.decodeString (Json.Decode.array fullEventDecoder) text of
+                                        Ok history ->
+                                            let
+                                                ( newLocalDevModel, cmd ) =
+                                                    resumeNormalInitFromUpdate config initCmds localDevModel
+                                            in
+                                            ( newLocalDevModel
+                                                |> config.setDevBar
+                                                    { isRecordingEvents =
+                                                        Just { history = history, recordingStopped = False }
+                                                    }
+                                                |> config.debugSaveDevBar
+                                            , Cmd.batch
+                                                [ cmd
+                                                , recordingInitCmds (initConfigFromUpdateConfig config initCmds)
+                                                ]
+                                            )
+
+                                        Err _ ->
+                                            resumeNormalInitFromUpdate config initCmds localDevModel
+                                )
+                                decodeString
+
+                        5 ->
+                            -- Response if there is no recording in progress
+                            resumeNormalInitFromUpdate config initCmds localDevModel
+                                |> Bytes.Decode.succeed
+
+                        _ ->
+                            Bytes.Decode.succeed
+                                ( localDevModel
+                                    |> config.setModel (WaitingOnRecordingStatus initCmds)
+                                , Cmd.none
+                                )
+                )
+        )
+        payload
+        |> Maybe.withDefault
+            ( localDevModel
+                |> config.setModel (WaitingOnRecordingStatus initCmds)
+            , Cmd.none
+            )
+
+
+receivedMsgFromLocalDev : UpdateConfig msg model -> Bytes -> model -> ( model, Cmd msg )
+receivedMsgFromLocalDev config payload localDevModel =
     Bytes.Decode.decode
         (Bytes.Decode.unsignedInt8
             |> Bytes.Decode.andThen
@@ -1221,9 +370,10 @@ receivedMsgFromLocalDev portsAndWire payload ({ devbar } as model) =
                     case flag of
                         0 ->
                             -- Start recording
-                            resetBackend
-                                portsAndWire
-                                { model | devbar = LD.debugS "d" { devbar | isRecordingEvents = Just initRecording } }
+                            localDevModel
+                                |> config.setDevBar { isRecordingEvents = Just initRecording }
+                                |> config.debugSaveDevBar
+                                |> config.resetBackend
                                 |> Bytes.Decode.succeed
 
                         1 ->
@@ -1231,16 +381,14 @@ receivedMsgFromLocalDev portsAndWire payload ({ devbar } as model) =
                             decodeString
                                 |> Bytes.Decode.map
                                     (\clientId ->
-                                        if clientId == model.clientId then
-                                            ( model, Cmd.none )
+                                        if clientId == config.clientId then
+                                            ( localDevModel, Cmd.none )
 
                                         else
-                                            ( { model
-                                                | devbar =
-                                                    LD.debugS "d"
-                                                        { devbar | isRecordingEvents = Nothing }
-                                              }
-                                            , portsAndWire.localDevStopRecording ()
+                                            ( localDevModel
+                                                |> config.setDevBar { isRecordingEvents = Nothing }
+                                                |> config.debugSaveDevBar
+                                            , config.stopRecording ()
                                             )
                                     )
 
@@ -1249,84 +397,88 @@ receivedMsgFromLocalDev portsAndWire payload ({ devbar } as model) =
                             Bytes.Decode.map2
                                 (\clientId json ->
                                     case
-                                        ( model.devbar.isRecordingEvents
+                                        ( config.devBar.isRecordingEvents
                                         , Json.Decode.decodeString (eventDecoder clientId) json
                                         )
                                     of
                                         ( Just recording, Ok event ) ->
-                                            ( { model
-                                                | devbar =
-                                                    { devbar
-                                                        | isRecordingEvents =
-                                                            addEvent event recording |> Just
+                                            ( localDevModel
+                                                |> config.setDevBar
+                                                    { isRecordingEvents =
+                                                        addEvent event recording |> Just
                                                     }
-                                                        |> LD.debugS "d"
-                                              }
+                                                |> config.debugSaveDevBar
                                             , Cmd.none
                                             )
 
                                         _ ->
-                                            ( model, Cmd.none )
+                                            ( localDevModel, Cmd.none )
                                 )
                                 decodeString
                                 decodeString
 
                         3 ->
                             -- Request if there is a recording in progress
-                            ( model
-                            , case model.nodeType of
-                                Leader ->
-                                    case model.devbar.isRecordingEvents of
-                                        Just recording ->
-                                            if recording.recordingStopped then
-                                                portsAndWire.send_ToFrontend
-                                                    { t = "ToFrontend"
-                                                    , s = "LocalDev"
-                                                    , c = "b"
-                                                    , b =
-                                                        Bytes.Encode.encode
-                                                            (Bytes.Encode.unsignedInt8 5)
-                                                    }
+                            Bytes.Decode.map2
+                                (\sessionId clientId ->
+                                    ( localDevModel
+                                    , if config.isLeader then
+                                        Cmd.batch
+                                            [ case config.devBar.isRecordingEvents of
+                                                Just recording ->
+                                                    if recording.recordingStopped then
+                                                        config.sendToFrontend
+                                                            { t = "ToFrontend"
+                                                            , s = "LocalDev"
+                                                            , c = clientId
+                                                            , b =
+                                                                Bytes.Encode.encode
+                                                                    (Bytes.Encode.unsignedInt8 5)
+                                                            }
 
-                                            else
-                                                portsAndWire.send_ToFrontend
-                                                    { t = "ToFrontend"
-                                                    , s = "LocalDev"
-                                                    , c = "b"
-                                                    , b =
-                                                        Bytes.Encode.encode
-                                                            (Bytes.Encode.sequence
-                                                                [ Bytes.Encode.unsignedInt8 4
-                                                                , Json.Encode.array
-                                                                    eventEncoder
-                                                                    recording.history
-                                                                    |> Json.Encode.encode 0
-                                                                    |> encodeString
-                                                                ]
-                                                            )
-                                                    }
+                                                    else
+                                                        config.sendToFrontend
+                                                            { t = "ToFrontend"
+                                                            , s = "LocalDev"
+                                                            , c = clientId
+                                                            , b =
+                                                                Bytes.Encode.encode
+                                                                    (Bytes.Encode.sequence
+                                                                        [ Bytes.Encode.unsignedInt8 4
+                                                                        , Json.Encode.array
+                                                                            eventEncoder
+                                                                            recording.history
+                                                                            |> Json.Encode.encode 0
+                                                                            |> encodeString
+                                                                        ]
+                                                                    )
+                                                            }
 
-                                        Nothing ->
-                                            portsAndWire.send_ToFrontend
-                                                { t = "ToFrontend"
-                                                , s = "LocalDev"
-                                                , c = "b"
-                                                , b =
-                                                    Bytes.Encode.encode
-                                                        (Bytes.Encode.unsignedInt8 5)
-                                                }
+                                                Nothing ->
+                                                    config.sendToFrontend
+                                                        { t = "ToFrontend"
+                                                        , s = "LocalDev"
+                                                        , c = clientId
+                                                        , b =
+                                                            Bytes.Encode.encode
+                                                                (Bytes.Encode.unsignedInt8 5)
+                                                        }
+                                            , sendMsg (config.mapMsg (OnConnectionDelayed { s = sessionId, c = clientId }))
+                                            ]
 
-                                Follower ->
-                                    Cmd.none
-                            )
-                                |> Bytes.Decode.succeed
+                                      else
+                                        Cmd.none
+                                    )
+                                )
+                                decodeString
+                                decodeString
 
                         _ ->
-                            Bytes.Decode.succeed ( model, Cmd.none )
+                            Bytes.Decode.succeed ( localDevModel, Cmd.none )
                 )
         )
         payload
-        |> Maybe.withDefault ( model, Cmd.none )
+        |> Maybe.withDefault ( localDevModel, Cmd.none )
 
 
 decodeString : Bytes.Decode.Decoder String
@@ -1344,9 +496,9 @@ encodeString text =
         ]
 
 
-broadcastEvent : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> ClientId -> String -> Cmd (Msg frontendMsg backendMsg toFrontend toBackend)
-broadcastEvent portsAndWire clientId eventText =
-    portsAndWire.send_ToFrontend
+broadcastEvent : UpdateConfig msg model -> String -> Cmd msg
+broadcastEvent config eventText =
+    config.sendToFrontend
         { t = "ToFrontend"
         , s = "LocalDev"
         , c = "b"
@@ -1354,308 +506,292 @@ broadcastEvent portsAndWire clientId eventText =
             Bytes.Encode.encode
                 (Bytes.Encode.sequence
                     [ Bytes.Encode.unsignedInt8 2
-                    , encodeString clientId
+                    , encodeString config.clientId
                     , encodeString eventText
                     ]
                 )
         }
 
 
-resetBackend : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> ( NormalModelData frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
-resetBackend portsAndWire model =
-    let
-        ( newBem, newBeCmds ) =
-            portsAndWire.userBackendApp.init
-    in
-    ( { model | bem = newBem, bemDirty = True }
-    , Cmd.batch
-        [ Cmd.map BEMsg newBeCmds
-        , trigger (PersistBackend True)
-        ]
-    )
+resetDebugStoreBE : UpdateConfig msg model -> model -> model
+resetDebugStoreBE config localDevModel =
+    localDevModel
+        |> config.setDevBar initDevBar
+        |> config.debugSaveDevBar
 
 
-subscriptions : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> Sub (Msg frontendMsg backendMsg toFrontend toBackend)
-subscriptions portsAndWire { nodeType, fem, bem, bemDirty, devbar, clientId, recordedEvents } =
-    Sub.batch
-        [ Sub.map FEMsg (portsAndWire.userFrontendApp.subscriptions fem)
-        , if nodeType == Leader then
-            Sub.map BEMsg (portsAndWire.userBackendApp.subscriptions bem)
+update : UpdateConfig msg model -> Msg -> Model msg -> model -> ( model, Cmd msg )
+update config msg model localDevModel =
+    case model of
+        WaitingOnRecordingStatus initCmds ->
+            case msg of
+                TimedOutWaitingOnRecordingStatus ->
+                    resumeNormalInitFromUpdate config initCmds localDevModel
 
-          else
-            Sub.none
-        , if nodeType == Leader && bemDirty then
-            LD.every 1000 (always (PersistBackend False))
+                _ ->
+                    ( localDevModel, Cmd.none )
 
-          else
-            Sub.none
-        , portsAndWire.setNodeTypeLeader SetNodeTypeLeader
-        , portsAndWire.setLiveStatus SetLiveStatus
-        , portsAndWire.setClientId ReceivedClientId
-        , portsAndWire.receive_ToBackend ReceivedToBackend
-        , portsAndWire.receive_ToFrontend ReceivedToFrontend
-        , portsAndWire.receive_BackendModel ReceivedBackendModel
-        , portsAndWire.rpcIn RPCIn
-        , portsAndWire.onConnection OnConnection
-        , portsAndWire.onDisconnection OnDisconnection
-        , LD.every (10 * 60 * 1000) VersionCheck
-        , case devbar.isRecordingEvents of
-            Just recording ->
-                Sub.batch
-                    [ portsAndWire.localDevGotEvent GotEvent
-                    , if recording.recordingStopped then
-                        Browser.Events.onMouseUp (Json.Decode.succeed (TestEditorMsg MouseUpEvent))
+        NormalModel normalModel ->
+            normalUpdate config msg normalModel localDevModel
 
-                      else
-                        Sub.none
+
+resumeNormalInitFromUpdate : UpdateConfig msg model -> Cmd msg -> model -> ( model, Cmd msg )
+resumeNormalInitFromUpdate config initCmds localDevModel =
+    normalInit (initConfigFromUpdateConfig config initCmds)
+        |> Tuple.mapFirst
+            (\normalModel ->
+                config.setModel (NormalModel normalModel) localDevModel
+            )
+
+
+initConfigFromUpdateConfig : UpdateConfig msg model -> Cmd msg -> InitConfig msg
+initConfigFromUpdateConfig config initCmds =
+    { clientId = config.clientId
+    , devBar = config.devBar
+    , initCmds = initCmds
+    , isLeader = config.isLeader
+    , mapMsg = config.mapMsg
+    , sendToFrontend = config.sendToFrontend
+    , sessionId = config.sessionId
+    , startRecording = config.startRecording
+    }
+
+
+normalUpdate : UpdateConfig msg model -> Msg -> NormalModelData -> model -> ( model, Cmd msg )
+normalUpdate config msg m localDevModel =
+    case msg of
+        Noop ->
+            ( localDevModel, Cmd.none )
+
+        OnConnectionDelayed d ->
+            if Set.member d.c m.waitingConnections then
+                ( localDevModel
+                    |> config.setModel
+                        (NormalModel
+                            { m
+                                | waitingConnections =
+                                    Set.remove d.c m.waitingConnections
+                            }
+                        )
+                , config.onConnection d
+                )
+
+            else
+                ( localDevModel, Cmd.none )
+
+        PressedStartRecording ->
+            ( localDevModel, loadTestsFile CheckFileReadWriteEnabled |> Cmd.map config.mapMsg )
+
+        CheckFileReadWriteEnabled result ->
+            let
+                fileReadWriteWorks =
+                    case result of
+                        Ok _ ->
+                            True
+
+                        Err (Http.BadStatus 404) ->
+                            True
+
+                        Err _ ->
+                            False
+            in
+            if fileReadWriteWorks then
+                ( localDevModel
+                    |> config.setDevBar { isRecordingEvents = Just initRecording }
+                    |> config.setFreeze False
+                    |> config.debugSaveDevBar
+                , Cmd.batch
+                    [ config.sendToFrontend
+                        { t = "ToFrontend"
+                        , s = "LocalDev"
+                        , c = "b"
+                        , b = Bytes.Encode.encode (Bytes.Encode.unsignedInt8 0)
+                        }
+                    , delayMsg 1000 (config.mapMsg NotifiedFollowersOfRecordingStart)
                     ]
+                )
 
-            Nothing ->
-                Sub.none
-        ]
+            else
+                ( localDevModel
+                    |> config.setModel (NormalModel { m | showFileReadWriteError = True })
+                , Cmd.none
+                )
 
+        NotifiedFollowersOfRecordingStart ->
+            config.resetBackend localDevModel
 
-xForLocation : Location -> Attribute msg
-xForLocation location =
-    case location of
-        TopLeft ->
-            style "left" "5px"
-
-        TopRight ->
-            style "right" "5px"
-
-        BottomRight ->
-            style "right" "5px"
-
-        BottomLeft ->
-            style "left" "5px"
-
-
-yForLocation : Location -> Attribute msg
-yForLocation location =
-    case location of
-        TopLeft ->
-            style "top" "5px"
-
-        TopRight ->
-            style "top" "5px"
-
-        BottomRight ->
-            style "bottom" "5px"
-
-        BottomLeft ->
-            style "bottom" "5px"
-
-
-lamderaUI : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
-lamderaUI portsAndWire devbar nodeType =
-    case devbar.liveStatus of
-        Online ->
-            [ Html.Lazy.lazy3 lamderaPane portsAndWire devbar nodeType
-            , Html.Lazy.lazy envModeChanger devbar.showModeChanger
-            , Html.Lazy.lazy resetNotification devbar.showResetNotification
-            ]
-
-        Offline ->
-            [ withOverlay Noop
-                [ div
-                    [ onClick ClickedLocation
-                    , style "padding" "10px"
-                    , style "display" "flex"
-                    , style "justify-content" "center"
-                    , style "align-items" "center"
-                    , style "color" white
-                    , style "background-color" charcoal
-                    , style "border-radius" "5px"
-                    , style "z-index" "1000"
-                    ]
-                    [ icon iconWarning 18 yellow
-                    , spacer 8
-                    , text "lamdera live is not running!"
-                    ]
-                ]
-            ]
-
-
-envModeChanger : Bool -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
-envModeChanger showModeChanger =
-    if showModeChanger then
-        withOverlay EnvCleared
-            [ div
-                [ style "padding" "10px"
-                , style "color" white
-                , style "background-color" charcoal
-                , style "border-radius" "5px"
-                , id "lamdera-env"
-                ]
-                [ div [] [ Html.node "style" [] [ text """
-
-                    #lamdera-env .lamdera-dev:hover {
-
-                      background-color: #85BC7A20
-
-                    }
-
-                    #lamdera-env .lamdera-preview:hover {
-
-                      background-color: #4196ad20
-
-                    }
-
-                    #lamdera-env .lamdera-prod:hover {
-
-                      background-color: #E06C7520
-
-                    }
-
-                  """ ] ]
-                , div [ style "padding" "2px" ] [ text "Select `Env.mode` value:" ]
-                , div
-                    [ onClick (EnvModeSelected "Development")
-                    , style "cursor" "pointer"
-                    , style "padding" "6px 6px"
-                    , style "margin" "4px 2px"
-                    , style "border-left" "3px solid #85BC7A"
-                    , class "lamdera-dev"
-                    ]
-                    [ text "Development" ]
-
-                -- , div
-                --     [ onClick (EnvModeSelected "Preview")
-                --     , style "cursor" "pointer"
-                --     , style "padding" "6px 6px"
-                --     , style "margin" "4px 2px"
-                --     , style "border-left" "3px solid #4196ad"
-                --     , class "lamdera-preview"
-                --     ]
-                --     [ text "Preview" ]
-                , div
-                    [ onClick (EnvModeSelected "Production")
-                    , style "cursor" "pointer"
-                    , style "padding" "6px 6px"
-                    , style "margin" "4px 2px"
-                    , style "border-left" "3px solid #E06C75"
-                    , class "lamdera-prod"
-                    ]
-                    [ text "Production" ]
-                ]
-            ]
-
-    else
-        text ""
-
-
-resetNotification : Bool -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
-resetNotification showReset =
-    if showReset then
-        withOverlay ModelResetCleared
-            [ div
-                [ onClick ClickedLocation
-                , style "padding" "10px 20px"
-                , style "display" "flex"
-                , style "justify-content" "center"
-                , style "align-items" "center"
-                , style "color" white
-                , style "background-color" charcoal
-                , style "border-radius" "5px"
-                ]
-                [ icon iconWarning 18 yellow
-                , spacer 8
-                , div [ style "text-align" "center" ]
-                    [ div [ style "padding" "5px" ] [ text "It looks like your BackendModel type has changed!" ]
-                    , div [ style "padding" "5px" ] [ text "I've reset the BackendModel to its init value." ]
-                    , div
-                        [ onClick ModelResetCleared
-                        , style "padding" "8px 20px"
-                        , style "margin" "5px"
-                        , style "color" white
-                        , style "background-color" grey
-                        , style "border-radius" "5px"
-                        , style "display" "inline-block"
-                        , style "cursor" "pointer"
+        PressedStopRecording ->
+            case config.devBar.isRecordingEvents of
+                Just recording ->
+                    ( localDevModel
+                        |> config.setDevBar { isRecordingEvents = Just { recording | recordingStopped = True } }
+                        |> config.setExpanded False
+                        |> config.debugSaveDevBar
+                    , Cmd.batch
+                        [ loadTestsFile (\result -> GotTestFile result |> TestEditorMsg |> config.mapMsg)
+                        , config.stopRecording ()
+                        , config.sendToFrontend
+                            { t = "ToFrontend"
+                            , s = "LocalDev"
+                            , c = "b"
+                            , b =
+                                Bytes.Encode.encode
+                                    (Bytes.Encode.sequence
+                                        [ Bytes.Encode.unsignedInt8 1
+                                        , encodeString config.clientId
+                                        ]
+                                    )
+                            }
                         ]
-                        [ text "Okay" ]
-                    ]
+                    )
+
+                Nothing ->
+                    ( localDevModel, Cmd.none )
+
+        GotEvent json ->
+            case config.devBar.isRecordingEvents of
+                Just recording ->
+                    if recording.recordingStopped then
+                        ( localDevModel, Cmd.none )
+
+                    else
+                        ( localDevModel, Json.Encode.encode 0 json |> broadcastEvent config )
+
+                _ ->
+                    ( localDevModel, Cmd.none )
+
+        TestEditorMsg testEditorMsg ->
+            case config.devBar.isRecordingEvents of
+                Just recording ->
+                    let
+                        ( testEditor2, maybeDevbar, cmd ) =
+                            updateLoaded testEditorMsg m.recordedEvents recording
+                    in
+                    ( localDevModel
+                        |> config.setModel (NormalModel { m | recordedEvents = testEditor2 })
+                        |> config.setDevBar
+                            (case maybeDevbar of
+                                Change recording2 ->
+                                    { isRecordingEvents = recording2 }
+
+                                NoChange ->
+                                    config.devBar
+                            )
+                        |> config.debugSaveDevBar
+                    , Cmd.map (config.mapMsg << TestEditorMsg) cmd
+                    )
+
+                Nothing ->
+                    ( localDevModel, Cmd.none )
+
+        GotTimeAndViewport ( time, { viewport } ) ->
+            case config.devBar.isRecordingEvents of
+                Just recording ->
+                    if recording.recordingStopped then
+                        ( localDevModel, Cmd.none )
+
+                    else
+                        ( localDevModel
+                        , { isHidden = False
+                          , clientId = config.clientId
+                          , timestamp = time
+                          , eventType =
+                                Connect
+                                    { url = Url.toString config.originalUrl
+                                    , sessionId = config.sessionId
+                                    , windowWidth = round viewport.width
+                                    , windowHeight = round viewport.height
+                                    }
+                          }
+                            |> eventEncoder
+                            |> Json.Encode.encode 0
+                            |> broadcastEvent config
+                        )
+
+                Nothing ->
+                    ( localDevModel, Cmd.none )
+
+        TimedOutWaitingOnRecordingStatus ->
+            ( localDevModel, Cmd.none )
+
+        PressedCopy text ->
+            ( localDevModel
+                |> config.setModel (NormalModel { m | lastCopied = Just text })
+            , config.copyToClipboard text
+            )
+
+        PressedCloseModal ->
+            ( localDevModel
+                |> config.setModel (NormalModel { m | showFileReadWriteError = False })
+            , Cmd.none
+            )
+
+
+initRecording : RecordingState
+initRecording =
+    { history = Array.empty
+    , recordingStopped = False
+    }
+
+
+sendMsg : b -> Cmd b
+sendMsg msg =
+    Task.succeed msg |> Task.perform identity
+
+
+delayMsg : Float -> b -> Cmd b
+delayMsg time msg =
+    Process.sleep time |> Task.perform (always msg)
+
+
+
+-- SUBSCRIPTIONS
+
+
+type alias SubscriptionsConfig msg =
+    { devBar : DevBar
+    , gotEvent : (Json.Value -> msg) -> Sub msg
+    , mapMsg : Msg -> msg
+    , receiveToFrontend : Sub msg
+    }
+
+
+subscriptions : SubscriptionsConfig msg -> Model msg -> Sub msg
+subscriptions config model =
+    case model of
+        WaitingOnRecordingStatus _ ->
+            config.receiveToFrontend
+
+        NormalModel _ ->
+            normalSubscriptions config
+
+
+normalSubscriptions : SubscriptionsConfig msg -> Sub msg
+normalSubscriptions config =
+    case config.devBar.isRecordingEvents of
+        Just recording ->
+            Sub.batch
+                [ config.gotEvent (config.mapMsg << GotEvent)
+                , if recording.recordingStopped then
+                    Browser.Events.onMouseUp (Json.Decode.succeed (config.mapMsg (TestEditorMsg MouseUpEvent)))
+
+                  else
+                    Sub.none
                 ]
-            ]
 
-    else
-        text ""
-
-
-lamderaPane : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
-lamderaPane portsAndWire devbar nodeType =
-    div
-        [ style "font-family" "system-ui, Helvetica Neue, sans-serif"
-        , style "font-size" "12px"
-        , style "position" "fixed"
-        , xForLocation devbar.location
-        , yForLocation devbar.location
-        , style "color" white
-        , style "background-color" charcoal
-        , style "border-radius" "5px"
-        , onMouseEnter ExpandedDevbar
-        , onMouseLeave CollapsedDevbar
-        , style "user-select" "none"
-        , id "localDev_devbar"
-        ]
-        (case devbar.location of
-            TopLeft ->
-                lamderaDevBar portsAndWire True devbar nodeType
-
-            TopRight ->
-                lamderaDevBar portsAndWire True devbar nodeType
-
-            BottomRight ->
-                lamderaDevBar portsAndWire False devbar nodeType
-
-            BottomLeft ->
-                lamderaDevBar portsAndWire False devbar nodeType
-        )
+        Nothing ->
+            Sub.none
 
 
-withOverlay : a -> List (Html a) -> Html a
-withOverlay dismiss html =
-    div
-        [ style "font-family" "system-ui, Helvetica Neue, sans-serif"
-        , style "font-size" "14px"
-        , style "display" "block"
-        , style "position" "fixed"
-        , style "top" "0"
-        , style "left" "0"
-        , style "height" "100vh"
-        , style "width" "100vw"
-        , style "background-color" "#2e333588"
-        , style "-webkit-backdrop-filter" "blur(3px)"
-        , style "backdrop-filter" "blur(3px)"
-        , style "display" "flex"
-        , style "justify-content" "center"
-        , style "align-items" "center"
-        , onClick dismiss
-        , id "localDev_devbar"
-        ]
-        html
+
+-- VIEW
 
 
-envIndicator : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
-envIndicator wireAndPorts =
-    let
-        ( label, color ) =
-            wireAndPorts.envMeta
-    in
-    div []
-        [ div
-            [ style "text-align" "center"
-            , style "border-top" "1px solid #393939"
-            , style "border-radius" "0px 0px 5px 5px"
-            , style "font-size" "10px"
-            , style "padding" "1px 4px 2px 4px"
-            , style "cursor" "pointer"
-            , style "color" "#fff"
-            , onClick EnvClicked
-            ]
-            [ text <| "Env: ", span [ style "color" color ] [ text label ] ]
-        ]
+type alias ViewConfig =
+    { charcoal : String
+    , grey : String
+    , white : String
+    }
 
 
 eye : Html msg
@@ -1682,467 +818,98 @@ eyeClosed =
         [ S.path [ A.d "M228,175a8,8,0,0,1-10.92-3l-19-33.2A123.23,123.23,0,0,1,162,155.46l5.87,35.22a8,8,0,0,1-6.58,9.21A8.4,8.4,0,0,1,160,200a8,8,0,0,1-7.88-6.69l-5.77-34.58a133.06,133.06,0,0,1-36.68,0l-5.77,34.58A8,8,0,0,1,96,200a8.4,8.4,0,0,1-1.32-.11,8,8,0,0,1-6.58-9.21L94,155.46a123.23,123.23,0,0,1-36.06-16.69L39,172A8,8,0,1,1,25.06,164l20-35a153.47,153.47,0,0,1-19.3-20A8,8,0,1,1,38.22,99c16.6,20.54,45.64,45,89.78,45s73.18-24.49,89.78-45A8,8,0,1,1,230.22,109a153.47,153.47,0,0,1-19.3,20l20,35A8,8,0,0,1,228,175Z" ] [] ]
 
 
-lamderaDevBar : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Bool -> DevBar -> NodeType -> List (Html (Msg frontendMsg backendMsg toFrontend toBackend))
-lamderaDevBar portsAndWire topDown devbar nodeType =
-    case topDown of
-        True ->
-            [ pill portsAndWire devbar nodeType
-            , if devbar.expanded then
-                div
-                    [ style "border-top" "1px solid #393939"
-                    ]
-                    [ expandedUI portsAndWire nodeType topDown devbar
-                    ]
+recordingPill : DevBar -> Maybe Msg
+recordingPill devBar =
+    if devBar.isRecordingEvents /= Nothing then
+        Just PressedStopRecording
 
-              else
-                text ""
-            ]
-
-        False ->
-            [ if devbar.expanded then
-                div
-                    [ style "border-bottom" "1px solid #393939"
-                    , style "padding-bottom" "5px"
-                    ]
-                    [ expandedUI portsAndWire nodeType topDown devbar ]
-
-              else
-                text ""
-            , pill portsAndWire devbar nodeType
-            ]
+    else
+        Nothing
 
 
-pill : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> DevBar -> NodeType -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
-pill portsAndWire devbar nodeType =
-    div []
-        [ div
-            [ style "padding" "5px 7px 2px 5px"
-            , style "display" "flex"
-            , style "justify-content" "center"
-            , style "align-items" "center"
-            ]
-            [ span
-                [ onClick ClickedLocation
-                , style "margin" "-2px 5px 0 5px"
-                , style "display" "inline-block"
-                , style "vertical-align" "middle"
-                , style "height" "22px"
-                , style "width" "13px"
-                , style "cursor" "pointer"
-                , style "background-image" """url("data:image/svg+xml;utf8,<svg width='13px' height='23px' viewBox='0 0 23 27' version='1.1' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'><g stroke='none' stroke-width='1' fill='none' fill-rule='evenodd'><g transform='translate(-272.000000, -129.000000)' fill='white'><g transform='translate(272.000000, 129.000000)'><path d='M22.721133,26.2285714 C22.3975092,26.7428597 21.8359081,27 21.1720266,27 C20.745075,26.9311782 20.4000491,26.7155717 20.1369487,26.3531804 C19.9207409,26.049077 19.4876467,25.1169484 18.8376663,23.5567944 L11.48425,6.00209059 L3.14198812,25.9651568 C2.85432248,26.6550557 2.3569081,27 1.64973006,27 C1.42199476,27 1.20025582,26.9498263 0.984506591,26.8494774 C0.564994195,26.6613231 0.277332868,26.3477374 0.121513978,25.9087108 C-0.0462909803,25.4696842 -0.040298036,25.0306642 0.139492991,24.5916376 L9.99199199,1.03484321 C10.2796576,0.344944286 10.777072,0 11.48425,0 C12.2034142,0 12.7068215,0.344944286 12.9944871,1.03484321 L22.8469861,24.5916376 C23.0867075,25.1561004 23.0447569,25.7017395 22.721133,26.2285714 Z'></path></g></g></g></svg>")"""
-                , style "position" "relative"
-                ]
-                [ case nodeType of
-                    Leader ->
-                        div
-                            [ style "background-color" "#a6f098"
-                            , style "height" "4px"
-                            , style "width" "4px"
-                            , style "border-radius" "10px"
-                            , style "position" "absolute"
-                            , style "top" "3px"
-                            , style "left" "-3px"
-                            ]
-                            []
+recordingButton : DevBar -> (Msg -> Html msg) -> (Msg -> Html msg) -> Html msg
+recordingButton devBar stopFun startFun =
+    case devBar.isRecordingEvents of
+        Just _ ->
+            stopFun PressedStopRecording
 
-                    Follower ->
-                        text ""
-                ]
-            , spacer 5
-            , if devbar.isRecordingEvents /= Nothing then
-                span
-                    [ onClick PressedStopRecording
-                    , style "cursor" "pointer"
-                    , style "padding-bottom" "3px"
-                    ]
-                    [ Html.text "🔴" ]
-
-              else if devbar.freeze then
-                summaryIcon iconFreeze blue ToggledFreezeMode
-
-              else
-                summaryIcon iconFreeze grey ToggledFreezeMode
-            , spacer 5
-            , if devbar.networkDelay then
-                summaryIcon iconNetwork yellow ToggledNetworkDelay
-
-              else
-                summaryIcon iconNetwork grey ToggledNetworkDelay
-            , spacer 5
-            , if devbar.logging then
-                summaryIcon iconLogs white ToggledLogging
-
-              else
-                summaryIcon iconLogs grey ToggledLogging
-            ]
-        , envIndicator portsAndWire
-        , case devbar.versionCheck of
-            VersionUnchecked ->
-                text ""
-
-            VersionCheckFailed time ->
-                text ""
-
-            VersionCheckSucceeded version time ->
-                let
-                    latestVersion =
-                        version
-                            |> String.split "-"
-                            |> (\p ->
-                                    case p of
-                                        ev :: lv :: _ ->
-                                            lv
-                                                |> String.split "."
-                                                |> List.map String.toInt
-                                                |> justs
-                                                |> (\parts ->
-                                                        case parts of
-                                                            v1 :: v2 :: v3 :: [] ->
-                                                                ( v1, v2, v3 )
-
-                                                            _ ->
-                                                                ( 1, 3, 2 )
-                                                   )
-
-                                        _ ->
-                                            ( 1, 3, 2 )
-                               )
-
-                    newVersionUi =
-                        div
-                            [ style "text-align" "center"
-                            , style "font-size" "10px"
-                            , style "background-color" "#8E4CD0"
-                            , style "padding" "4px"
-                            , style "border-radius" "0 0 5px 5px"
-                            , style "box-shadow" "inset 0px 3px 3px -3px rgba(0,0,0,1)"
-                            , style "border-top" "1px solid #555"
-                            ]
-                            [ buttonDevLink "New version!" "https://dashboard.lamdera.app/docs/download" white
-                            ]
-                in
-                if String.contains "wip" version then
-                    text ""
-
-                else if latestVersion > portsAndWire.currentVersion then
-                    newVersionUi
-
-                else
-                    text ""
-        ]
+        Nothing ->
+            startFun PressedStartRecording
 
 
-summaryIcon : (Int -> b -> String) -> b -> msg -> Html msg
-summaryIcon icon_ color msg =
-    span [ onClick msg, style "cursor" "pointer" ] [ icon icon_ 16 color ]
+hideFreezeAndResetButtons : DevBar -> Bool
+hideFreezeAndResetButtons devBar =
+    devBar.isRecordingEvents /= Nothing
 
 
-spacer : Int -> Html msg
-spacer width =
-    -- If only we had elm-ui :'(
-    span [ style "width" (String.fromInt width ++ "px"), style "display" "inline-block" ] []
+maybeTestEditorView : ViewConfig -> DevBar -> Model msg -> Maybe (List (Html Msg))
+maybeTestEditorView config devBar model =
+    case model of
+        WaitingOnRecordingStatus _ ->
+            Just []
 
-
-expandedUI : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NodeType -> Bool -> DevBar -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
-expandedUI portsAndWire nodeType topDown devbar =
-    let
-        modeText : String
-        modeText =
-            case devbar.freeze of
-                False ->
-                    "Inactive"
-
-                True ->
-                    "Active"
-
-        envDocs : Html (Msg frontendMsg backendMsg toFrontend toBackend)
-        envDocs =
-            let
-                borderPos =
-                    if topDown then
-                        "border-top"
-
-                    else
-                        "border-bottom"
-            in
-            div
-                [ style "display" "flex"
-                , style "justify-content" "space-evenly"
-                , style borderPos "1px solid #393939"
-                ]
-                [ let
-                    ( label, color ) =
-                        portsAndWire.envMeta
-                  in
-                  buttonDevColored "Env" label color EnvClicked
-                , div [ style "height" "30px", style "width" "1px", style "background-color" "#393939" ] []
-                , buttonDevLink "Docs" "https://dashboard.lamdera.app/docs" white
-                ]
-
-        versionInfo : Html msg
-        versionInfo =
-            let
-                ( borderPos, borderRadius ) =
-                    if topDown then
-                        ( "border-top", "0 0 5px 5px" )
-
-                    else
-                        ( "border-bottom", "5px 5px 0 0" )
-            in
-            div
-                [ style "text-align" "center"
-                , style "font-size" "10px"
-                , style "background-color" "#222"
-                , style "color" "#888"
-                , style "border-radius" borderRadius
-                , style "padding" "4px"
-                , style borderPos "1px solid #393939"
-                ]
-                [ text <| "Version: " ++ showVersion portsAndWire.currentVersion
-                ]
-    in
-    div [ style "width" "175px" ]
-        [ if topDown then
-            text ""
-
-          else
-            div [] [ versionInfo, envDocs ]
-        , case devbar.isRecordingEvents of
-            Just _ ->
-                buttonDev "🔴 Stop Recording" PressedStopRecording
-
-            Nothing ->
-                buttonDev "⚪ Record Test" PressedStartRecording
-        , if devbar.freeze && devbar.isRecordingEvents == Nothing then
-            buttonDev "Reset Both" ResetDebugStoreBoth
-
-          else
-            buttonDev "Reset Backend" ResetDebugStoreBE
-        , if devbar.freeze && devbar.isRecordingEvents == Nothing then
-            buttonDev "Reset Frontend" ResetDebugStoreFE
-
-          else
-            text ""
-        , case devbar.isRecordingEvents of
-            Just _ ->
-                text ""
-
-            Nothing ->
-                if devbar.freeze then
-                    buttonDevColoredIcon "Freeze Mode" "On" blue iconFreeze ToggledFreezeMode
-
-                else
-                    buttonDevOff "Freeze Mode: Off" iconFreeze ToggledFreezeMode
-        , if devbar.networkDelay then
-            buttonDevColoredIcon "Network Delay" "500ms" yellow iconNetwork ToggledNetworkDelay
-
-          else
-            buttonDevOff "Network Delay: Off" iconNetwork ToggledNetworkDelay
-        , if devbar.logging then
-            -- buttonDev "Logging: On"
-            buttonDevColoredIcon "Logging" "On" white iconLogs ToggledLogging
-
-          else
-            buttonDevOff "Logging: Off" iconLogs ToggledLogging
-
-        -- , if devbar.qrCodeShow == True then
-        --     div [ style "text-align" "center" ]
-        --         [ img
-        --             [ src "https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://192.168.0.2:8000"
-        --             , style "width" "150"
-        --             , style "height" "150"
-        --             ]
-        --             []
-        --         ]
-        --
-        --   else
-        --     text ""
-        -- , div
-        --     [ onMouseEnter QRCodeShow
-        --     , onMouseLeave QRCodeHide
-        --     , style "cursor" "pointer"
-        --     , style "text-align" "center"
-        --     ]
-        --     [ text "QR Code" ]
-        , if topDown then
-            div [] [ envDocs, versionInfo ]
-
-          else
-            text ""
-
-        -- , lamderaSnapshots devbar
-        ]
-
-
-lamderaSnapshots : { a | snapshotFilenames : List String } -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
-lamderaSnapshots devbar =
-    Html.div []
-        ([ Html.div [ onClick LoadLatestSnapshotFilename ] [ Html.text "Load latest snapshots" ]
-         ]
-            ++ List.map (\f -> Html.div [ onClick (LoadSnapshot f) ] [ Html.text f ]) devbar.snapshotFilenames
-         -- ++ List.map
-         --     (\f ->
-         --         Html.div
-         --             [ onClick (LoadSnapshotLegacy f)
-         --             ]
-         --             [ Html.text <| "LEGACY: " ++ f ]
-         --     )
-         --     [ "appname_v9_1687430149455.bin" ]
-        )
-
-
-buttonDev : String -> msg -> Html msg
-buttonDev label msg =
-    div
-        [ style "color" white
-        , style "cursor" "pointer"
-        , style "padding" "8px 8px"
-        , style "text-align" "center"
-        , onClick msg
-        ]
-        [ text label
-        ]
-
-
-buttonDevColored : String -> String -> String -> msg -> Html msg
-buttonDevColored label value color msg =
-    div
-        [ style "color" white
-        , style "cursor" "pointer"
-        , style "padding" "8px 8px"
-        , style "display" "flex"
-        , style "justify-content" "center"
-        , style "align-items" "center"
-        , onClick msg
-        ]
-        [ text label
-        , text ":"
-        , spacer 3
-        , span [ style "color" color ] [ text value ]
-        ]
-
-
-buttonDevColoredIcon : String -> String -> String -> (Int -> String -> String) -> msg -> Html msg
-buttonDevColoredIcon label value color icon_ msg =
-    div
-        [ style "color" white
-        , style "cursor" "pointer"
-        , style "padding" "8px 8px"
-        , style "display" "flex"
-        , style "justify-content" "center"
-        , style "align-items" "center"
-        , onClick msg
-        ]
-        [ icon icon_ 16 color
-        , spacer 5
-        , text label
-        , text ":"
-        , spacer 3
-        , span [ style "color" color ] [ text value ]
-        ]
-
-
-buttonDevOff : String -> (Int -> String -> String) -> msg -> Html msg
-buttonDevOff label icon_ msg =
-    div
-        [ style "color" grey
-        , style "cursor" "pointer"
-        , style "padding" "8px 8px"
-        , style "display" "flex"
-        , style "justify-content" "center"
-        , style "align-items" "center"
-        , onClick msg
-        ]
-        [ icon icon_ 16 grey
-        , spacer 5
-        , text label
-        ]
-
-
-buttonDevLink : String -> String -> String -> Html msg
-buttonDevLink label url color =
-    a
-        [ style "color" color
-        , style "cursor" "pointer"
-        , style "text-decoration" "none"
-        , style "display" "block"
-        , style "display" "flex"
-        , style "justify-content" "center"
-        , style "align-items" "center"
-        , href url
-        , target "_blank"
-        ]
-        [ text label
-        , spacer 5
-        , icon iconExternalLink 12 color
-        ]
-
-
-mapDocument : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> NormalModelData frontendModel backendModel -> (frontendMsg -> Msg frontendMsg backendMsg toFrontend toBackend) -> Browser.Document frontendMsg -> Browser.Document (Msg frontendMsg backendMsg toFrontend toBackend)
-mapDocument portsAndWire model msg { title, body } =
-    { title = title
-    , body =
-        case model.devbar.isRecordingEvents of
-            Just recording ->
-                if recording.recordingStopped then
-                    [ testEditorView recording model.recordedEvents
-                        |> Html.map TestEditorMsg
-                    ]
-
-                else
-                    List.map (Html.map msg) body
-                        ++ lamderaUI
-                            portsAndWire
-                            model.devbar
-                            model.nodeType
-
-            Nothing ->
-                List.map (Html.map msg) body
-                    ++ lamderaUI
-                        portsAndWire
-                        model.devbar
-                        model.nodeType
-                    ++ [ if model.showFileReadWriteError then
-                            Html.div
-                                [ Html.Attributes.style "position" "fixed"
-                                , Html.Attributes.style "top" "0"
-                                , Html.Attributes.style "left" "0"
-                                , Html.Attributes.style "width" "100vw"
-                                , Html.Attributes.style "height" "100vh"
-                                , Html.Attributes.style "background-color" "#000000aa"
-                                , Html.Attributes.style "display" "flex"
-                                , Html.Attributes.style "justify-content" "center"
-                                , Html.Attributes.style "align-items" "center"
-                                , style "z-index" "1001"
-                                , Html.Events.onClick PressedCloseModal
-                                ]
-                                [ Html.div
-                                    [ Html.Attributes.style "padding" "20px 30px"
-                                    , Html.Attributes.style "border-radius" "5px"
-                                    , Html.Attributes.style "color" white
-                                    , Html.Attributes.style "background-color" charcoal
-                                    , Html.Attributes.style "font-family" "sans-serif"
-                                    , Html.Events.stopPropagationOn
-                                        "click"
-                                        (Json.Decode.succeed ( Noop, True ))
-                                    ]
-                                    [ Html.text "In order to record a test, please stop lamdera live and instead run one of the following:"
-                                    , Html.br [] []
-                                    , Html.br [] []
-                                    , copyableCode model "Terminal" "EXPERIMENTAL=1 lamdera live"
-                                    , copyableCode model "PowerShell" "$Env:EXPERIMENTAL=1\nlamdera live"
-                                    , copyableCode model "Command Prompt" "set EXPERIMENTAL=1\nlamdera live"
-                                    ]
+        NormalModel normalModel ->
+            devBar.isRecordingEvents
+                |> Maybe.andThen
+                    (\recording ->
+                        if recording.recordingStopped then
+                            Just
+                                [ testEditorView config recording normalModel.recordedEvents
+                                    |> Html.map TestEditorMsg
                                 ]
 
-                         else
-                            Html.text ""
-                       ]
-    }
+                        else
+                            Nothing
+                    )
 
 
-copyableCode : NormalModelData frontendModel backendModel -> String -> String -> Html (Msg frontendMsg backendMsg toFrontend toBackend)
-copyableCode model title text =
+fileReadWriteErrorView : ViewConfig -> Model msg -> List (Html Msg)
+fileReadWriteErrorView config model =
+    case model of
+        WaitingOnRecordingStatus _ ->
+            []
+
+        NormalModel normalModel ->
+            if normalModel.showFileReadWriteError then
+                [ Html.div
+                    [ Html.Attributes.style "position" "fixed"
+                    , Html.Attributes.style "top" "0"
+                    , Html.Attributes.style "left" "0"
+                    , Html.Attributes.style "width" "100vw"
+                    , Html.Attributes.style "height" "100vh"
+                    , Html.Attributes.style "background-color" "#000000aa"
+                    , Html.Attributes.style "display" "flex"
+                    , Html.Attributes.style "justify-content" "center"
+                    , Html.Attributes.style "align-items" "center"
+                    , Html.Attributes.style "z-index" "1001"
+                    , Html.Events.onClick PressedCloseModal
+                    ]
+                    [ Html.div
+                        [ Html.Attributes.style "padding" "20px 30px"
+                        , Html.Attributes.style "border-radius" "5px"
+                        , Html.Attributes.style "color" config.white
+                        , Html.Attributes.style "background-color" config.charcoal
+                        , Html.Attributes.style "font-family" "sans-serif"
+                        , Html.Events.stopPropagationOn
+                            "click"
+                            (Json.Decode.succeed ( Noop, True ))
+                        ]
+                        [ Html.text "In order to record a test, please stop lamdera live and instead run one of the following:"
+                        , Html.br [] []
+                        , Html.br [] []
+                        , copyableCode config normalModel "Terminal" "EXPERIMENTAL=1 lamdera live"
+                        , copyableCode config normalModel "PowerShell" "$Env:EXPERIMENTAL=1\nlamdera live"
+                        , copyableCode config normalModel "Command Prompt" "set EXPERIMENTAL=1\nlamdera live"
+                        ]
+                    ]
+                ]
+
+            else
+                []
+
+
+copyableCode : ViewConfig -> NormalModelData -> String -> String -> Html Msg
+copyableCode config model title text =
     Html.div
         []
         [ Html.div [ Html.Attributes.style "font-size" "14px" ] [ Html.text title ]
@@ -2161,7 +928,7 @@ copyableCode model title text =
                 , Html.Attributes.style "height" "23px"
                 , Html.Attributes.style "padding" "0 6px"
                 , Html.Events.onClick (PressedCopy text)
-                , Html.Attributes.style "background-color" grey
+                , Html.Attributes.style "background-color" config.grey
                 ]
                 [ if Just text == model.lastCopied then
                     Html.div
@@ -2186,397 +953,12 @@ copyIcon =
     S.svg [ A.fill "none", A.viewBox "0 0 24 24", A.strokeWidth "1.5", A.stroke "currentColor" ] [ S.path [ A.strokeLinecap "round", A.strokeLinejoin "round", A.d "M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" ] [] ]
 
 
-icon : (Int -> c -> String) -> Int -> c -> Html msg
-icon fn size hex =
-    div
-        [ style "display" "inline-block"
-        , style "height" (String.fromInt size ++ "px")
-        , style "width" (String.fromInt size ++ "px")
-        , style "background-image" (fn size hex)
-        ]
-        []
-
-
-iconWarning : Int -> String -> String
-iconWarning size hex =
-    """url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='"""
-        ++ String.fromInt size
-        ++ """' height='"""
-        ++ String.fromInt size
-        ++ """' viewBox='0 0 24 24' fill='none' stroke='"""
-        ++ String.replace "#" "%23" hex
-        ++ """' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='feather feather-alert-triangle'><path d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'></path><line x1='12' y1='9' x2='12' y2='13'></line><line x1='12' y1='17' x2='12.01' y2='17'></line></svg>")"""
-
-
-iconNetwork : Int -> String -> String
-iconNetwork size hex =
-    """url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='"""
-        ++ String.fromInt size
-        ++ """' height='"""
-        ++ String.fromInt size
-        ++ """' viewBox='0 0 24 24' fill='none' stroke='"""
-        ++ String.replace "#" "%23" hex
-        ++ """' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='feather feather-zap'><polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'></polygon></svg>")"""
-
-
-iconFreeze : Int -> String -> String
-iconFreeze size hex =
-    """url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='"""
-        ++ String.fromInt size
-        ++ """' height='"""
-        ++ String.fromInt size
-        ++ """' viewBox='0 0 24 24' fill='none' stroke='"""
-        ++ String.replace "#" "%23" hex
-        ++ """' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' > <path d='M12 2v6.5M10 4l2 1 2-1M3.3 7L9 10.2m-4.9-.5L6 8.5l.1-2.2M3.3 17L9 13.7m-2.9 4L6 15.5l-1.9-1.2M12 22v-6.5m2 4.5l-2-1-2 1m5-6.2l5.6 3.3m-.7-2.8L18 15.5l-.1 2.2M20.7 7L15 10.3m2.9-4l.1 2.2 1.9 1.2M12 8.5l3 1.8v3.5l-3 1.8-3-1.8v-3.5l3-1.8z' /></svg>")"""
-
-
-iconLogs : Int -> String -> String
-iconLogs size hex =
-    """url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='"""
-        ++ String.fromInt size
-        ++ """' height='"""
-        ++ String.fromInt size
-        ++ """' viewBox='0 0 24 24' fill='none' stroke='"""
-        ++ String.replace "#" "%23" hex
-        ++ """' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='feather feather-align-justify'><line x1='21' y1='10' x2='3' y2='10'></line><line x1='21' y1='6' x2='3' y2='6'></line><line x1='21' y1='14' x2='3' y2='14'></line><line x1='21' y1='18' x2='3' y2='18'></line></svg>")"""
-
-
-iconExternalLink : Int -> String -> String
-iconExternalLink size hex =
-    """url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='"""
-        ++ String.fromInt size
-        ++ """' height='"""
-        ++ String.fromInt size
-        ++ """' viewBox='0 0 24 24' fill='none' stroke='"""
-        ++ String.replace "#" "%23" hex
-        ++ """' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='feather feather-external-link'><path d='M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'></path><polyline points='15 3 21 3 21 9'></polyline><line x1='10' y1='14' x2='21' y2='3'></line></svg>")"""
-
-
-red : String
-red =
-    "#E06C75"
-
-
-green : String
-green =
-    "#85BC7A"
-
-
-blue : String
-blue =
-    "#4196AD"
-
-
-yellow : String
-yellow =
-    "#FFCB64"
-
-
-darkYellow : String
-darkYellow =
-    "#C98F1B"
-
-
-white : String
-white =
-    "#EEE"
-
-
-grey : String
-grey =
-    "#666"
-
-
-charcoal : String
-charcoal =
-    "#2e3335"
-
-
 lightCharcoal : String
 lightCharcoal =
     "#434a4d"
 
 
-{-| -}
-localDev : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Program Flags (Model frontendModel backendModel) (Msg frontendMsg backendMsg toFrontend toBackend)
-localDev portsAndWire =
-    Browser.application
-        { init = init portsAndWire
-        , view =
-            \model ->
-                case model of
-                    WaitingOnRecordingStatus _ _ _ ->
-                        { title = "", body = [] }
 
-                    NormalModel model2 ->
-                        mapDocument portsAndWire model2 FEMsg (portsAndWire.userFrontendApp.view model2.fem)
-        , update =
-            \msg model ->
-                case model of
-                    WaitingOnRecordingStatus flags url key ->
-                        case msg of
-                            ReceivedToFrontend args ->
-                                if args.s == "LocalDev" then
-                                    waitingOnRecordingStatusUpdate portsAndWire flags url key args.b
-
-                                else
-                                    ( model, Cmd.none )
-
-                            TimedOutWaitingOnRecordingStatus ->
-                                normalInit portsAndWire flags url key |> Tuple.mapFirst NormalModel
-
-                            _ ->
-                                ( model, Cmd.none )
-
-                    NormalModel model2 ->
-                        update portsAndWire msg model2 |> Tuple.mapFirst NormalModel
-        , subscriptions =
-            \model ->
-                case model of
-                    WaitingOnRecordingStatus _ _ _ ->
-                        portsAndWire.receive_ToFrontend ReceivedToFrontend
-
-                    NormalModel model2 ->
-                        subscriptions portsAndWire model2
-        , onUrlRequest = \ureq -> FEMsg (portsAndWire.userFrontendApp.onUrlRequest ureq)
-        , onUrlChange = \url -> FENewUrl url
-        }
-
-
-waitingOnRecordingStatusUpdate : Config frontendMsg backendMsg toFrontend toBackend frontendModel backendModel -> Flags -> Url -> Key -> Bytes -> ( Model frontendModel backendModel, Cmd (Msg frontendMsg backendMsg toFrontend toBackend) )
-waitingOnRecordingStatusUpdate portsAndWire flags url key payload =
-    Bytes.Decode.decode
-        (Bytes.Decode.unsignedInt8
-            |> Bytes.Decode.andThen
-                (\flag ->
-                    case flag of
-                        4 ->
-                            -- Response if there is a recording in progress
-                            Bytes.Decode.map
-                                (\text ->
-                                    case Json.Decode.decodeString (Json.Decode.array fullEventDecoder) text of
-                                        Ok history ->
-                                            let
-                                                ( { devbar } as model, cmd ) =
-                                                    normalInit portsAndWire flags url key
-                                            in
-                                            ( { model
-                                                | devbar =
-                                                    { devbar
-                                                        | isRecordingEvents =
-                                                            Just { history = history, recordingStopped = False }
-                                                    }
-                                              }
-                                                |> NormalModel
-                                            , Cmd.batch [ cmd, recordingInitCmds portsAndWire ]
-                                            )
-
-                                        Err _ ->
-                                            normalInit portsAndWire flags url key |> Tuple.mapFirst NormalModel
-                                )
-                                decodeString
-
-                        5 ->
-                            -- Response if there is no recording in progress
-                            normalInit portsAndWire flags url key
-                                |> Tuple.mapFirst NormalModel
-                                |> Bytes.Decode.succeed
-
-                        _ ->
-                            Bytes.Decode.succeed ( WaitingOnRecordingStatus flags url key, Cmd.none )
-                )
-        )
-        payload
-        |> Maybe.withDefault ( WaitingOnRecordingStatus flags url key, Cmd.none )
-
-
-delayMsg : Float -> b -> Cmd b
-delayMsg time msg =
-    Process.sleep time |> Task.perform (always msg)
-
-
-trigger : a -> Cmd a
-trigger msg =
-    Process.sleep 0 |> Task.perform (always msg)
-
-
-required : String -> Json.Decoder a -> Json.Decoder (a -> b) -> Json.Decoder b
-required key valDecoder decoder =
-    custom (Json.field key valDecoder) decoder
-
-
-custom : Json.Decoder a -> Json.Decoder (a -> b) -> Json.Decoder b
-custom =
-    Json.map2 (|>)
-
-
-getLatestVersion : LD.Posix -> Task LD.HttpError VersionCheck
-getLatestVersion time =
-    LD.task
-        { method = "GET"
-        , headers = []
-        , url = "http://localhost:8001/https://static.lamdera.com/bin/latest-version.json"
-        , body = LD.emptyBody
-        , resolver = LD.stringResolver <| LD.handleJsonResponse <| decodeVersionCheck time
-        , timeout = Nothing
-        }
-
-
-decodeVersionCheck : LD.Posix -> Json.Decoder VersionCheck
-decodeVersionCheck time =
-    Json.decoderString
-        |> Json.map (\v -> VersionCheckSucceeded v time)
-
-
-getAppSnapshotFilenames : String -> Task LD.HttpError (List String)
-getAppSnapshotFilenames appId =
-    LD.task
-        { method = "GET"
-        , headers = []
-
-        -- , url = "http://apps.lamdera.com:8080/v1/app/" ++ appId ++ "/snapshots"
-        -- , url = "http://localhost:8080/v1/app/" ++ appId ++ "/snapshots"
-        , url = "/_x/list/snapshots"
-        , body = LD.emptyBody
-        , resolver = LD.stringResolver <| LD.handleJsonResponse <| Json.decoderList Json.decoderString
-        , timeout = Nothing
-        }
-        |> Task.map List.sort
-
-
-getAppSnapshot : String -> Task LD.HttpError ( Wire.Bytes, Int )
-getAppSnapshot snapshot =
-    Debug.todo "neutered"
-
-
-
--- let
---     token =
---         "XXXXX"
---     ( appId, version ) =
---         snapshot
---             |> String.split "_"
---             |> (\res ->
---                     case res of
---                         appId_ :: version_ :: _ ->
---                             ( appId_
---                             , version_
---                                 |> String.replace "v" ""
---                                 |> String.toInt
---                                 |> Debug.log "parsed version as:"
---                                 |> Maybe.withDefault -1
---                             )
---                         _ ->
---                             Debug.todo ("impossible... bad snapshot name: " ++ snapshot)
---                )
--- in
--- LD.task
---     { method = "GET"
---     , headers = []
---     -- , url = "http://apps.lamdera.com:8080/v1/app/" ++ appId ++ "/snapshot-retrieve/" ++ snapshot ++ "/" ++ token
---     -- , url = "http://localhost:8080/v1/app/" ++ appId ++ "/snapshot-retrieve/" ++ snapshot ++ "/" ++ token
---     , url = "/_x/read/" ++ "snapshots/" ++ snapshot
---     , body = LD.emptyBody
---     , resolver = Http.bytesResolver handleBytesResponse
---     , timeout = Nothing
---     }
---     |> Task.map (\bytes -> ( bytes, version ))
-
-
-getAppSnapshotLegacy : String -> String -> Task LD.HttpError ( List Int, Int )
-getAppSnapshotLegacy appId snapshot =
-    Debug.todo "neutered getAppSnapshotLegacy"
-
-
-
--- let
---     token =
---         "XXXXX"
---
---     version =
---         snapshot
---             |> String.replace (appId ++ "-v") ""
---             |> String.split "-"
---             |> List.head
---             |> Maybe.andThen String.toInt
---             |> Debug.log "parsed version as:"
---             |> Maybe.withDefault -1
--- in
--- LD.task
---     { method = "GET"
---     , headers = []
---     , url = "http://apps.lamdera.com:8080/v1/app/" ++ appId ++ "/snapshot-retrieve-legacy/" ++ snapshot ++ "/" ++ token
---
---     -- , url = "http://localhost:8080/v1/app/" ++ appId ++ "/snapshot-retrieve-legacy/" ++ snapshot ++ "/" ++ token
---     , body = LD.emptyBody
---     , resolver =
---         LD.stringResolver
---             (\response ->
---                 case response of
---                     Http.BadUrl_ urlString ->
---                         Err <| Http.BadUrl urlString
---
---                     Http.Timeout_ ->
---                         Err <| Http.Timeout
---
---                     Http.NetworkError_ ->
---                         Err <| Http.NetworkError
---
---                     Http.BadStatus_ metadata body ->
---                         -- @TODO use metadata better here
---                         Err <| Http.BadStatus metadata.statusCode
---
---                     Http.GoodStatus_ metadata text ->
---                         case Json.decodeString Json.decoderString text of
---                             Ok s ->
---                                 case Json.decodeString (Json.decoderList Json.decoderInt) s of
---                                     Ok x ->
---                                         Ok x
---
---                                     Err err ->
---                                         Err <| Http.BadBody <| "Failed to decode response: " ++ Json.errorToString err
---
---                             Err _ ->
---                                 Err <| Http.BadBody <| "Failed to decode response"
---             )
---     , timeout = Nothing
---     }
---     |> Task.map (\v -> ( v, version ))
-
-
-showVersion ( major, minor, patch ) =
-    [ major, minor, patch ] |> List.map String.fromInt |> String.join "."
-
-
-justs =
-    List.foldr
-        (\v acc ->
-            case v of
-                Just el ->
-                    el :: acc
-
-                Nothing ->
-                    acc
-        )
-        []
-
-
-
--- {-| Helper for handling a Bytes response
--- -}
--- handleBytesResponse : Http.Response Bytes -> Result Http.Error Bytes
--- handleBytesResponse response =
---     case response of
---         Http.BadUrl_ url ->
---             Err (Http.BadUrl url)
---         Http.Timeout_ ->
---             Err Http.Timeout
---         Http.BadStatus_ { statusCode } _ ->
---             Err (Http.BadStatus statusCode)
---         Http.NetworkError_ ->
---             Err Http.NetworkError
---         Http.GoodStatus_ _ bytes ->
---             Ok bytes
 --- Program test generator ---
 
 
@@ -3591,24 +1973,24 @@ sansSerifFont =
     Html.Attributes.style "font-family" "sans-serif"
 
 
-backgroundColor =
-    Html.Attributes.style "background-color" charcoal
+backgroundColor config =
+    Html.Attributes.style "background-color" config.charcoal
 
 
-fontColor =
-    Html.Attributes.style "color" white
+fontColor config =
+    Html.Attributes.style "color" config.white
 
 
-testEditorView : RecordingState -> LoadedData -> Html TestEditorMsg
-testEditorView recording model =
+testEditorView : ViewConfig -> RecordingState -> LoadedData -> Html TestEditorMsg
+testEditorView config recording model =
     case model.parsedCode of
         WaitingOnFile ->
             Html.div
-                [ Html.Attributes.style "height" "100vh", backgroundColor ]
+                [ Html.Attributes.style "height" "100vh", backgroundColor config ]
                 [ Html.div
                     [ Html.Attributes.style "padding" "16px"
                     , sansSerifFont
-                    , fontColor
+                    , fontColor config
                     ]
                     [ Html.text "Loading tests..." ]
                 ]
@@ -3637,8 +2019,8 @@ testEditorView recording model =
                 , Html.Attributes.style "height" "100vh"
                 , Html.Attributes.style "overflow" "auto"
                 , sansSerifFont
-                , backgroundColor
-                , fontColor
+                , backgroundColor config
+                , fontColor config
                 ]
                 [ Html.div
                     [ Html.Attributes.style "width" "300px"
@@ -3656,7 +2038,7 @@ testEditorView recording model =
                         , Html.Attributes.style "border-width" "0 0 1px 0"
                         ]
                         [ Html.text "Recorded events" ]
-                    , eventsView eventsList
+                    , eventsView config eventsList
                     ]
                 , Html.div
                     [ Html.Attributes.style "display" "flex"
@@ -3709,11 +2091,11 @@ testEditorView recording model =
 
         ParseFailed error ->
             Html.div
-                [ Html.Attributes.style "height" "100vh", backgroundColor ]
+                [ Html.Attributes.style "height" "100vh", backgroundColor config ]
                 [ Html.div
                     [ Html.Attributes.style "padding" "16px"
                     , sansSerifFont
-                    , fontColor
+                    , fontColor config
                     , Html.Attributes.style "display" "flex"
                     ]
                     [ Html.div
@@ -3806,8 +2188,8 @@ simpleCheckbox msg text value =
         ]
 
 
-eventsView : List Event -> Html TestEditorMsg
-eventsView events =
+eventsView : ViewConfig -> List Event -> Html TestEditorMsg
+eventsView config events =
     case events of
         [] ->
             Html.i [ Html.Attributes.style "padding" "16px" ] [ Html.text "No events were recorded" ]
@@ -3936,7 +2318,7 @@ eventsView events =
                         in
                         case maybeText of
                             Just text ->
-                                eventButton text index event |> Just
+                                eventButton config text index event |> Just
 
                             Nothing ->
                                 Nothing
@@ -3952,8 +2334,8 @@ eventsView events =
                     ]
 
 
-eventButton : String -> Int -> Event -> Html TestEditorMsg
-eventButton text index event =
+eventButton : ViewConfig -> String -> Int -> Event -> Html TestEditorMsg
+eventButton config text index event =
     Html.button
         [ Html.Attributes.style "border" "none"
         , Html.Attributes.style "background-color" "transparent"
@@ -3970,7 +2352,7 @@ eventButton text index event =
                 "#787c7c"
 
              else
-                white
+                config.white
             )
         , Html.Attributes.style "display" "flex"
         , Html.Attributes.style "align-items" "start"
