@@ -154,3 +154,6 @@ map mapFunc subscription =
 
         Effect.Internal.HttpTrack string msg ->
             Effect.Internal.HttpTrack string (msg >> mapFunc)
+
+        Effect.Internal.WebsocketListen connection onData onClose ->
+            Effect.Internal.WebsocketListen connection (onData >> mapFunc) (onClose >> mapFunc)

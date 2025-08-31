@@ -28,7 +28,8 @@
         "Effect.WebGL.Settings.Blend",
         "Effect.WebGL.Settings.DepthTest",
         "Effect.WebGL.Settings.StencilTest",
-        "Effect.WebGL.Texture"
+        "Effect.WebGL.Texture",
+        "Effect.Websocket"
     ],
     "elm-version": "0.19.0 <= v < 0.20.0",
     "dependencies": {

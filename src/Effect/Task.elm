@@ -438,3 +438,12 @@ onError f task =
 
         EndXrSession function ->
             EndXrSession (function >> onError f)
+
+        WebsocketCreateHandle string function ->
+            WebsocketCreateHandle string (function >> onError f)
+
+        WebsocketSendString websocketConnection string function ->
+            WebsocketSendString websocketConnection string (function >> onError f)
+
+        WebsocketClose websocketConnection function ->
+            WebsocketClose websocketConnection (function >> onError f)
