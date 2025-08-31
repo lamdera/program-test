@@ -99,6 +99,7 @@ import Test.Runner
 import Time
 import Url exposing (Url)
 import WebGLFix.Texture
+import Websocket
 
 
 {-| Configure the end to end test before starting it
@@ -3776,6 +3777,15 @@ runTask maybeClientId state task =
         EndXrSession function ->
             function () |> runTask maybeClientId state
 
+        WebsocketCreateHandle url function ->
+            function (Websocket.Connection "" url) |> runTask maybeClientId state
+
+        WebsocketSendString _ _ function ->
+            function (Ok ()) |> runTask maybeClientId state
+
+        WebsocketClose _ function ->
+            function () |> runTask maybeClientId state
+
 
 handleHttpResponseWithTestError :
     Maybe ClientId
@@ -3932,12 +3942,13 @@ viewTest :
     -> Int
     -> Int
     -> Int
+    -> OverlayPosition
     -> Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     ->
         ( Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         )
-viewTest test index stepIndex timelineIndex (Model model) =
+viewTest test index stepIndex timelineIndex position (Model model) =
     let
         state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         state =
@@ -3959,7 +3970,7 @@ viewTest test index stepIndex timelineIndex (Model model) =
             , timelines = timelines
             , timelineIndex = clamp 0 (Array.length timelines - 1) timelineIndex
             , stepIndex = stepIndex2
-            , overlayPosition = Bottom
+            , overlayPosition = position
             , showModel = False
             , collapsedFields = SeqDict.empty
             , buttonCursor = Nothing
@@ -4019,9 +4030,9 @@ update config msg (Model model) =
                         Just test ->
                             let
                                 _ =
-                                    writeLocalStorage (getTestName test) 0 0
+                                    writeLocalStorage (getTestName test) 0 0 Bottom
                             in
-                            viewTest test index 0 0 (Model model)
+                            viewTest test index 0 0 Bottom (Model model)
 
                         Nothing ->
                             ( Model model, Cmd.none )
@@ -4061,12 +4072,24 @@ update config msg (Model model) =
                                 , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
                                 )
                         maybeModelAndCmd =
-                            case Lamdera.Debug.debugR currentTestLocalStorage { name = "", index = 0, stepIndex = 0, timelineIndex = 0 } of
-                                Just { name, stepIndex, timelineIndex } ->
+                            case Lamdera.Debug.debugR currentTestLocalStorage { name = "", index = 0, stepIndex = 0, timelineIndex = 0, isTopPosition = False } of
+                                Just { name, stepIndex, timelineIndex, isTopPosition } ->
                                     List.indexedMap
                                         (\testIndex test ->
                                             if name == getTestName test then
-                                                viewTest test testIndex stepIndex timelineIndex (Model model) |> Just
+                                                viewTest
+                                                    test
+                                                    testIndex
+                                                    stepIndex
+                                                    timelineIndex
+                                                    (if isTopPosition then
+                                                        Top
+
+                                                     else
+                                                        Bottom
+                                                    )
+                                                    (Model model)
+                                                    |> Just
 
                                             else
                                                 Nothing
@@ -4091,17 +4114,23 @@ update config msg (Model model) =
         PressedToggleOverlayPosition ->
             updateCurrentTest
                 (\currentTest ->
-                    ( { currentTest
-                        | overlayPosition =
+                    let
+                        newPosition =
                             case currentTest.overlayPosition of
                                 Top ->
                                     Bottom
 
                                 Bottom ->
                                     Top
-                      }
-                    , Cmd.none
-                    )
+
+                        _ =
+                            writeLocalStorage
+                                currentTest.testName
+                                currentTest.stepIndex
+                                currentTest.timelineIndex
+                                newPosition
+                    in
+                    ( { currentTest | overlayPosition = newPosition }, Cmd.none )
                 )
                 (Model model)
 
@@ -4174,7 +4203,11 @@ update config msg (Model model) =
                                     currentTest.timelineIndex - 1 |> max 0
 
                                 _ =
-                                    writeLocalStorage currentTest.testName currentTest.stepIndex timelineIndex
+                                    writeLocalStorage
+                                        currentTest.testName
+                                        currentTest.stepIndex
+                                        timelineIndex
+                                        currentTest.overlayPosition
                             in
                             ( { currentTest | timelineIndex = timelineIndex }, Cmd.none )
 
@@ -4184,7 +4217,11 @@ update config msg (Model model) =
                                     currentTest.timelineIndex + 1 |> min (Array.length currentTest.timelines - 1)
 
                                 _ =
-                                    writeLocalStorage currentTest.testName currentTest.stepIndex timelineIndex
+                                    writeLocalStorage
+                                        currentTest.testName
+                                        currentTest.stepIndex
+                                        timelineIndex
+                                        currentTest.overlayPosition
                             in
                             ( { currentTest | timelineIndex = timelineIndex }, Cmd.none )
                 )
@@ -4318,11 +4355,22 @@ writeLocalStorage :
     String
     -> Int
     -> Int
-    -> { name : String, stepIndex : Int, timelineIndex : Int }
-writeLocalStorage testName stepIndex timelineIndex =
+    -> OverlayPosition
+    -> { name : String, stepIndex : Int, timelineIndex : Int, isTopPosition : Bool }
+writeLocalStorage testName stepIndex timelineIndex position =
     Lamdera.Debug.debugS
         currentTestLocalStorage
-        { name = testName, stepIndex = stepIndex, timelineIndex = timelineIndex }
+        { name = testName
+        , stepIndex = stepIndex
+        , timelineIndex = timelineIndex
+        , isTopPosition =
+            case position of
+                Top ->
+                    True
+
+                Bottom ->
+                    False
+        }
 
 
 {-| -}
@@ -4345,7 +4393,7 @@ stepTo stepIndex currentTest =
                     arrayFindIndex newTimeline currentTest.timelines |> Maybe.withDefault currentTest.timelineIndex
 
                 _ =
-                    writeLocalStorage currentTest.testName stepIndex timelineIndex
+                    writeLocalStorage currentTest.testName stepIndex timelineIndex currentTest.overlayPosition
             in
             ( { currentTest | stepIndex = stepIndex, timelineIndex = timelineIndex }
             , Cmd.batch
@@ -5021,7 +5069,7 @@ overviewContainer body =
         , darkBackground
         , Html.Attributes.style "height" "100vh"
         ]
-        (titleText "End to end test viewer" :: body)
+        (titleText "End-to-end test viewer" :: body)
 
 
 {-| -}

@@ -25,7 +25,7 @@ import Bytes.Encode
 import Duration
 import Effect.Browser.Navigation
 import Effect.Command exposing (BackendOnly, Command, FrontendOnly)
-import Effect.Internal exposing (File(..), NavigationKey(..))
+import Effect.Internal exposing (File(..), NavigationKey(..), Subscription(..), Visibility(..))
 import Effect.Subscription exposing (Subscription)
 import File
 import File.Download
@@ -38,6 +38,7 @@ import Time
 import Url
 import WebGLFix
 import WebGLFix.Texture
+import Websocket
 
 
 {-| Create a Lamdera frontend application
@@ -76,7 +77,7 @@ frontend toBackend userApp =
         \msg model ->
             userApp.updateFromBackend msg model
                 |> Tuple.mapSecond (toCmd (\_ -> Cmd.none) (\_ _ -> Cmd.none) toBackend)
-    , subscriptions = userApp.subscriptions >> Effect.Internal.toSub
+    , subscriptions = userApp.subscriptions >> toSub
     , onUrlRequest = userApp.onUrlRequest
     , onUrlChange = userApp.onUrlChange
     }
@@ -110,7 +111,7 @@ backend broadcastCmd toFrontend userApp =
                 msg
                 model
                 |> Tuple.mapSecond (toCmd broadcastCmd toFrontend (\_ -> Cmd.none))
-    , subscriptions = userApp.subscriptions >> Effect.Internal.toSub
+    , subscriptions = userApp.subscriptions >> toSub
     }
 
 
@@ -532,3 +533,92 @@ toTask simulatedTask =
 
         Effect.Internal.EndXrSession function ->
             WebGLFix.endXrSession |> Task.andThen (\result -> toTask (function result))
+
+        Effect.Internal.WebsocketCreateHandle url function ->
+            Websocket.createHandle url
+                |> Task.andThen (\result -> toTask (function result))
+
+        Effect.Internal.WebsocketSendString connection data function ->
+            Websocket.sendString connection data
+                |> Task.map Ok
+                |> Task.onError (Err >> Task.succeed)
+                |> Task.andThen (\result -> toTask (function result))
+
+        Effect.Internal.WebsocketClose connection function ->
+            Websocket.close connection
+                |> Task.andThen (\result -> toTask (function result))
+
+
+toSub : Subscription restriction msg -> Sub msg
+toSub sub =
+    case sub of
+        SubBatch subs ->
+            List.map toSub subs |> Sub.batch
+
+        SubNone ->
+            Sub.none
+
+        TimeEvery duration msg ->
+            Time.every (Duration.inMilliseconds duration) msg
+
+        OnAnimationFrame msg ->
+            Browser.Events.onAnimationFrame msg
+
+        OnAnimationFrameDelta msg ->
+            Browser.Events.onAnimationFrameDelta (Duration.milliseconds >> msg)
+
+        OnKeyPress decoder ->
+            Browser.Events.onKeyPress decoder
+
+        OnKeyDown decoder ->
+            Browser.Events.onKeyDown decoder
+
+        OnKeyUp decoder ->
+            Browser.Events.onKeyUp decoder
+
+        OnClick decoder ->
+            Browser.Events.onClick decoder
+
+        OnMouseMove decoder ->
+            Browser.Events.onMouseMove decoder
+
+        OnMouseDown decoder ->
+            Browser.Events.onMouseDown decoder
+
+        OnMouseUp decoder ->
+            Browser.Events.onMouseUp decoder
+
+        OnVisibilityChange msg ->
+            Browser.Events.onVisibilityChange
+                (\visibility ->
+                    case visibility of
+                        Browser.Events.Visible ->
+                            msg Visible
+
+                        Browser.Events.Hidden ->
+                            msg Hidden
+                )
+
+        OnResize msg ->
+            Browser.Events.onResize msg
+
+        SubPort _ portFunction _ ->
+            portFunction
+
+        OnConnect msg ->
+            Lamdera.onConnect
+                (\sessionId clientId ->
+                    msg (Effect.Internal.SessionId sessionId) (Effect.Internal.ClientId clientId)
+                )
+
+        OnDisconnect msg ->
+            Lamdera.onDisconnect
+                (\sessionId clientId ->
+                    msg (Effect.Internal.SessionId sessionId) (Effect.Internal.ClientId clientId)
+                )
+
+        HttpTrack string function ->
+            Http.track string function
+
+        WebsocketListen connection onData onClose ->
+            Websocket.listen connection onData onClose
