@@ -1,26 +1,10 @@
-module Effect.LocalDev exposing
-    ( DevBar
-    , InitConfig
-    , Model
-    , Msg
-    , SubscriptionsConfig
-    , UpdateConfig
-    , ViewConfig
-    , fileReadWriteErrorView
-    , hideFreezeAndResetButtons
-    , init
-    , initDevBar
-    , isFullyInitialized
-    , maybeTestEditorView
-    , onConnection
-    , onDisconnection
-    , receivedToFrontend
-    , recordingButton
-    , recordingPill
-    , resetDebugStoreBE
-    , subscriptions
-    , update
-    )
+module Effect.LocalDev exposing (DevBar, InitConfig, Model, Msg, SubscriptionsConfig, UpdateConfig, ViewConfig, fileReadWriteErrorView, hideFreezeAndResetButtons, init, initDevBar, isFullyInitialized, maybeTestEditorView, onConnection, onDisconnection, receivedToFrontend, recordingButton, recordingPill, resetDebugStoreBE, subscriptions, update)
+
+{-| Ignore this module, for internal use only.
+
+@docs DevBar, InitConfig, Model, Msg, SubscriptionsConfig, UpdateConfig, ViewConfig, fileReadWriteErrorView, hideFreezeAndResetButtons, init, initDevBar, isFullyInitialized, maybeTestEditorView, onConnection, onDisconnection, receivedToFrontend, recordingButton, recordingPill, resetDebugStoreBE, subscriptions, update
+
+-}
 
 import Array exposing (Array)
 import Browser.Dom
@@ -98,6 +82,7 @@ type alias NormalModelData =
     }
 
 
+{-| -}
 type alias DevBar =
     { isRecordingEvents : Maybe RecordingState
     }
@@ -113,6 +98,7 @@ type alias RecordingState =
 -- INIT
 
 
+{-| -}
 type alias InitConfig msg =
     { clientId : ClientId
     , devBar : DevBar
@@ -125,11 +111,13 @@ type alias InitConfig msg =
     }
 
 
+{-| -}
 initDevBar : DevBar
 initDevBar =
     { isRecordingEvents = Nothing }
 
 
+{-| -}
 init : InitConfig msg -> ( Model msg, Cmd msg )
 init config =
     if config.isLeader then
@@ -208,6 +196,7 @@ recordingInitCmds config =
         ]
 
 
+{-| -}
 isFullyInitialized : Model msg -> Bool
 isFullyInitialized model =
     case model of
@@ -222,6 +211,7 @@ isFullyInitialized model =
 -- UPDATE
 
 
+{-| -}
 type alias UpdateConfig msg model =
     { clientId : ClientId
     , copyToClipboard : String -> Cmd msg
@@ -243,6 +233,7 @@ type alias UpdateConfig msg model =
     }
 
 
+{-| -}
 onConnection : UpdateConfig msg model -> ConnectionMsg -> Model msg -> (model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 onConnection config msg model localDevHandler localDevModel =
     case model of
@@ -270,6 +261,7 @@ onConnection config msg model localDevHandler localDevModel =
                 ( localDevModel, Cmd.none )
 
 
+{-| -}
 onDisconnection : UpdateConfig msg model -> ConnectionMsg -> Model msg -> (model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 onDisconnection config msg model localDevHandler localDevModel =
     case model of
@@ -288,6 +280,7 @@ onDisconnection config msg model localDevHandler localDevModel =
                 |> localDevHandler
 
 
+{-| -}
 receivedToFrontend : UpdateConfig msg model -> WireMsg -> Model msg -> (model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 receivedToFrontend config msg model localDevHandler localDevModel =
     case model of
@@ -513,6 +506,7 @@ broadcastEvent config eventText =
         }
 
 
+{-| -}
 resetDebugStoreBE : UpdateConfig msg model -> model -> model
 resetDebugStoreBE config localDevModel =
     localDevModel
@@ -520,6 +514,7 @@ resetDebugStoreBE config localDevModel =
         |> config.debugSaveDevBar
 
 
+{-| -}
 update : UpdateConfig msg model -> Msg -> Model msg -> model -> ( model, Cmd msg )
 update config msg model localDevModel =
     case model of
@@ -748,6 +743,7 @@ delayMsg time msg =
 -- SUBSCRIPTIONS
 
 
+{-| -}
 type alias SubscriptionsConfig msg =
     { devBar : DevBar
     , gotEvent : (Json.Value -> msg) -> Sub msg
@@ -756,6 +752,7 @@ type alias SubscriptionsConfig msg =
     }
 
 
+{-| -}
 subscriptions : SubscriptionsConfig msg -> Model msg -> Sub msg
 subscriptions config model =
     case model of
@@ -787,6 +784,7 @@ normalSubscriptions config =
 -- VIEW
 
 
+{-| -}
 type alias ViewConfig =
     { charcoal : String
     , grey : String
@@ -818,6 +816,7 @@ eyeClosed =
         [ S.path [ A.d "M228,175a8,8,0,0,1-10.92-3l-19-33.2A123.23,123.23,0,0,1,162,155.46l5.87,35.22a8,8,0,0,1-6.58,9.21A8.4,8.4,0,0,1,160,200a8,8,0,0,1-7.88-6.69l-5.77-34.58a133.06,133.06,0,0,1-36.68,0l-5.77,34.58A8,8,0,0,1,96,200a8.4,8.4,0,0,1-1.32-.11,8,8,0,0,1-6.58-9.21L94,155.46a123.23,123.23,0,0,1-36.06-16.69L39,172A8,8,0,1,1,25.06,164l20-35a153.47,153.47,0,0,1-19.3-20A8,8,0,1,1,38.22,99c16.6,20.54,45.64,45,89.78,45s73.18-24.49,89.78-45A8,8,0,1,1,230.22,109a153.47,153.47,0,0,1-19.3,20l20,35A8,8,0,0,1,228,175Z" ] [] ]
 
 
+{-| -}
 recordingPill : DevBar -> Maybe Msg
 recordingPill devBar =
     if devBar.isRecordingEvents /= Nothing then
@@ -827,6 +826,7 @@ recordingPill devBar =
         Nothing
 
 
+{-| -}
 recordingButton : DevBar -> (Msg -> Html msg) -> (Msg -> Html msg) -> Html msg
 recordingButton devBar stopFun startFun =
     case devBar.isRecordingEvents of
@@ -837,11 +837,13 @@ recordingButton devBar stopFun startFun =
             startFun PressedStartRecording
 
 
+{-| -}
 hideFreezeAndResetButtons : DevBar -> Bool
 hideFreezeAndResetButtons devBar =
     devBar.isRecordingEvents /= Nothing
 
 
+{-| -}
 maybeTestEditorView : ViewConfig -> DevBar -> Model msg -> Maybe (List (Html Msg))
 maybeTestEditorView config devBar model =
     case model of
@@ -863,6 +865,7 @@ maybeTestEditorView config devBar model =
                     )
 
 
+{-| -}
 fileReadWriteErrorView : ViewConfig -> Model msg -> List (Html Msg)
 fileReadWriteErrorView config model =
     case model of
