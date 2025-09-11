@@ -932,9 +932,7 @@ type alias FrontendState toBackend frontendMsg frontendModel toFrontend =
     , pendingEffects : Array (FrontendPendingEffect toBackend frontendMsg)
     , toFrontend : List (ToFrontendData toFrontend)
     , timers : SeqDict Duration { startTime : Time.Posix }
-    , url : Url
-    , backUrls : List Url
-    , forwardUrls : List Url
+    , navigation : NavigationHistory
     , windowSize : { width : Int, height : Int }
     }
 
@@ -1515,9 +1513,11 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                                             , pendingEffects = Array.fromList [ { cmds = cmd, stepIndex = Array.length state.history } ]
                                             , toFrontend = []
                                             , timers = getTimers subscriptions |> SeqDict.map (\_ _ -> { startTime = currentTime state })
-                                            , url = Maybe.withDefault state.domain maybeUrl
-                                            , backUrls = []
-                                            , forwardUrls = []
+                                            , navigation =
+                                                { url = Maybe.withDefault state.domain maybeUrl
+                                                , backUrls = []
+                                                , forwardUrls = []
+                                                }
                                             , windowSize = windowSize
                                             }
                                             state.frontends
@@ -1633,7 +1633,6 @@ type EventType toBackend frontendMsg frontendModel toFrontend backendMsg backend
 type FailedEffect
     = PushUrlFailed
     | ReplaceUrlFailed
-    | NavigationLoadFailed
     | HttpRequestFailed
     | FileSelectFailed
     | FilesSelectFailed
@@ -1883,7 +1882,7 @@ addEvent eventType maybeError state =
                         (\_ a ->
                             { model = a.model
                             , sessionId = a.sessionId
-                            , url = a.url
+                            , url = a.navigation.url
                             , windowSize = a.windowSize
                             }
                         )
@@ -2392,17 +2391,23 @@ navigateForwardAction clientId delay =
                         case SeqDict.get clientId state.frontends of
                             Just frontend ->
                                 let
-                                    frontend2 : FrontendState toBackend frontendMsg frontendModel toFrontend
-                                    frontend2 =
-                                        navigateForward 1 frontend
+                                    navigation : NavigationHistory
+                                    navigation =
+                                        navigateForward 1 frontend.navigation
                                 in
                                 handleFrontendUpdate clientId
                                     (currentTime state)
-                                    (state.frontendApp.onUrlChange frontend2.url)
+                                    (state.frontendApp.onUrlChange navigation.url)
                                     (addEvent
                                         (NavigateForward clientId)
                                         Nothing
-                                        { state | frontends = SeqDict.insert clientId frontend2 state.frontends }
+                                        { state
+                                            | frontends =
+                                                SeqDict.insert
+                                                    clientId
+                                                    { frontend | navigation = navigation }
+                                                    state.frontends
+                                        }
                                     )
 
                             Nothing ->
@@ -2421,17 +2426,23 @@ navigateBackAction clientId delay =
                         case SeqDict.get clientId state.frontends of
                             Just frontend ->
                                 let
-                                    frontend2 : FrontendState toBackend frontendMsg frontendModel toFrontend
-                                    frontend2 =
-                                        navigateBack 1 frontend
+                                    navigation : NavigationHistory
+                                    navigation =
+                                        navigateBack 1 frontend.navigation
                                 in
                                 handleFrontendUpdate clientId
                                     (currentTime state)
-                                    (state.frontendApp.onUrlChange frontend2.url)
+                                    (state.frontendApp.onUrlChange navigation.url)
                                     (addEvent
                                         (NavigateBack clientId)
                                         Nothing
-                                        { state | frontends = SeqDict.insert clientId frontend2 state.frontends }
+                                        { state
+                                            | frontends =
+                                                SeqDict.insert
+                                                    clientId
+                                                    { frontend | navigation = navigation }
+                                                    state.frontends
+                                        }
                                     )
 
                             Nothing ->
@@ -3214,50 +3225,51 @@ clearFrontendEffects clientId state =
     }
 
 
-navigateBack :
-    Int
-    -> FrontendState toBackend frontendMsg frontendModel toFrontend
-    -> FrontendState toBackend frontendMsg frontendModel toFrontend
-navigateBack steps frontend =
+type alias NavigationHistory =
+    { backUrls : List Url
+    , url : Url
+    , forwardUrls : List Url
+    }
+
+
+navigateBack : Int -> NavigationHistory -> NavigationHistory
+navigateBack steps navigation =
     if steps > 0 then
-        case frontend.backUrls of
+        case navigation.backUrls of
             head :: rest ->
                 navigateBack
                     (steps - 1)
-                    { frontend
+                    { navigation
                         | url = head
                         , backUrls = rest
-                        , forwardUrls = head :: frontend.forwardUrls
+                        , forwardUrls = head :: navigation.forwardUrls
                     }
 
             [] ->
-                frontend
+                navigation
 
     else
-        frontend
+        navigation
 
 
-navigateForward :
-    Int
-    -> FrontendState toBackend frontendMsg frontendModel toFrontend
-    -> FrontendState toBackend frontendMsg frontendModel toFrontend
-navigateForward steps frontend =
+navigateForward : Int -> NavigationHistory -> NavigationHistory
+navigateForward steps navigation =
     if steps > 0 then
-        case frontend.forwardUrls of
+        case navigation.forwardUrls of
             head :: rest ->
                 navigateForward
                     (steps - 1)
-                    { frontend
+                    { navigation
                         | url = head
                         , forwardUrls = rest
-                        , backUrls = head :: frontend.backUrls
+                        , backUrls = head :: navigation.backUrls
                     }
 
             [] ->
-                frontend
+                navigation
 
     else
-        frontend
+        navigation
 
 
 {-| -}
@@ -3286,31 +3298,86 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
             }
 
         NavigationPushUrl _ urlText ->
-            handleUrlChange PushUrlFailed urlText clientId state
+            case normalizeUrl state.domain urlText of
+                Just url ->
+                    let
+                        state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                        state2 =
+                            handleFrontendUpdate clientId (currentTime state) (state.frontendApp.onUrlChange url) state
+                    in
+                    { state2
+                        | frontends =
+                            SeqDict.updateIfExists clientId
+                                (\frontend ->
+                                    let
+                                        navigation =
+                                            frontend.navigation
+                                    in
+                                    { frontend
+                                        | navigation =
+                                            { navigation
+                                                | url = url
+                                                , backUrls = navigation.url :: navigation.backUrls
+                                            }
+                                    }
+                                )
+                                state2.frontends
+                    }
+
+                Nothing ->
+                    addEvent (EffectFailedEvent (Just clientId) PushUrlFailed) (InvalidBrowserNavigationUrl urlText |> Just) state
 
         NavigationReplaceUrl _ urlText ->
-            handleUrlChange ReplaceUrlFailed urlText clientId state
+            case normalizeUrl state.domain urlText of
+                Just url ->
+                    let
+                        state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                        state2 =
+                            handleFrontendUpdate clientId (currentTime state) (state.frontendApp.onUrlChange url) state
+                    in
+                    { state2
+                        | frontends =
+                            SeqDict.updateIfExists clientId
+                                (\frontend ->
+                                    let
+                                        navigation =
+                                            frontend.navigation
+                                    in
+                                    { frontend | navigation = { navigation | url = url } }
+                                )
+                                state2.frontends
+                    }
+
+                Nothing ->
+                    addEvent (EffectFailedEvent (Just clientId) ReplaceUrlFailed) (InvalidBrowserNavigationUrl urlText |> Just) state
 
         NavigationLoad urlText ->
-            handleUrlChange NavigationLoadFailed urlText clientId state
+            -- TODO
+            state
 
         NavigationBack _ steps ->
             case SeqDict.get clientId state.frontends of
                 Just frontend ->
                     let
-                        frontend2 : FrontendState toBackend frontendMsg frontendModel toFrontend
-                        frontend2 =
-                            navigateBack steps frontend
+                        navigation : NavigationHistory
+                        navigation =
+                            navigateBack steps frontend.navigation
 
                         state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
                         state2 =
                             handleFrontendUpdate
                                 clientId
                                 (currentTime state)
-                                (state.frontendApp.onUrlChange frontend2.url)
+                                (state.frontendApp.onUrlChange navigation.url)
                                 state
                     in
-                    { state2 | frontends = SeqDict.insert clientId frontend2 state.frontends }
+                    { state2
+                        | frontends =
+                            SeqDict.updateIfExists
+                                clientId
+                                (\frontend2 -> { frontend2 | navigation = navigation })
+                                state2.frontends
+                    }
 
                 Nothing ->
                     state
@@ -3319,19 +3386,25 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
             case SeqDict.get clientId state.frontends of
                 Just frontend ->
                     let
-                        frontend2 : FrontendState toBackend frontendMsg frontendModel toFrontend
-                        frontend2 =
-                            navigateForward steps frontend
+                        navigation : NavigationHistory
+                        navigation =
+                            navigateForward steps frontend.navigation
 
                         state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
                         state2 =
                             handleFrontendUpdate
                                 clientId
                                 (currentTime state)
-                                (state.frontendApp.onUrlChange frontend2.url)
+                                (state.frontendApp.onUrlChange navigation.url)
                                 state
                     in
-                    { state2 | frontends = SeqDict.insert clientId frontend2 state.frontends }
+                    { state2
+                        | frontends =
+                            SeqDict.updateIfExists
+                                clientId
+                                (\frontend2 -> { frontend2 | navigation = navigation })
+                                state2.frontends
+                    }
 
                 Nothing ->
                     state
@@ -3400,6 +3473,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
             state
 
         FileDownloadUrl _ ->
+            -- TODO
             state
 
         FileDownloadString data ->
@@ -3523,32 +3597,6 @@ getWindowResizeSubscriptions subscription =
 
         _ ->
             []
-
-
-{-| -}
-handleUrlChange :
-    FailedEffect
-    -> String
-    -> ClientId
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-handleUrlChange effect urlText clientId state =
-    case normalizeUrl state.domain urlText of
-        Just url ->
-            let
-                state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                state2 =
-                    handleFrontendUpdate clientId (currentTime state) (state.frontendApp.onUrlChange url) state
-            in
-            { state2
-                | frontends =
-                    SeqDict.updateIfExists clientId
-                        (\frontend -> { frontend | url = url, backUrls = frontend.url :: frontend.backUrls })
-                        state2.frontends
-            }
-
-        Nothing ->
-            addEvent (EffectFailedEvent (Just clientId) effect) (InvalidBrowserNavigationUrl urlText |> Just) state
 
 
 {-| -}
@@ -5692,9 +5740,6 @@ currentStepText currentStep testView_ =
 
                         ReplaceUrlFailed ->
                             "Browser.Navigation.replaceUrl error"
-
-                        NavigationLoadFailed ->
-                            "Browser.Navigation.load error"
 
                         HttpRequestFailed ->
                             "Http request error"
