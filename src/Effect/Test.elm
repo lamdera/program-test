@@ -599,11 +599,11 @@ checkState delay checkFunc =
                     (\state ->
                         case checkFunc (stateToData state) of
                             Ok () ->
-                                addEvent (CheckStateEvent { checkType = CheckState, isSuccessful = True }) Nothing state
+                                addEvent (CheckStateEvent { checkType = CheckState }) Nothing state
 
                             Err error ->
                                 addEvent
-                                    (CheckStateEvent { checkType = CheckState, isSuccessful = False })
+                                    (CheckStateEvent { checkType = CheckState })
                                     (Just (CustomError error))
                                     state
                     )
@@ -624,11 +624,11 @@ checkBackend delay checkFunc =
                     (\state ->
                         case checkFunc state.model of
                             Ok () ->
-                                addEvent (CheckStateEvent { checkType = CheckBackend, isSuccessful = True }) Nothing state
+                                addEvent (CheckStateEvent { checkType = CheckBackend }) Nothing state
 
                             Err error ->
                                 addEvent
-                                    (CheckStateEvent { checkType = CheckBackend, isSuccessful = False })
+                                    (CheckStateEvent { checkType = CheckBackend })
                                     (Just (CustomError error))
                                     state
                     )
@@ -652,19 +652,19 @@ checkFrontend clientId delay checkFunc =
                                 case checkFunc frontend.model of
                                     Ok () ->
                                         addEvent
-                                            (CheckStateEvent { checkType = CheckFrontendState clientId, isSuccessful = True })
+                                            (CheckStateEvent { checkType = CheckFrontendState clientId })
                                             Nothing
                                             state
 
                                     Err error ->
                                         addEvent
-                                            (CheckStateEvent { checkType = CheckFrontendState clientId, isSuccessful = False })
+                                            (CheckStateEvent { checkType = CheckFrontendState clientId })
                                             (Just (CustomError error))
                                             state
 
                             Nothing ->
                                 addEvent
-                                    (CheckStateEvent { checkType = CheckFrontendState clientId, isSuccessful = False })
+                                    (CheckStateEvent { checkType = CheckFrontendState clientId })
                                     (Just (ClientIdNotFound clientId))
                                     state
                     )
@@ -695,7 +695,7 @@ checkView clientId delay query =
                                 of
                                     Just { description } ->
                                         addEvent
-                                            (CheckStateEvent { checkType = CheckFrontendView clientId, isSuccessful = False })
+                                            (CheckStateEvent { checkType = CheckFrontendView clientId })
                                             ((case String.split "▼ " description |> List.reverse |> List.head of
                                                 Just error ->
                                                     "The following view check failed: " ++ error
@@ -710,13 +710,13 @@ checkView clientId delay query =
 
                                     Nothing ->
                                         addEvent
-                                            (CheckStateEvent { checkType = CheckFrontendView clientId, isSuccessful = True })
+                                            (CheckStateEvent { checkType = CheckFrontendView clientId })
                                             Nothing
                                             state
 
                             Nothing ->
                                 addEvent
-                                    (CheckStateEvent { checkType = CheckFrontendView clientId, isSuccessful = False })
+                                    (CheckStateEvent { checkType = CheckFrontendView clientId })
                                     (Just (ClientIdNotFound clientId))
                                     state
                     )
@@ -932,9 +932,7 @@ type alias FrontendState toBackend frontendMsg frontendModel toFrontend =
     , pendingEffects : Array (FrontendPendingEffect toBackend frontendMsg)
     , toFrontend : List (ToFrontendData toFrontend)
     , timers : SeqDict Duration { startTime : Time.Posix }
-    , url : String
-    , backUrls : List String
-    , forwardUrls : List String
+    , navigation : NavigationHistory
     , windowSize : { width : Int, height : Int }
     }
 
@@ -1515,21 +1513,18 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                                             , pendingEffects = Array.fromList [ { cmds = cmd, stepIndex = Array.length state.history } ]
                                             , toFrontend = []
                                             , timers = getTimers subscriptions |> SeqDict.map (\_ _ -> { startTime = currentTime state })
-                                            , url = url
-                                            , backUrls = []
-                                            , forwardUrls = []
+                                            , navigation =
+                                                { url = Maybe.withDefault state.domain maybeUrl
+                                                , backUrls = []
+                                                , forwardUrls = []
+                                                }
                                             , windowSize = windowSize
                                             }
                                             state.frontends
                                     , counter = state.counter + 1
                                 }
                                     |> addEvent
-                                        (FrontendInitEvent
-                                            { clientId = clientId
-                                            , cmds = cmd
-                                            , isSuccessful = maybeUrl /= Nothing
-                                            }
-                                        )
+                                        (FrontendInitEvent { clientId = clientId, cmds = cmd })
                                         (case maybeUrl of
                                             Just _ ->
                                                 Nothing
@@ -1611,7 +1606,7 @@ type alias Event toBackend frontendMsg frontendModel toFrontend backendMsg backe
 type alias EventFrontend frontendModel =
     { model : frontendModel
     , sessionId : SessionId
-    , url : String
+    , url : Url
     , windowSize : { width : Int, height : Int }
     }
 
@@ -1623,20 +1618,21 @@ type EventType toBackend frontendMsg frontendModel toFrontend backendMsg backend
     | BackendUpdateEvent backendMsg (Command BackendOnly toFrontend backendMsg)
     | FrontendUpdateEvent ClientId frontendMsg (Command FrontendOnly toBackend frontendMsg)
     | BackendInitEvent (Command BackendOnly toFrontend backendMsg)
-    | FrontendInitEvent { clientId : ClientId, cmds : Command FrontendOnly toBackend frontendMsg, isSuccessful : Bool }
-    | CheckStateEvent { checkType : CheckType, isSuccessful : Bool }
-    | UserInputEvent { clientId : ClientId, inputType : UserInputType, isSuccessful : Bool }
+    | FrontendInitEvent { clientId : ClientId, cmds : Command FrontendOnly toBackend frontendMsg }
+    | CheckStateEvent { checkType : CheckType }
+    | UserInputEvent { clientId : ClientId, inputType : UserInputType }
     | TestEvent (Maybe ClientId) String
-    | SnapshotEvent { clientId : ClientId, name : String, isSuccessful : Bool }
+    | SnapshotEvent { clientId : ClientId, name : String }
     | ManuallySendToBackend { clientId : ClientId, toBackend : toBackend }
-    | ManuallySendPortEvent { clientId : ClientId, portName : String, value : Json.Encode.Value, isSuccessful : Bool }
+    | ManuallySendPortEvent { clientId : ClientId, portName : String, value : Json.Encode.Value }
     | EffectFailedEvent (Maybe ClientId) FailedEffect
+    | NavigateBack ClientId
+    | NavigateForward ClientId
 
 
 type FailedEffect
     = PushUrlFailed
     | ReplaceUrlFailed
-    | NavigationLoadFailed
     | HttpRequestFailed
     | FileSelectFailed
     | FilesSelectFailed
@@ -1886,7 +1882,7 @@ addEvent eventType maybeError state =
                         (\_ a ->
                             { model = a.model
                             , sessionId = a.sessionId
-                            , url = a.url
+                            , url = a.navigation.url
                             , windowSize = a.windowSize
                             }
                         )
@@ -1935,12 +1931,12 @@ snapshotView clientId delay data =
                                             :: state.snapshots
                                 }
                                     |> addEvent
-                                        (SnapshotEvent { clientId = clientId, name = data.name, isSuccessful = True })
+                                        (SnapshotEvent { clientId = clientId, name = data.name })
                                         Nothing
 
                             Nothing ->
                                 addEvent
-                                    (SnapshotEvent { clientId = clientId, name = data.name, isSuccessful = False })
+                                    (SnapshotEvent { clientId = clientId, name = data.name })
                                     (Just (ClientIdNotFound clientId))
                                     state
                     )
@@ -2392,9 +2388,30 @@ navigateForwardAction clientId delay =
             wait (Duration.milliseconds delay) instructions
                 |> NextStep
                     (\state ->
-                        { state
-                            | frontends = SeqDict.updateIfExists clientId (navigateForward 1) state.frontends
-                        }
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                let
+                                    navigation : NavigationHistory
+                                    navigation =
+                                        navigateForward 1 frontend.navigation
+                                in
+                                handleFrontendUpdate clientId
+                                    (currentTime state)
+                                    (state.frontendApp.onUrlChange navigation.url)
+                                    (addEvent
+                                        (NavigateForward clientId)
+                                        Nothing
+                                        { state
+                                            | frontends =
+                                                SeqDict.insert
+                                                    clientId
+                                                    { frontend | navigation = navigation }
+                                                    state.frontends
+                                        }
+                                    )
+
+                            Nothing ->
+                                addEvent (NavigateForward clientId) (ClientIdNotFound clientId |> Just) state
                     )
         )
 
@@ -2406,9 +2423,30 @@ navigateBackAction clientId delay =
             wait (Duration.milliseconds delay) instructions
                 |> NextStep
                     (\state ->
-                        { state
-                            | frontends = SeqDict.updateIfExists clientId (navigateBack 1) state.frontends
-                        }
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                let
+                                    navigation : NavigationHistory
+                                    navigation =
+                                        navigateBack 1 frontend.navigation
+                                in
+                                handleFrontendUpdate clientId
+                                    (currentTime state)
+                                    (state.frontendApp.onUrlChange navigation.url)
+                                    (addEvent
+                                        (NavigateBack clientId)
+                                        Nothing
+                                        { state
+                                            | frontends =
+                                                SeqDict.insert
+                                                    clientId
+                                                    { frontend | navigation = navigation }
+                                                    state.frontends
+                                        }
+                                    )
+
+                            Nothing ->
+                                addEvent (NavigateBack clientId) (ClientIdNotFound clientId |> Just) state
                     )
         )
 
@@ -2446,7 +2484,6 @@ portEvent clientId delay portName value =
                                             { clientId = clientId
                                             , portName = portName
                                             , value = value
-                                            , isSuccessful = False
                                             }
                                         )
                                         (Just (PortEventNotHandled portName))
@@ -2460,7 +2497,6 @@ portEvent clientId delay portName value =
                                                 { clientId = clientId
                                                 , portName = portName
                                                 , value = value
-                                                , isSuccessful = True
                                                 }
                                             )
                                             Nothing
@@ -2474,7 +2510,6 @@ portEvent clientId delay portName value =
                                         { clientId = clientId
                                         , portName = portName
                                         , value = value
-                                        , isSuccessful = False
                                         }
                                     )
                                     (Just (ClientIdNotFound clientId))
@@ -2613,8 +2648,9 @@ clickLink clientId delay data =
     Action
         (\instructions ->
             let
-                event isSuccessful =
-                    UserInputEvent { clientId = clientId, inputType = UserClicksLink data, isSuccessful = isSuccessful }
+                event : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                event =
+                    UserInputEvent { clientId = clientId, inputType = UserClicksLink data }
             in
             wait (Duration.milliseconds delay) instructions
                 |> NextStep
@@ -2623,7 +2659,7 @@ clickLink clientId delay data =
                             Just frontend ->
                                 if String.startsWith "http://" data || String.startsWith "https://" data then
                                     addEvent
-                                        (event False)
+                                        event
                                         ("This event is for internal links like /home or /user/?a=0. Simulating the user clicking on links that lead to another website is not supported."
                                             |> CustomError
                                             |> Just
@@ -2654,19 +2690,19 @@ clickLink clientId delay data =
                                                         clientId
                                                         (currentTime state)
                                                         (state.frontendApp.onUrlRequest (Internal url))
-                                                        (addEvent (event True) Nothing state)
+                                                        (addEvent event Nothing state)
 
                                                 Nothing ->
-                                                    addEvent (event False) (Just (InvalidLinkUrl data)) state
+                                                    addEvent event (Just (InvalidLinkUrl data)) state
 
                                         Just _ ->
                                             addEvent
-                                                (event False)
+                                                event
                                                 (Just (CustomError ("Couldn't find a link pointing to \"" ++ data ++ "\"")))
                                                 state
 
                             Nothing ->
-                                addEvent (event False) (Just (ClientIdNotFound clientId)) state
+                                addEvent event (Just (ClientIdNotFound clientId)) state
                     )
         )
 
@@ -2681,8 +2717,9 @@ resizeWindow clientId delay windowSize =
     Action
         (\instructions ->
             let
-                event isSuccessful =
-                    UserInputEvent { clientId = clientId, inputType = UserResizesWindow windowSize, isSuccessful = isSuccessful }
+                event : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                event =
+                    UserInputEvent { clientId = clientId, inputType = UserResizesWindow windowSize }
             in
             wait (Duration.milliseconds delay) instructions
                 |> NextStep
@@ -2699,7 +2736,7 @@ resizeWindow clientId delay windowSize =
                                 List.foldl
                                     (handleFrontendUpdate clientId (currentTime state))
                                     (addEvent
-                                        (event True)
+                                        event
                                         Nothing
                                         { state
                                             | frontends =
@@ -2712,7 +2749,7 @@ resizeWindow clientId delay windowSize =
                                     msgs
 
                             Nothing ->
-                                addEvent (event False) (Just (ClientIdNotFound clientId)) state
+                                addEvent event (Just (ClientIdNotFound clientId)) state
                     )
         )
 
@@ -2733,9 +2770,9 @@ userEvent delay userInputType clientId htmlId event =
                 htmlIdString =
                     Effect.Browser.Dom.idToString htmlId
 
-                eventType : Bool -> EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                eventType isSuccessful =
-                    UserInputEvent { clientId = clientId, inputType = userInputType, isSuccessful = isSuccessful }
+                eventType : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                eventType =
+                    UserInputEvent { clientId = clientId, inputType = userInputType }
             in
             wait (Duration.milliseconds delay) instructions
                 |> NextStep
@@ -2753,7 +2790,7 @@ userEvent delay userInputType clientId htmlId event =
                                 in
                                 case Test.Html.Event.simulate event query |> Test.Html.Event.toResult of
                                     Ok msg ->
-                                        handleFrontendUpdate clientId (currentTime state) msg (addEvent (eventType True) Nothing state)
+                                        handleFrontendUpdate clientId (currentTime state) msg (addEvent eventType Nothing state)
 
                                     Err error ->
                                         let
@@ -2799,10 +2836,10 @@ userEvent delay userInputType clientId htmlId event =
                                                 else
                                                     error
                                         in
-                                        addEvent (eventType False) (Just (UserEventError htmlId error2)) state
+                                        addEvent eventType (Just (UserEventError htmlId error2)) state
 
                             Nothing ->
-                                addEvent (eventType False) (Just (ClientIdNotFound clientId)) state
+                                addEvent eventType (Just (ClientIdNotFound clientId)) state
                     )
         )
 
@@ -3188,50 +3225,51 @@ clearFrontendEffects clientId state =
     }
 
 
-navigateBack :
-    Int
-    -> FrontendState toBackend frontendMsg frontendModel toFrontend
-    -> FrontendState toBackend frontendMsg frontendModel toFrontend
-navigateBack steps frontend =
+type alias NavigationHistory =
+    { backUrls : List Url
+    , url : Url
+    , forwardUrls : List Url
+    }
+
+
+navigateBack : Int -> NavigationHistory -> NavigationHistory
+navigateBack steps navigation =
     if steps > 0 then
-        case frontend.backUrls of
+        case navigation.backUrls of
             head :: rest ->
                 navigateBack
                     (steps - 1)
-                    { frontend
+                    { navigation
                         | url = head
                         , backUrls = rest
-                        , forwardUrls = head :: frontend.forwardUrls
+                        , forwardUrls = head :: navigation.forwardUrls
                     }
 
             [] ->
-                frontend
+                navigation
 
     else
-        frontend
+        navigation
 
 
-navigateForward :
-    Int
-    -> FrontendState toBackend frontendMsg frontendModel toFrontend
-    -> FrontendState toBackend frontendMsg frontendModel toFrontend
-navigateForward steps frontend =
+navigateForward : Int -> NavigationHistory -> NavigationHistory
+navigateForward steps navigation =
     if steps > 0 then
-        case frontend.forwardUrls of
+        case navigation.forwardUrls of
             head :: rest ->
                 navigateForward
                     (steps - 1)
-                    { frontend
+                    { navigation
                         | url = head
                         , forwardUrls = rest
-                        , backUrls = head :: frontend.backUrls
+                        , backUrls = head :: navigation.backUrls
                     }
 
             [] ->
-                frontend
+                navigation
 
     else
-        frontend
+        navigation
 
 
 {-| -}
@@ -3260,19 +3298,116 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
             }
 
         NavigationPushUrl _ urlText ->
-            handleUrlChange PushUrlFailed urlText clientId state
+            case normalizeUrl state.domain urlText of
+                Just url ->
+                    let
+                        state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                        state2 =
+                            handleFrontendUpdate clientId (currentTime state) (state.frontendApp.onUrlChange url) state
+                    in
+                    { state2
+                        | frontends =
+                            SeqDict.updateIfExists clientId
+                                (\frontend ->
+                                    let
+                                        navigation =
+                                            frontend.navigation
+                                    in
+                                    { frontend
+                                        | navigation =
+                                            { navigation
+                                                | url = url
+                                                , backUrls = navigation.url :: navigation.backUrls
+                                            }
+                                    }
+                                )
+                                state2.frontends
+                    }
+
+                Nothing ->
+                    addEvent (EffectFailedEvent (Just clientId) PushUrlFailed) (InvalidBrowserNavigationUrl urlText |> Just) state
 
         NavigationReplaceUrl _ urlText ->
-            handleUrlChange ReplaceUrlFailed urlText clientId state
+            case normalizeUrl state.domain urlText of
+                Just url ->
+                    let
+                        state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                        state2 =
+                            handleFrontendUpdate clientId (currentTime state) (state.frontendApp.onUrlChange url) state
+                    in
+                    { state2
+                        | frontends =
+                            SeqDict.updateIfExists clientId
+                                (\frontend ->
+                                    let
+                                        navigation =
+                                            frontend.navigation
+                                    in
+                                    { frontend | navigation = { navigation | url = url } }
+                                )
+                                state2.frontends
+                    }
 
-        NavigationLoad urlText ->
-            handleUrlChange NavigationLoadFailed urlText clientId state
+                Nothing ->
+                    addEvent (EffectFailedEvent (Just clientId) ReplaceUrlFailed) (InvalidBrowserNavigationUrl urlText |> Just) state
+
+        NavigationLoad _ ->
+            -- TODO
+            state
 
         NavigationBack _ steps ->
-            { state | frontends = SeqDict.updateIfExists clientId (navigateBack steps) state.frontends }
+            case SeqDict.get clientId state.frontends of
+                Just frontend ->
+                    let
+                        navigation : NavigationHistory
+                        navigation =
+                            navigateBack steps frontend.navigation
+
+                        state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                        state2 =
+                            handleFrontendUpdate
+                                clientId
+                                (currentTime state)
+                                (state.frontendApp.onUrlChange navigation.url)
+                                state
+                    in
+                    { state2
+                        | frontends =
+                            SeqDict.updateIfExists
+                                clientId
+                                (\frontend2 -> { frontend2 | navigation = navigation })
+                                state2.frontends
+                    }
+
+                Nothing ->
+                    state
 
         NavigationForward _ steps ->
-            { state | frontends = SeqDict.updateIfExists clientId (navigateForward steps) state.frontends }
+            case SeqDict.get clientId state.frontends of
+                Just frontend ->
+                    let
+                        navigation : NavigationHistory
+                        navigation =
+                            navigateForward steps frontend.navigation
+
+                        state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                        state2 =
+                            handleFrontendUpdate
+                                clientId
+                                (currentTime state)
+                                (state.frontendApp.onUrlChange navigation.url)
+                                state
+                    in
+                    { state2
+                        | frontends =
+                            SeqDict.updateIfExists
+                                clientId
+                                (\frontend2 -> { frontend2 | navigation = navigation })
+                                state2.frontends
+                    }
+
+                Nothing ->
+                    state
 
         NavigationReload ->
             -- TODO
@@ -3338,6 +3473,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
             state
 
         FileDownloadUrl _ ->
+            -- TODO
             state
 
         FileDownloadString data ->
@@ -3461,37 +3597,6 @@ getWindowResizeSubscriptions subscription =
 
         _ ->
             []
-
-
-{-| -}
-handleUrlChange :
-    FailedEffect
-    -> String
-    -> ClientId
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-handleUrlChange effect urlText clientId state =
-    case normalizeUrl state.domain urlText of
-        Just url ->
-            let
-                state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                state2 =
-                    handleFrontendUpdate clientId (currentTime state) (state.frontendApp.onUrlChange url) state
-            in
-            { state2
-                | frontends =
-                    SeqDict.updateIfExists clientId
-                        (\frontend ->
-                            { frontend
-                                | url = Url.toString url
-                                , backUrls = frontend.url :: frontend.backUrls
-                            }
-                        )
-                        state2.frontends
-            }
-
-        Nothing ->
-            addEvent (EffectFailedEvent (Just clientId) effect) (InvalidBrowserNavigationUrl urlText |> Just) state
 
 
 {-| -}
@@ -4771,6 +4876,12 @@ eventTypeToTimelineType eventType =
                 Nothing ->
                     BackendTimeline
 
+        NavigateBack clientId ->
+            FrontendTimeline clientId
+
+        NavigateForward clientId ->
+            FrontendTimeline clientId
+
 
 {-| -}
 isSkippable : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Bool
@@ -4813,6 +4924,12 @@ isSkippable eventType =
             True
 
         EffectFailedEvent _ _ ->
+            True
+
+        NavigateBack _ ->
+            True
+
+        NavigateForward _ ->
             True
 
 
@@ -5031,6 +5148,12 @@ checkCachedElmValueHelper event state =
                     Nothing
 
                 EffectFailedEvent _ _ ->
+                    Nothing
+
+                NavigateBack _ ->
+                    Nothing
+
+                NavigateForward _ ->
                     Nothing
     }
 
@@ -5618,11 +5741,20 @@ currentStepText currentStep testView_ =
                         ReplaceUrlFailed ->
                             "Browser.Navigation.replaceUrl error"
 
-                        NavigationLoadFailed ->
-                            "Browser.Navigation.load error"
-
                         HttpRequestFailed ->
                             "Http request error"
+
+                        FileSelectFailed ->
+                            "File.Select.file error"
+
+                        FilesSelectFailed ->
+                            "File.Select.files error"
+
+                NavigateBack _ ->
+                    "Pressed browser navigate forward button"
+
+                NavigateForward _ ->
+                    "Pressed browser navigate backward button"
     in
     Html.div
         [ Html.Attributes.style "padding" "4px", Html.Attributes.title fullMsg ]
@@ -5752,6 +5884,12 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
 
                 EffectFailedEvent _ _ ->
                     []
+
+                NavigateBack _ ->
+                    []
+
+                NavigateForward _ ->
+                    []
     in
     { columnIndex = state.columnIndex + 1
     , dict =
@@ -5777,7 +5915,7 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                     Just timeline ->
                         { events =
                             arrows timeline.rowIndex
-                                ++ eventIcon (color timeline.rowIndex) event.eventType state.columnIndex timeline.rowIndex
+                                ++ eventIcon (color timeline.rowIndex) event state.columnIndex timeline.rowIndex
                                 ++ timeline.events
                         , columnStart = timeline.columnStart
                         , columnEnd = state.columnIndex
@@ -5791,7 +5929,7 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                                 SeqDict.size state.dict
                         in
                         { events =
-                            arrows rowIndex ++ eventIcon (color rowIndex) event.eventType state.columnIndex rowIndex
+                            arrows rowIndex ++ eventIcon (color rowIndex) event state.columnIndex rowIndex
                         , columnStart = state.columnIndex
                         , columnEnd = state.columnIndex
                         , rowIndex = rowIndex
@@ -6131,11 +6269,11 @@ timelineColumnWidth =
 {-| -}
 eventIcon :
     String
-    -> EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Int
     -> Int
     -> List (Html msg)
-eventIcon color eventType columnIndex rowIndex =
+eventIcon color event columnIndex rowIndex =
     let
         circleHelper : String -> Html msg
         circleHelper class =
@@ -6146,8 +6284,11 @@ eventIcon color eventType columnIndex rowIndex =
                 , Html.Attributes.class class
                 ]
                 []
+
+        noErrors =
+            List.isEmpty event.testErrors
     in
-    case eventType of
+    (case event.eventType of
         FrontendUpdateEvent _ _ _ ->
             [ circleHelper "circle" ]
 
@@ -6166,26 +6307,14 @@ eventIcon color eventType columnIndex rowIndex =
         BackendInitEvent _ ->
             [ circleHelper "circle" ]
 
-        FrontendInitEvent { isSuccessful } ->
-            circleHelper "circle"
-                :: (if isSuccessful then
-                        []
+        FrontendInitEvent _ ->
+            [ circleHelper "circle" ]
 
-                    else
-                        [ xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
-                   )
-
-        CheckStateEvent { isSuccessful } ->
-            magnifyingGlassSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
-                :: (if isSuccessful then
-                        []
-
-                    else
-                        [ xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
-                   )
+        CheckStateEvent _ ->
+            [ magnifyingGlassSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
 
         UserInputEvent data ->
-            (case data.inputType of
+            case data.inputType of
                 UserClicksButton _ ->
                     [ cursorSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) timelineColumnWidth ]
 
@@ -6269,22 +6398,9 @@ eventIcon color eventType columnIndex rowIndex =
 
                 UserCustomEvent _ _ ->
                     [ circleHelper "big-circle" ]
-            )
-                ++ (if data.isSuccessful then
-                        []
 
-                    else
-                        [ xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
-                   )
-
-        SnapshotEvent data ->
-            cameraSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
-                :: (if data.isSuccessful then
-                        []
-
-                    else
-                        [ xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
-                   )
+        SnapshotEvent _ ->
+            [ cameraSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
 
         ManuallySendToBackend _ ->
             [ circleHelper "big-circle" ]
@@ -6293,9 +6409,20 @@ eventIcon color eventType columnIndex rowIndex =
             [ circleHelper "big-circle" ]
 
         EffectFailedEvent _ _ ->
-            [ circleHelper "circle"
-            , xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
-            ]
+            [ circleHelper "circle" ]
+
+        NavigateBack _ ->
+            [ circleHelper "big-circle" ]
+
+        NavigateForward _ ->
+            [ circleHelper "big-circle" ]
+    )
+        ++ (if noErrors then
+                []
+
+            else
+                [ xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+           )
 
 
 {-| -}
