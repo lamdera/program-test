@@ -552,7 +552,9 @@ type TestError
     | UserEventError HtmlId String
     | ClientIdNotFound ClientId
     | ViewTestError String
-    | InvalidUrl String
+    | InvalidLinkUrl String
+    | InvalidFrontendConnectUrl String
+    | InvalidBrowserNavigationUrl String
     | FileUploadNotHandled
     | MultipleFilesUploadNotHandled
     | HttpResponseContainsBytesThatCantConvertToString HttpRequest
@@ -763,8 +765,14 @@ testErrorToString error =
         ViewTestError string ->
             string
 
-        InvalidUrl string ->
-            string ++ " is not a valid url"
+        InvalidLinkUrl url ->
+            url ++ " is not an absolute path. Make sure it looks like \"/\" or \"/homepage\" and not \"https://domain.com/homepage\" or \"homepage\"."
+
+        InvalidFrontendConnectUrl url ->
+            url ++ " is not an absolute path. Make sure it looks like \"/\" or \"/homepage\" and not \"https://domain.com/homepage\" or \"homepage\"."
+
+        InvalidBrowserNavigationUrl url ->
+            url ++ " is not an absolute path. Make sure it looks like \"/\" or \"/homepage\" and not \"https://domain.com/homepage\" or \"homepage\"."
 
         FileUploadNotHandled ->
             "A client tried uploading a file but it wasn't handled by Config.handleFileUpload"
@@ -925,6 +933,8 @@ type alias FrontendState toBackend frontendMsg frontendModel toFrontend =
     , toFrontend : List (ToFrontendData toFrontend)
     , timers : SeqDict Duration { startTime : Time.Posix }
     , url : String
+    , backUrls : List String
+    , forwardUrls : List String
     , windowSize : { width : Int, height : Int }
     }
 
@@ -1184,6 +1194,8 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         -> String
         -> Json.Encode.Value
         -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , navigateBack : DelayInMs -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , navigateForward : DelayInMs -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     }
 
 
@@ -1479,9 +1491,13 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                             clientId =
                                 "clientId " ++ String.fromInt state.counter |> Effect.Lamdera.clientIdFromString
 
+                            maybeUrl : Maybe Url
+                            maybeUrl =
+                                normalizeUrl state.domain url
+
                             ( frontend, cmd ) =
                                 state.frontendApp.init
-                                    (normalizeUrl state.domain url |> Maybe.withDefault state.domain)
+                                    (Maybe.withDefault state.domain maybeUrl)
                                     (Effect.Browser.Navigation.fromInternalKey MockNavigationKey)
 
                             subscriptions : Subscription FrontendOnly frontendMsg
@@ -1500,12 +1516,27 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                                             , toFrontend = []
                                             , timers = getTimers subscriptions |> SeqDict.map (\_ _ -> { startTime = currentTime state })
                                             , url = url
+                                            , backUrls = []
+                                            , forwardUrls = []
                                             , windowSize = windowSize
                                             }
                                             state.frontends
                                     , counter = state.counter + 1
                                 }
-                                    |> addEvent (FrontendInitEvent clientId cmd) Nothing
+                                    |> addEvent
+                                        (FrontendInitEvent
+                                            { clientId = clientId
+                                            , cmds = cmd
+                                            , isSuccessful = maybeUrl /= Nothing
+                                            }
+                                        )
+                                        (case maybeUrl of
+                                            Just _ ->
+                                                Nothing
+
+                                            Nothing ->
+                                                InvalidFrontendConnectUrl url |> Just
+                                        )
 
                             list :
                                 List
@@ -1548,6 +1579,8 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                                     , checkModel = checkFrontend clientId
                                     , custom = custom clientId
                                     , portEvent = portEvent clientId
+                                    , navigateForward = navigateForwardAction clientId
+                                    , navigateBack = navigateBackAction clientId
                                     }
                         in
                         getClientConnectSubs (state2.backendApp.subscriptions state2.model)
@@ -1590,13 +1623,23 @@ type EventType toBackend frontendMsg frontendModel toFrontend backendMsg backend
     | BackendUpdateEvent backendMsg (Command BackendOnly toFrontend backendMsg)
     | FrontendUpdateEvent ClientId frontendMsg (Command FrontendOnly toBackend frontendMsg)
     | BackendInitEvent (Command BackendOnly toFrontend backendMsg)
-    | FrontendInitEvent ClientId (Command FrontendOnly toBackend frontendMsg)
+    | FrontendInitEvent { clientId : ClientId, cmds : Command FrontendOnly toBackend frontendMsg, isSuccessful : Bool }
     | CheckStateEvent { checkType : CheckType, isSuccessful : Bool }
     | UserInputEvent { clientId : ClientId, inputType : UserInputType, isSuccessful : Bool }
     | TestEvent (Maybe ClientId) String
     | SnapshotEvent { clientId : ClientId, name : String, isSuccessful : Bool }
     | ManuallySendToBackend { clientId : ClientId, toBackend : toBackend }
     | ManuallySendPortEvent { clientId : ClientId, portName : String, value : Json.Encode.Value, isSuccessful : Bool }
+    | EffectFailedEvent (Maybe ClientId) FailedEffect
+
+
+type FailedEffect
+    = PushUrlFailed
+    | ReplaceUrlFailed
+    | NavigationLoadFailed
+    | HttpRequestFailed
+    | FileSelectFailed
+    | FilesSelectFailed
 
 
 {-| -}
@@ -2342,6 +2385,34 @@ custom clientId delay htmlId eventName value =
     userEvent delay (UserCustomEvent htmlId value) clientId htmlId ( eventName, value )
 
 
+navigateForwardAction : ClientId -> DelayInMs -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+navigateForwardAction clientId delay =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        { state
+                            | frontends = SeqDict.updateIfExists clientId (navigateForward 1) state.frontends
+                        }
+                    )
+        )
+
+
+navigateBackAction : ClientId -> DelayInMs -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+navigateBackAction clientId delay =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        { state
+                            | frontends = SeqDict.updateIfExists clientId (navigateBack 1) state.frontends
+                        }
+                    )
+        )
+
+
 portEvent :
     ClientId
     -> DelayInMs
@@ -2371,7 +2442,13 @@ portEvent clientId delay portName value =
                                 in
                                 if List.isEmpty msgs then
                                     addEvent
-                                        (ManuallySendPortEvent { clientId = clientId, portName = portName, value = value, isSuccessful = False })
+                                        (ManuallySendPortEvent
+                                            { clientId = clientId
+                                            , portName = portName
+                                            , value = value
+                                            , isSuccessful = False
+                                            }
+                                        )
                                         (Just (PortEventNotHandled portName))
                                         state
 
@@ -2379,7 +2456,13 @@ portEvent clientId delay portName value =
                                     List.foldl
                                         (handleFrontendUpdate clientId (currentTime state))
                                         (addEvent
-                                            (ManuallySendPortEvent { clientId = clientId, portName = portName, value = value, isSuccessful = True })
+                                            (ManuallySendPortEvent
+                                                { clientId = clientId
+                                                , portName = portName
+                                                , value = value
+                                                , isSuccessful = True
+                                                }
+                                            )
                                             Nothing
                                             state
                                         )
@@ -2387,7 +2470,13 @@ portEvent clientId delay portName value =
 
                             Nothing ->
                                 addEvent
-                                    (ManuallySendPortEvent { clientId = clientId, portName = portName, value = value, isSuccessful = False })
+                                    (ManuallySendPortEvent
+                                        { clientId = clientId
+                                        , portName = portName
+                                        , value = value
+                                        , isSuccessful = False
+                                        }
+                                    )
                                     (Just (ClientIdNotFound clientId))
                                     state
                     )
@@ -2501,13 +2590,17 @@ normalizeUrl domainUrl path =
         domain =
             Url.toString domainUrl
     in
-    (if String.endsWith "/" domain then
-        String.dropRight 1 domain ++ path
+    if String.startsWith "/" path then
+        (if String.endsWith "/" domain then
+            String.dropRight 1 domain ++ path
 
-     else
-        domain ++ path
-    )
-        |> Url.fromString
+         else
+            domain ++ path
+        )
+            |> Url.fromString
+
+    else
+        Nothing
 
 
 {-| -}
@@ -2564,7 +2657,7 @@ clickLink clientId delay data =
                                                         (addEvent (event True) Nothing state)
 
                                                 Nothing ->
-                                                    addEvent (event False) (Just (InvalidUrl data)) state
+                                                    addEvent (event False) (Just (InvalidLinkUrl data)) state
 
                                         Just _ ->
                                             addEvent
@@ -3088,11 +3181,57 @@ clearFrontendEffects :
 clearFrontendEffects clientId state =
     { state
         | frontends =
-            SeqDict.update
+            SeqDict.updateIfExists
                 clientId
-                (Maybe.map (\frontend -> { frontend | pendingEffects = Array.empty }))
+                (\frontend -> { frontend | pendingEffects = Array.empty })
                 state.frontends
     }
+
+
+navigateBack :
+    Int
+    -> FrontendState toBackend frontendMsg frontendModel toFrontend
+    -> FrontendState toBackend frontendMsg frontendModel toFrontend
+navigateBack steps frontend =
+    if steps > 0 then
+        case frontend.backUrls of
+            head :: rest ->
+                navigateBack
+                    (steps - 1)
+                    { frontend
+                        | url = head
+                        , backUrls = rest
+                        , forwardUrls = head :: frontend.forwardUrls
+                    }
+
+            [] ->
+                frontend
+
+    else
+        frontend
+
+
+navigateForward :
+    Int
+    -> FrontendState toBackend frontendMsg frontendModel toFrontend
+    -> FrontendState toBackend frontendMsg frontendModel toFrontend
+navigateForward steps frontend =
+    if steps > 0 then
+        case frontend.forwardUrls of
+            head :: rest ->
+                navigateForward
+                    (steps - 1)
+                    { frontend
+                        | url = head
+                        , forwardUrls = rest
+                        , backUrls = head :: frontend.backUrls
+                    }
+
+            [] ->
+                frontend
+
+    else
+        frontend
 
 
 {-| -}
@@ -3121,21 +3260,19 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
             }
 
         NavigationPushUrl _ urlText ->
-            handleUrlChange urlText clientId state
+            handleUrlChange PushUrlFailed urlText clientId state
 
         NavigationReplaceUrl _ urlText ->
-            handleUrlChange urlText clientId state
+            handleUrlChange ReplaceUrlFailed urlText clientId state
 
         NavigationLoad urlText ->
-            handleUrlChange urlText clientId state
+            handleUrlChange NavigationLoadFailed urlText clientId state
 
-        NavigationBack _ _ ->
-            -- TODO
-            state
+        NavigationBack _ steps ->
+            { state | frontends = SeqDict.updateIfExists clientId (navigateBack steps) state.frontends }
 
-        NavigationForward _ _ ->
-            -- TODO
-            state
+        NavigationForward _ steps ->
+            { state | frontends = SeqDict.updateIfExists clientId (navigateForward steps) state.frontends }
 
         NavigationReload ->
             -- TODO
@@ -3247,7 +3384,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                     handleFrontendUpdate clientId time (msg (Effect.Internal.MockFile file)) state2
 
                 UnhandledFileUpload ->
-                    addTestError FileUploadNotHandled state2
+                    addEvent (EffectFailedEvent (Just clientId) FileSelectFailed) (Just FileUploadNotHandled) state2
 
         FileSelectFiles mimeTypes msg ->
             let
@@ -3278,7 +3415,10 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                         state2
 
                 UnhandledMultiFileUpload ->
-                    addTestError MultipleFilesUploadNotHandled state2
+                    addEvent
+                        (EffectFailedEvent (Just clientId) FileSelectFailed)
+                        (Just MultipleFilesUploadNotHandled)
+                        state2
 
         Broadcast _ ->
             state
@@ -3325,24 +3465,33 @@ getWindowResizeSubscriptions subscription =
 
 {-| -}
 handleUrlChange :
-    String
+    FailedEffect
+    -> String
     -> ClientId
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-handleUrlChange urlText clientId state =
-    let
-        url : Url
-        url =
-            normalizeUrl state.domain urlText |> Maybe.withDefault state.domain
+handleUrlChange effect urlText clientId state =
+    case normalizeUrl state.domain urlText of
+        Just url ->
+            let
+                state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                state2 =
+                    handleFrontendUpdate clientId (currentTime state) (state.frontendApp.onUrlChange url) state
+            in
+            { state2
+                | frontends =
+                    SeqDict.updateIfExists clientId
+                        (\frontend ->
+                            { frontend
+                                | url = Url.toString url
+                                , backUrls = frontend.url :: frontend.backUrls
+                            }
+                        )
+                        state2.frontends
+            }
 
-        state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-        state2 =
-            handleFrontendUpdate clientId (currentTime state) (state.frontendApp.onUrlChange url) state
-    in
-    { state2
-        | frontends =
-            SeqDict.update clientId (Maybe.map (\newFrontend -> { newFrontend | url = Url.toString url })) state2.frontends
-    }
+        Nothing ->
+            addEvent (EffectFailedEvent (Just clientId) effect) (InvalidBrowserNavigationUrl urlText |> Just) state
 
 
 {-| -}
@@ -3373,16 +3522,14 @@ runBackendEffects stepIndex effect state =
         SendToFrontend (Effect.Internal.ClientId clientId) toFrontend ->
             { state
                 | frontends =
-                    SeqDict.update
+                    SeqDict.updateIfExists
                         (Effect.Lamdera.clientIdFromString clientId)
-                        (Maybe.map
-                            (\frontend ->
-                                { frontend
-                                    | toFrontend =
-                                        frontend.toFrontend
-                                            ++ [ { toFrontend = toFrontend, stepIndex = stepIndex } ]
-                                }
-                            )
+                        (\frontend ->
+                            { frontend
+                                | toFrontend =
+                                    frontend.toFrontend
+                                        ++ [ { toFrontend = toFrontend, stepIndex = stepIndex } ]
+                            }
                         )
                         state.frontends
             }
@@ -3797,17 +3944,12 @@ handleHttpResponseWithTestError :
 handleHttpResponseWithTestError maybeClientId request httpRequest error state =
     runTask
         maybeClientId
-        (addTestError (error request) { state | httpRequests = request :: state.httpRequests })
+        (addEvent
+            (EffectFailedEvent maybeClientId HttpRequestFailed)
+            (error request |> Just)
+            { state | httpRequests = request :: state.httpRequests }
+        )
         (httpRequest.onRequestComplete Http.NetworkError_)
-
-
-{-| -}
-addTestError :
-    TestError
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-addTestError error state =
-    { state | testErrors = state.testErrors ++ [ error ] }
 
 
 {-| -}
@@ -4592,7 +4734,7 @@ eventTypeToTimelineType eventType =
         BackendInitEvent _ ->
             BackendTimeline
 
-        FrontendInitEvent clientId _ ->
+        FrontendInitEvent { clientId } ->
             FrontendTimeline clientId
 
         CheckStateEvent { checkType } ->
@@ -4620,6 +4762,14 @@ eventTypeToTimelineType eventType =
 
         ManuallySendPortEvent data ->
             FrontendTimeline data.clientId
+
+        EffectFailedEvent maybeClientId _ ->
+            case maybeClientId of
+                Just clientId ->
+                    FrontendTimeline clientId
+
+                Nothing ->
+                    BackendTimeline
 
 
 {-| -}
@@ -4650,7 +4800,7 @@ isSkippable eventType =
         BackendInitEvent _ ->
             False
 
-        FrontendInitEvent _ _ ->
+        FrontendInitEvent _ ->
             False
 
         SnapshotEvent _ ->
@@ -4660,6 +4810,9 @@ isSkippable eventType =
             True
 
         ManuallySendPortEvent _ ->
+            True
+
+        EffectFailedEvent _ _ ->
             True
 
 
@@ -4844,15 +4997,15 @@ checkCachedElmValueHelper event state =
                     }
                         |> Just
 
-                FrontendInitEvent clientId cmd3 ->
-                    case SeqDict.get clientId event.frontends of
+                FrontendInitEvent data ->
+                    case SeqDict.get data.clientId event.frontends of
                         Just frontend ->
                             { diff =
                                 DebugParser.valueToElmValue
                                     { newSubscriptions = state.frontendApp.subscriptions frontend.model
                                     , newModel = frontend.model
                                     }
-                            , noDiff = DebugParser.valueToElmValue { cmds = cmd3 }
+                            , noDiff = DebugParser.valueToElmValue { cmds = data.cmds }
                             }
                                 |> Just
 
@@ -4875,6 +5028,9 @@ checkCachedElmValueHelper event state =
                     Nothing
 
                 ManuallySendPortEvent _ ->
+                    Nothing
+
+                EffectFailedEvent _ _ ->
                     Nothing
     }
 
@@ -5315,7 +5471,7 @@ currentStepText currentStep testView_ =
                 BackendInitEvent _ ->
                     "BackendInit"
 
-                FrontendInitEvent clientId _ ->
+                FrontendInitEvent { clientId } ->
                     "FrontendInitEvent: " ++ Effect.Lamdera.clientIdToString clientId
 
                 CheckStateEvent { checkType } ->
@@ -5453,6 +5609,20 @@ currentStepText currentStep testView_ =
 
                 ManuallySendPortEvent data ->
                     "Manually triggered \"" ++ data.portName ++ "\" port: " ++ Json.Encode.encode 0 data.value
+
+                EffectFailedEvent _ effect ->
+                    case effect of
+                        PushUrlFailed ->
+                            "Browser.Navigation.pushUrl error"
+
+                        ReplaceUrlFailed ->
+                            "Browser.Navigation.replaceUrl error"
+
+                        NavigationLoadFailed ->
+                            "Browser.Navigation.load error"
+
+                        HttpRequestFailed ->
+                            "Http request error"
     in
     Html.div
         [ Html.Attributes.style "padding" "4px", Html.Attributes.title fullMsg ]
@@ -5562,7 +5732,7 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                 BackendInitEvent _ ->
                     []
 
-                FrontendInitEvent _ _ ->
+                FrontendInitEvent _ ->
                     []
 
                 CheckStateEvent _ ->
@@ -5578,6 +5748,9 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                     []
 
                 ManuallySendPortEvent _ ->
+                    []
+
+                EffectFailedEvent _ _ ->
                     []
     in
     { columnIndex = state.columnIndex + 1
@@ -5993,8 +6166,14 @@ eventIcon color eventType columnIndex rowIndex =
         BackendInitEvent _ ->
             [ circleHelper "circle" ]
 
-        FrontendInitEvent _ _ ->
-            [ circleHelper "circle" ]
+        FrontendInitEvent { isSuccessful } ->
+            circleHelper "circle"
+                :: (if isSuccessful then
+                        []
+
+                    else
+                        [ xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
+                   )
 
         CheckStateEvent { isSuccessful } ->
             magnifyingGlassSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
@@ -6112,6 +6291,11 @@ eventIcon color eventType columnIndex rowIndex =
 
         ManuallySendPortEvent _ ->
             [ circleHelper "big-circle" ]
+
+        EffectFailedEvent _ _ ->
+            [ circleHelper "circle"
+            , xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
+            ]
 
 
 {-| -}
@@ -6606,7 +6790,7 @@ testOverlay windowWidth testView_ currentStep =
         ]
         [ Html.div
             [ Html.Attributes.style "padding" "4px", Html.Attributes.style "display" "flex" ]
-            [ overlayButton PressedBackToOverview "Close test"
+            [ overlayButton PressedBackToOverview "Close Test"
             , Html.div [ Html.Attributes.style "display" "inline-block", Html.Attributes.style "padding" "4px" ] []
             , overlayButton PressedToggleOverlayPosition "Move"
             , Html.div [ Html.Attributes.style "display" "inline-block", Html.Attributes.style "padding" "4px" ] []
