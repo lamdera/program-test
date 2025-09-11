@@ -3351,7 +3351,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                 Nothing ->
                     addEvent (EffectFailedEvent (Just clientId) ReplaceUrlFailed) (InvalidBrowserNavigationUrl urlText |> Just) state
 
-        NavigationLoad urlText ->
+        NavigationLoad _ ->
             -- TODO
             state
 
@@ -4923,13 +4923,13 @@ isSkippable eventType =
         ManuallySendPortEvent _ ->
             True
 
-        EffectFailedEvent clientId _ ->
+        EffectFailedEvent _ _ ->
             True
 
-        NavigateBack clientId ->
+        NavigateBack _ ->
             True
 
-        NavigateForward clientId ->
+        NavigateForward _ ->
             True
 
 
@@ -5147,13 +5147,13 @@ checkCachedElmValueHelper event state =
                 ManuallySendPortEvent _ ->
                     Nothing
 
-                EffectFailedEvent clientId _ ->
+                EffectFailedEvent _ _ ->
                     Nothing
 
-                NavigateBack clientId ->
+                NavigateBack _ ->
                     Nothing
 
-                NavigateForward clientId ->
+                NavigateForward _ ->
                     Nothing
     }
 
@@ -5733,7 +5733,7 @@ currentStepText currentStep testView_ =
                 ManuallySendPortEvent data ->
                     "Manually triggered \"" ++ data.portName ++ "\" port: " ++ Json.Encode.encode 0 data.value
 
-                EffectFailedEvent clientId effect ->
+                EffectFailedEvent _ effect ->
                     case effect of
                         PushUrlFailed ->
                             "Browser.Navigation.pushUrl error"
@@ -5750,10 +5750,10 @@ currentStepText currentStep testView_ =
                         FilesSelectFailed ->
                             "File.Select.files error"
 
-                NavigateBack clientId ->
+                NavigateBack _ ->
                     "Pressed browser navigate forward button"
 
-                NavigateForward clientId ->
+                NavigateForward _ ->
                     "Pressed browser navigate backward button"
     in
     Html.div
@@ -5882,13 +5882,13 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                 ManuallySendPortEvent _ ->
                     []
 
-                EffectFailedEvent clientId _ ->
+                EffectFailedEvent _ _ ->
                     []
 
-                NavigateBack clientId ->
+                NavigateBack _ ->
                     []
 
-                NavigateForward clientId ->
+                NavigateForward _ ->
                     []
     in
     { columnIndex = state.columnIndex + 1
@@ -6399,7 +6399,7 @@ eventIcon color event columnIndex rowIndex =
                 UserCustomEvent _ _ ->
                     [ circleHelper "big-circle" ]
 
-        SnapshotEvent data ->
+        SnapshotEvent _ ->
             [ cameraSvg color (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight) ]
 
         ManuallySendToBackend _ ->
@@ -6408,13 +6408,13 @@ eventIcon color event columnIndex rowIndex =
         ManuallySendPortEvent _ ->
             [ circleHelper "big-circle" ]
 
-        EffectFailedEvent clientId _ ->
+        EffectFailedEvent _ _ ->
             [ circleHelper "circle" ]
 
-        NavigateBack clientId ->
+        NavigateBack _ ->
             [ circleHelper "big-circle" ]
 
-        NavigateForward clientId ->
+        NavigateForward _ ->
             [ circleHelper "big-circle" ]
     )
         ++ (if noErrors then
