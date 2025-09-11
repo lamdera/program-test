@@ -4812,7 +4812,7 @@ isSkippable eventType =
         ManuallySendPortEvent _ ->
             True
 
-        EffectFailedEvent clientId _ ->
+        EffectFailedEvent _ _ ->
             True
 
 
@@ -5030,7 +5030,7 @@ checkCachedElmValueHelper event state =
                 ManuallySendPortEvent _ ->
                     Nothing
 
-                EffectFailedEvent clientId _ ->
+                EffectFailedEvent _ _ ->
                     Nothing
     }
 
@@ -5610,7 +5610,7 @@ currentStepText currentStep testView_ =
                 ManuallySendPortEvent data ->
                     "Manually triggered \"" ++ data.portName ++ "\" port: " ++ Json.Encode.encode 0 data.value
 
-                EffectFailedEvent clientId effect ->
+                EffectFailedEvent _ effect ->
                     case effect of
                         PushUrlFailed ->
                             "Browser.Navigation.pushUrl error"
@@ -5750,7 +5750,7 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                 ManuallySendPortEvent _ ->
                     []
 
-                EffectFailedEvent clientId _ ->
+                EffectFailedEvent _ _ ->
                     []
     in
     { columnIndex = state.columnIndex + 1
@@ -6292,7 +6292,7 @@ eventIcon color eventType columnIndex rowIndex =
         ManuallySendPortEvent _ ->
             [ circleHelper "big-circle" ]
 
-        EffectFailedEvent clientId _ ->
+        EffectFailedEvent _ _ ->
             [ circleHelper "circle"
             , xSvg "red" (columnIndex * timelineColumnWidth) (rowIndex * timelineRowHeight)
             ]
@@ -6790,7 +6790,7 @@ testOverlay windowWidth testView_ currentStep =
         ]
         [ Html.div
             [ Html.Attributes.style "padding" "4px", Html.Attributes.style "display" "flex" ]
-            [ overlayButton PressedBackToOverview "Close test"
+            [ overlayButton PressedBackToOverview "Close Test"
             , Html.div [ Html.Attributes.style "display" "inline-block", Html.Attributes.style "padding" "4px" ] []
             , overlayButton PressedToggleOverlayPosition "Move"
             , Html.div [ Html.Attributes.style "display" "inline-block", Html.Attributes.style "padding" "4px" ] []
