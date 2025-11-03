@@ -38,6 +38,8 @@ jobs:
       # Install npm packages, unless we restored them from cache.
       # Since `npm ci` removes the node_modules folder before running it’s
       # important to skip this step if cache was restored.
+      - name: Setup lamdera dependencies
+        run: (cd example/counter && npx lamdera make src/*.elm)
       - name: npm ci
         if: steps.cache-node_modules.outputs.cache-hit != 'true'
         run: npm ci
