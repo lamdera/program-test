@@ -1,0 +1,10 @@
+{
+  "name": "program-test",
+  "scripts": {
+    "test": "cd example/counter && elm-test --compiler `which lamdera`"
+  },
+  "devDependencies": {
+    "elm-test": "^0.19.1-revision16",
+    "lamdera": "^0.19.1-1.3.2"
+  }
+}

@@ -1,4 +1,4 @@
-module Tests exposing (main)
+module EndToEndTests exposing (main, suite)
 
 import Backend
 import Effect.Browser.Dom as Dom
@@ -10,6 +10,7 @@ import Effect.Test exposing (FileUpload(..), HttpResponse(..), MultipleFilesUplo
 import Effect.Time
 import Frontend
 import Html
+import Test exposing (Test)
 import Test.Html.Query
 import Test.Html.Selector
 import Types exposing (BackendModel, BackendMsg, FrontendModel, FrontendMsg, ToBackend, ToFrontend)
@@ -69,6 +70,13 @@ tests =
             )
         ]
     ]
+
+
+suite : Test
+suite =
+    tests
+        |> List.map Effect.Test.toTest
+        |> Test.describe "suite"
 
 
 main : Program () (Effect.Test.Model ToBackend FrontendMsg FrontendModel ToFrontend BackendMsg BackendModel) (Effect.Test.Msg ToBackend FrontendMsg FrontendModel ToFrontend BackendMsg BackendModel)
