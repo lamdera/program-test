@@ -41,8 +41,6 @@ jobs:
       - name: npm ci
         if: steps.cache-node_modules.outputs.cache-hit != 'true'
         run: npm ci
-      - name: elm-tooling install
-        run: npx --no-install elm-tooling install
       - name: Tests
         run: npm test
       # - name: Run elm-review
