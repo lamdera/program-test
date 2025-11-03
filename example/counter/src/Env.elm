@@ -5,4 +5,4 @@ module Env exposing (..)
 
 
 dummyConfigItem =
-  ""
+    ""
