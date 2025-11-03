@@ -1,8 +1,8 @@
-module Effect.LocalDev exposing (DevBar, InitConfig, Model, Msg, SubscriptionsConfig, UpdateConfig, ViewConfig, fileReadWriteErrorView, hideFreezeAndResetButtons, init, initDevBar, isFullyInitialized, maybeTestEditorView, onConnection, onDisconnection, receivedToFrontend, recordingButton, recordingPill, resetDebugStoreBE, subscriptions, update)
+module Effect.LocalDev exposing (DevBar, InitConfig, Model, Msg, SubscriptionsConfig, UpdateConfig, ViewConfig, fileReadWriteErrorView, hideFreezeAndResetButtons, init, initDevBar, isFullyInitialized, maybeTestEditorView, onConnection, onDisconnection, receivedToFrontend, recordingButton, recordingPill, resetDebugStoreBE, subscriptions, update, ConnectionMsg, Event, EventType, RecordingState, WireMsg)
 
 {-| Ignore this module, for internal use only.
 
-@docs DevBar, InitConfig, Model, Msg, SubscriptionsConfig, UpdateConfig, ViewConfig, fileReadWriteErrorView, hideFreezeAndResetButtons, init, initDevBar, isFullyInitialized, maybeTestEditorView, onConnection, onDisconnection, receivedToFrontend, recordingButton, recordingPill, resetDebugStoreBE, subscriptions, update
+@docs DevBar, InitConfig, Model, Msg, SubscriptionsConfig, UpdateConfig, ViewConfig, fileReadWriteErrorView, hideFreezeAndResetButtons, init, initDevBar, isFullyInitialized, maybeTestEditorView, onConnection, onDisconnection, receivedToFrontend, recordingButton, recordingPill, resetDebugStoreBE, subscriptions, update, ConnectionMsg, Event, EventType, RecordingState, WireMsg
 
 -}
 
@@ -173,7 +173,7 @@ normalInit config =
             case config.devBar.isRecordingEvents of
                 Just recording ->
                     if recording.recordingStopped then
-                        loadTestsFile GotTestFile |> Cmd.map (config.mapMsg << TestEditorMsg)
+                        loadTestsFile GotTestFile |> Cmd.map (\a -> TestEditorMsg a |> config.mapMsg)
 
                     else
                         recordingInitCmds config
@@ -192,7 +192,7 @@ recordingInitCmds config =
     Cmd.batch
         [ config.startRecording ()
         , Task.map2 Tuple.pair Time.now Browser.Dom.getViewport
-            |> Task.perform (config.mapMsg << GotTimeAndViewport)
+            |> Task.perform (\a -> GotTimeAndViewport a |> config.mapMsg)
         ]
 
 
@@ -673,7 +673,7 @@ normalUpdate config msg m localDevModel =
                                     config.devBar
                             )
                         |> config.debugSaveDevBar
-                    , Cmd.map (config.mapMsg << TestEditorMsg) cmd
+                    , Cmd.map (\a -> TestEditorMsg a |> config.mapMsg) cmd
                     )
 
                 Nothing ->
@@ -768,7 +768,7 @@ normalSubscriptions config =
     case config.devBar.isRecordingEvents of
         Just recording ->
             Sub.batch
-                [ config.gotEvent (config.mapMsg << GotEvent)
+                [ config.gotEvent (\a -> GotEvent a |> config.mapMsg)
                 , if recording.recordingStopped then
                     Browser.Events.onMouseUp (Json.Decode.succeed (config.mapMsg (TestEditorMsg MouseUpEvent)))
 
@@ -1972,14 +1972,17 @@ type alias HttpEvent =
     }
 
 
+sansSerifFont : Html.Attribute msg
 sansSerifFont =
     Html.Attributes.style "font-family" "sans-serif"
 
 
+backgroundColor : { a | charcoal : String } -> Html.Attribute msg
 backgroundColor config =
     Html.Attributes.style "background-color" config.charcoal
 
 
+fontColor : { a | white : String } -> Html.Attribute msg
 fontColor config =
     Html.Attributes.style "color" config.white
 
@@ -2241,7 +2244,7 @@ eventsView config events =
                                             ++ fromJsPortEvent.data
                                             |> Just
 
-                                    HttpLocal { filepath } ->
+                                    HttpLocal _ ->
                                         Nothing
 
                                     WindowResize { width, height } ->
@@ -2411,6 +2414,7 @@ type EventType2
     | Wheel2 ClientId MillisecondWaitBefore WheelEvent
 
 
+eventsToEvent2Helper : { a | previousEvent : Maybe EventType2, rest : List EventType2 } -> List EventType2
 eventsToEvent2Helper state =
     maybeToList state.previousEvent
         ++ state.rest
@@ -2919,8 +2923,8 @@ findIndexHelp index predicate list =
                 findIndexHelp (index + 1) predicate xs
 
 
-eventToString : Int -> Settings -> List ClientId -> List EventType2 -> List Expression
-eventToString depth settings clients events =
+eventToString : Settings -> List ClientId -> List EventType2 -> List Expression
+eventToString settings clients events =
     List.map
         (\event ->
             let
@@ -2949,7 +2953,7 @@ eventToString depth settings clients events =
                         , Codegen.lambda
                             [ Codegen.varPattern (client clientId) ]
                             (Codegen.list
-                                (eventToString (depth + 1) settings clients events2)
+                                (eventToString settings clients events2)
                             )
                         ]
 
@@ -3239,11 +3243,6 @@ testCode testName settings events overriddenHttpRequests =
         clients =
             List.map .clientId events |> listUnique
 
-        events2 : List Expression
-        events2 =
-            eventsToEvent2 { previousEvent = Nothing, previousTime = firstTime, rest = [] } events
-                |> eventToString 0 settings clients
-
         singleFileEvents : List UploadedFile
         singleFileEvents =
             List.filterMap
@@ -3302,7 +3301,9 @@ testCode testName settings events overriddenHttpRequests =
 
                 updatedFields ->
                     Codegen.update "config" updatedFields
-            , Codegen.list events2
+            , eventsToEvent2 { previousEvent = Nothing, previousTime = firstTime, rest = [] } events
+                |> eventToString settings clients
+                |> Codegen.list
             ]
     , needsFileUploadHelper = List.isEmpty singleFileEvents |> not
     , needsMultipleFileUploadHelper = List.isEmpty multiFileEvents |> not
