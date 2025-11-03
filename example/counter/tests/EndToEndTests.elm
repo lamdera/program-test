@@ -32,8 +32,8 @@ config =
     , backendApp = Backend.app_
     , handleHttpRequest = always NetworkErrorResponse
     , handlePortToJs = always Nothing
-    , handleFileUpload = always CancelFileUpload
-    , handleMultipleFilesUpload = always CancelMultipleFilesUpload
+    , handleFileUpload = always UnhandledFileUpload
+    , handleMultipleFilesUpload = always UnhandledMultiFileUpload
     , domain = unsafeUrl
     }
 
