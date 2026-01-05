@@ -2,10 +2,11 @@ module Effect.Test exposing
     ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile, Data, FileContents(..)
     , FrontendActions, backendUpdate, fastForward, group, andThen, EndToEndTest, Action, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
     , checkState, checkBackend, toTest, toSnapshots
-    , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions
+    , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions, addTextures, addTexturesWithOptions
     , startHeadless, HeadlessMsg
     , Button(..), WheelOptions(..), DeltaMode(..), CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent
     , configForApplication, configForDocument, configForElement, configForSandbox
+    , Latency
     )
 
 {-|
@@ -30,7 +31,7 @@ module Effect.Test exposing
 
 Sometimes it's hard to tell what's going on in an end to end test. One way to make this easier to use the `viewer` function. It's like a test runner for your browser that also lets you see the frontend of an app as simulated inputs are being triggered.
 
-@docs fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions
+@docs fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions, addTextures, addTexturesWithOptions
 
 
 ## Test runner
@@ -376,14 +377,16 @@ type alias ToBackendData toBackend =
 
 {-| -}
 type alias BackendPendingEffect toFrontend backendMsg =
-    { cmds : Command BackendOnly toFrontend backendMsg
+    { cmds : List (FlattenedCommand BackendOnly toFrontend backendMsg)
+    , createdAt : Time.Posix
     , stepIndex : Int
     }
 
 
 {-| -}
 type alias FrontendPendingEffect toBackend frontendMsg =
-    { cmds : Command FrontendOnly toBackend frontendMsg
+    { cmds : List (FlattenedCommand FrontendOnly toBackend frontendMsg)
+    , createdAt : Time.Posix
     , stepIndex : Int
     }
 
@@ -934,6 +937,8 @@ type alias FrontendState toBackend frontendMsg frontendModel toFrontend =
     , timers : SeqDict Duration { startTime : Time.Posix }
     , navigation : NavigationHistory
     , windowSize : { width : Int, height : Int }
+    , toBackendLatency : Duration
+    , toFrontendLatency : Duration
     }
 
 
@@ -1194,7 +1199,37 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , navigateBack : DelayInMs -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , navigateForward : DelayInMs -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , setNetworkLatency : DelayInMs -> Latency -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     }
+
+
+setNetworkLatency : ClientId -> DelayInMs -> Latency -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+setNetworkLatency clientId delay latency =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                addEvent
+                                    (SetLatency clientId latency)
+                                    Nothing
+                                    { state
+                                        | frontends =
+                                            SeqDict.insert
+                                                clientId
+                                                { frontend
+                                                    | toBackendLatency = Duration.milliseconds latency.toBackendLatency
+                                                    , toFrontendLatency = Duration.milliseconds latency.toFrontendLatency
+                                                }
+                                                state.frontends
+                                    }
+
+                            Nothing ->
+                                addEvent (SetLatency clientId latency) (ClientIdNotFound clientId |> Just) state
+                    )
+        )
 
 
 {-| -}
@@ -1298,7 +1333,7 @@ start testName startTime2 config actions =
             , backendApp = config.backendApp
             , model = backend
             , history = Array.empty
-            , pendingEffects = Array.fromList [ { cmds = cmd, stepIndex = 0 } ]
+            , pendingEffects = Array.fromList [ { cmds = flattenEffects SeqDict.empty cmd, createdAt = startTime2, stepIndex = 0 } ]
             , frontends = SeqDict.empty
             , counter = 0
             , elapsedTime = Quantity.zero
@@ -1510,7 +1545,17 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                                             clientId
                                             { model = frontend
                                             , sessionId = sessionId
-                                            , pendingEffects = Array.fromList [ { cmds = cmd, stepIndex = Array.length state.history } ]
+                                            , pendingEffects =
+                                                Array.fromList
+                                                    [ { cmds =
+                                                            flattenEffects
+                                                                -- This frontends doesn't include the one we are just now connecting but it shouldn't matter since it's only used for flattening backend broadcasts
+                                                                state.frontends
+                                                                cmd
+                                                      , createdAt = currentTime state
+                                                      , stepIndex = Array.length state.history
+                                                      }
+                                                    ]
                                             , toFrontend = []
                                             , timers = getTimers subscriptions |> SeqDict.map (\_ _ -> { startTime = currentTime state })
                                             , navigation =
@@ -1519,6 +1564,8 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                                                 , forwardUrls = []
                                                 }
                                             , windowSize = windowSize
+                                            , toBackendLatency = Quantity.zero
+                                            , toFrontendLatency = Quantity.zero
                                             }
                                             state.frontends
                                     , counter = state.counter + 1
@@ -1576,6 +1623,7 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                                     , portEvent = portEvent clientId
                                     , navigateForward = navigateForwardAction clientId
                                     , navigateBack = navigateBackAction clientId
+                                    , setNetworkLatency = setNetworkLatency clientId
                                     }
                         in
                         getClientConnectSubs (state2.backendApp.subscriptions state2.model)
@@ -1628,6 +1676,11 @@ type EventType toBackend frontendMsg frontendModel toFrontend backendMsg backend
     | EffectFailedEvent (Maybe ClientId) FailedEffect
     | NavigateBack ClientId
     | NavigateForward ClientId
+    | SetLatency ClientId Latency
+
+
+type alias Latency =
+    { toBackendLatency : DelayInMs, toFrontendLatency : DelayInMs }
 
 
 type FailedEffect
@@ -1708,7 +1761,10 @@ handleFrontendUpdate clientId currentTime2 msg state =
                             | model = newModel
                             , pendingEffects =
                                 Array.push
-                                    { cmds = cmd, stepIndex = Array.length state.history }
+                                    { cmds = flattenEffects state.frontends cmd
+                                    , createdAt = currentTime state
+                                    , stepIndex = Array.length state.history
+                                    }
                                     frontend.pendingEffects
                             , timers =
                                 SeqDict.merge
@@ -1751,7 +1807,10 @@ handleBackendUpdate currentTime2 app msg state =
         | model = newModel
         , pendingEffects =
             Array.push
-                { cmds = cmd, stepIndex = Array.length state.history }
+                { cmds = flattenEffects state.frontends cmd
+                , createdAt = currentTime state
+                , stepIndex = Array.length state.history
+                }
                 state.pendingEffects
         , timers =
             SeqDict.merge
@@ -1800,7 +1859,10 @@ handleUpdateFromBackend clientId currentTime2 { toFrontend, stepIndex } state =
                             | model = newModel
                             , pendingEffects =
                                 Array.push
-                                    { cmds = cmd, stepIndex = Array.length state.history }
+                                    { cmds = flattenEffects state.frontends cmd
+                                    , createdAt = currentTime state
+                                    , stepIndex = Array.length state.history
+                                    }
                                     frontendState.pendingEffects
                             , timers =
                                 SeqDict.merge
@@ -1849,7 +1911,10 @@ handleUpdateFromFrontend { sessionId, clientId, toBackend, stepIndex } state =
         | model = newModel
         , pendingEffects =
             Array.push
-                { cmds = cmd, stepIndex = Array.length state.history }
+                { cmds = flattenEffects state.frontends cmd
+                , createdAt = currentTime state
+                , stepIndex = Array.length state.history
+                }
                 state.pendingEffects
         , timers =
             SeqDict.merge
@@ -2996,7 +3061,7 @@ hasPendingEffects state =
     let
         hasEffectsHelper pendingEffects =
             Array.foldl
-                (\{ cmds } hasEffects -> hasEffects || not (List.isEmpty (flattenEffects cmds)))
+                (\{ cmds } hasEffects -> hasEffects || not (List.isEmpty cmds))
                 False
                 pendingEffects
     in
@@ -3165,20 +3230,168 @@ runEffects :
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 runEffects state =
     let
+        { stillPending, ready } =
+            readyEffects Nothing state.pendingEffects state
+
         state2 : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         state2 =
-            Array.foldl (\a state6 -> runBackendEffects a.stepIndex a.cmds state6) (clearBackendEffects state) state.pendingEffects
+            Array.foldl
+                (\a state6 -> List.foldl (runBackendEffects a.stepIndex) state6 a.cmds)
+                { state | pendingEffects = stillPending }
+                ready
     in
     SeqDict.foldl
-        (\clientId { sessionId, pendingEffects } state3 ->
+        (\clientId frontend state3 ->
+            let
+                pending =
+                    readyEffects (Just clientId) frontend.pendingEffects state
+
+                frontend2 : FrontendState toBackend frontendMsg frontendModel toFrontend
+                frontend2 =
+                    { frontend | pendingEffects = pending.stillPending }
+            in
             Array.foldl
-                (\a state6 -> runFrontendEffects sessionId clientId a.stepIndex a.cmds state6)
-                (clearFrontendEffects clientId state3)
-                pendingEffects
+                (\a state6 -> List.foldl (runFrontendEffects frontend2.sessionId clientId a.stepIndex) state6 a.cmds)
+                { state3 | frontends = SeqDict.insert clientId frontend2 state3.frontends }
+                pending.ready
         )
         state2
         state2.frontends
         |> runNetwork
+
+
+type alias PendingEffect r toMsg msg =
+    { cmds : List (FlattenedCommand r toMsg msg)
+    , createdAt : Time.Posix
+    , stepIndex : Int
+    }
+
+
+readyEffects :
+    Maybe ClientId
+    -> Array (PendingEffect r toMsg msg)
+    ->
+        { a
+            | frontends : SeqDict ClientId { b | toFrontendLatency : Duration, toBackendLatency : Duration }
+            , elapsedTime : Duration
+            , startTime : Time.Posix
+        }
+    -> { stillPending : Array (PendingEffect r toMsg msg), ready : Array (PendingEffect r toMsg msg) }
+readyEffects maybeClientId pendingEffects state =
+    Array.foldl
+        (\pendingEffect c ->
+            let
+                { stillPending, ready } =
+                    readyEffectsHelper maybeClientId state pendingEffect.createdAt pendingEffect.cmds
+            in
+            case stillPending of
+                [] ->
+                    { stillPending = c.stillPending, ready = Array.push { pendingEffect | cmds = ready } c.ready }
+
+                _ ->
+                    { stillPending = Array.push { pendingEffect | cmds = stillPending } c.stillPending
+                    , ready = Array.push { pendingEffect | cmds = ready } c.ready
+                    }
+        )
+        { stillPending = Array.empty, ready = Array.empty }
+        pendingEffects
+
+
+readyEffectsHelper :
+    Maybe ClientId
+    ->
+        { a
+            | frontends : SeqDict ClientId { b | toFrontendLatency : Duration, toBackendLatency : Duration }
+            , elapsedTime : Duration
+            , startTime : Time.Posix
+        }
+    -> Time.Posix
+    -> List (FlattenedCommand r toMsg msg)
+    -> { stillPending : List (FlattenedCommand r toMsg msg), ready : List (FlattenedCommand r toMsg msg) }
+readyEffectsHelper maybeClientId state createdAt effects =
+    List.foldl
+        (\effect { stillPending, ready } ->
+            case effect of
+                FlattenedCommand_SendToBackend _ ->
+                    case maybeClientId of
+                        Just clientId ->
+                            case SeqDict.get clientId state.frontends of
+                                Just frontend ->
+                                    if Duration.from createdAt (currentTime state) |> Quantity.lessThan frontend.toBackendLatency then
+                                        { stillPending = effect :: stillPending, ready = ready }
+
+                                    else
+                                        { stillPending = stillPending, ready = effect :: ready }
+
+                                Nothing ->
+                                    { stillPending = stillPending, ready = ready }
+
+                        Nothing ->
+                            { stillPending = stillPending, ready = ready }
+
+                FlattenedCommand_NavigationPushUrl _ _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_NavigationReplaceUrl _ _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_NavigationBack _ _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_NavigationForward _ _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_NavigationLoad _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_NavigationReload ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_NavigationReloadAndSkipCache ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_Task _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_Port _ _ _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_SendToFrontend clientId _ ->
+                    case SeqDict.get clientId state.frontends of
+                        Just frontend ->
+                            if Duration.from createdAt (currentTime state) |> Quantity.lessThan frontend.toFrontendLatency then
+                                { stillPending = effect :: stillPending, ready = ready }
+
+                            else
+                                { stillPending = stillPending, ready = effect :: ready }
+
+                        Nothing ->
+                            { stillPending = stillPending, ready = ready }
+
+                FlattenedCommand_FileDownloadUrl _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_FileDownloadString _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_FileDownloadBytes _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_FileSelectFile _ _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_FileSelectFiles _ _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_HttpCancel _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
+                FlattenedCommand_Passthrough _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+        )
+        { stillPending = [], ready = [] }
+        effects
+        |> (\{ stillPending, ready } -> { stillPending = List.reverse stillPending, ready = List.reverse ready })
 
 
 {-| -}
@@ -3200,29 +3413,6 @@ runNetwork state =
         )
         { state2 | toBackend = [] }
         state2.frontends
-
-
-{-| -}
-clearBackendEffects :
-    State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clearBackendEffects state =
-    { state | pendingEffects = Array.empty }
-
-
-{-| -}
-clearFrontendEffects :
-    ClientId
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-clearFrontendEffects clientId state =
-    { state
-        | frontends =
-            SeqDict.updateIfExists
-                clientId
-                (\frontend -> { frontend | pendingEffects = Array.empty })
-                state.frontends
-    }
 
 
 type alias NavigationHistory =
@@ -3277,15 +3467,12 @@ runFrontendEffects :
     SessionId
     -> ClientId
     -> Int
-    -> Command FrontendOnly toBackend frontendMsg
+    -> FlattenedCommand FrontendOnly toBackend frontendMsg
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
     case effectsToPerform of
-        Batch nestedEffectsToPerform ->
-            List.foldl (runFrontendEffects sessionId clientId stepIndex) state nestedEffectsToPerform
-
-        SendToBackend toBackend ->
+        FlattenedCommand_SendToBackend toBackend ->
             { state
                 | toBackend =
                     state.toBackend
@@ -3297,7 +3484,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                            ]
             }
 
-        NavigationPushUrl _ urlText ->
+        FlattenedCommand_NavigationPushUrl _ urlText ->
             case normalizeUrl state.domain urlText of
                 Just url ->
                     let
@@ -3327,7 +3514,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                 Nothing ->
                     addEvent (EffectFailedEvent (Just clientId) PushUrlFailed) (InvalidBrowserNavigationUrl urlText |> Just) state
 
-        NavigationReplaceUrl _ urlText ->
+        FlattenedCommand_NavigationReplaceUrl _ urlText ->
             case normalizeUrl state.domain urlText of
                 Just url ->
                     let
@@ -3351,11 +3538,11 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                 Nothing ->
                     addEvent (EffectFailedEvent (Just clientId) ReplaceUrlFailed) (InvalidBrowserNavigationUrl urlText |> Just) state
 
-        NavigationLoad _ ->
+        FlattenedCommand_NavigationLoad _ ->
             -- TODO
             state
 
-        NavigationBack _ steps ->
+        FlattenedCommand_NavigationBack _ steps ->
             case SeqDict.get clientId state.frontends of
                 Just frontend ->
                     let
@@ -3382,7 +3569,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                 Nothing ->
                     state
 
-        NavigationForward _ steps ->
+        FlattenedCommand_NavigationForward _ steps ->
             case SeqDict.get clientId state.frontends of
                 Just frontend ->
                     let
@@ -3409,25 +3596,22 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                 Nothing ->
                     state
 
-        NavigationReload ->
+        FlattenedCommand_NavigationReload ->
             -- TODO
             state
 
-        NavigationReloadAndSkipCache ->
+        FlattenedCommand_NavigationReloadAndSkipCache ->
             -- TODO
             state
 
-        None ->
-            state
-
-        Task task ->
+        FlattenedCommand_Task task ->
             let
                 ( newState, msg ) =
                     runTask (Just clientId) state task
             in
             handleFrontendUpdate clientId (currentTime newState) msg newState
 
-        Port portName _ value ->
+        FlattenedCommand_Port portName _ value ->
             let
                 portRequest =
                     { clientId = clientId, portName = portName, value = value }
@@ -3466,17 +3650,14 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                 Nothing ->
                     newState
 
-        SendToFrontend _ _ ->
+        FlattenedCommand_SendToFrontend _ _ ->
             state
 
-        SendToFrontends _ _ ->
-            state
-
-        FileDownloadUrl _ ->
+        FlattenedCommand_FileDownloadUrl _ ->
             -- TODO
             state
 
-        FileDownloadString data ->
+        FlattenedCommand_FileDownloadString data ->
             { state
                 | downloads =
                     { filename = data.name
@@ -3487,7 +3668,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                         :: state.downloads
             }
 
-        FileDownloadBytes data ->
+        FlattenedCommand_FileDownloadBytes data ->
             { state
                 | downloads =
                     { filename = data.name
@@ -3498,7 +3679,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                         :: state.downloads
             }
 
-        FileSelectFile mimeTypes msg ->
+        FlattenedCommand_FileSelectFile mimeTypes msg ->
             let
                 fileUpload : FileUpload
                 fileUpload =
@@ -3522,7 +3703,7 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                 UnhandledFileUpload ->
                     addEvent (EffectFailedEvent (Just clientId) FileSelectFailed) (Just FileUploadNotHandled) state2
 
-        FileSelectFiles mimeTypes msg ->
+        FlattenedCommand_FileSelectFiles mimeTypes msg ->
             let
                 fileUpload : MultipleFilesUpload
                 fileUpload =
@@ -3556,14 +3737,11 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                         (Just MultipleFilesUploadNotHandled)
                         state2
 
-        Broadcast _ ->
-            state
-
-        HttpCancel _ ->
+        FlattenedCommand_HttpCancel _ ->
             -- TODO
             state
 
-        Passthrough _ ->
+        FlattenedCommand_Passthrough _ ->
             state
 
 
@@ -3600,35 +3778,121 @@ getWindowResizeSubscriptions subscription =
 
 
 {-| -}
-flattenEffects : Command restriction toBackend frontendMsg -> List (Command restriction toBackend frontendMsg)
-flattenEffects effect =
+flattenEffects :
+    SeqDict ClientId (FrontendState a b c d)
+    -> Command restriction toBackend frontendMsg
+    -> List (FlattenedCommand restriction toBackend frontendMsg)
+flattenEffects frontends effect =
     case effect of
         Batch effects ->
-            List.concatMap flattenEffects effects
+            List.concatMap (flattenEffects frontends) effects
 
         None ->
             []
 
-        _ ->
-            [ effect ]
+        SendToFrontends (Effect.Internal.SessionId sessionId) toMsg ->
+            List.filterMap
+                (\( clientId, frontend ) ->
+                    if Effect.Lamdera.sessionIdToString frontend.sessionId == sessionId then
+                        Just (FlattenedCommand_SendToFrontend clientId toMsg)
+
+                    else
+                        Nothing
+                )
+                (SeqDict.toList frontends)
+
+        SendToBackend toMsg ->
+            [ FlattenedCommand_SendToBackend toMsg ]
+
+        NavigationPushUrl navigationKey string ->
+            [ FlattenedCommand_NavigationPushUrl navigationKey string ]
+
+        NavigationReplaceUrl navigationKey string ->
+            [ FlattenedCommand_NavigationReplaceUrl navigationKey string ]
+
+        NavigationBack navigationKey int ->
+            [ FlattenedCommand_NavigationBack navigationKey int ]
+
+        NavigationForward navigationKey int ->
+            [ FlattenedCommand_NavigationForward navigationKey int ]
+
+        NavigationLoad string ->
+            [ FlattenedCommand_NavigationLoad string ]
+
+        NavigationReload ->
+            [ FlattenedCommand_NavigationReload ]
+
+        NavigationReloadAndSkipCache ->
+            [ FlattenedCommand_NavigationReloadAndSkipCache ]
+
+        Task task ->
+            [ FlattenedCommand_Task task ]
+
+        Port string function value ->
+            [ FlattenedCommand_Port string function value ]
+
+        SendToFrontend (Effect.Internal.ClientId clientId) toMsg ->
+            [ FlattenedCommand_SendToFrontend (Effect.Lamdera.clientIdFromString clientId) toMsg ]
+
+        Broadcast toMsg ->
+            List.map (\( clientId, _ ) -> FlattenedCommand_SendToFrontend clientId toMsg) (SeqDict.toList frontends)
+
+        FileDownloadUrl record ->
+            [ FlattenedCommand_FileDownloadUrl record ]
+
+        FileDownloadString record ->
+            [ FlattenedCommand_FileDownloadString record ]
+
+        FileDownloadBytes record ->
+            [ FlattenedCommand_FileDownloadBytes record ]
+
+        FileSelectFile strings function ->
+            [ FlattenedCommand_FileSelectFile strings function ]
+
+        FileSelectFiles strings function ->
+            [ FlattenedCommand_FileSelectFiles strings function ]
+
+        HttpCancel string ->
+            [ FlattenedCommand_HttpCancel string ]
+
+        Passthrough cmd ->
+            [ FlattenedCommand_Passthrough cmd ]
+
+
+type FlattenedCommand restriction toMsg msg
+    = FlattenedCommand_SendToBackend toMsg
+    | FlattenedCommand_NavigationPushUrl NavigationKey String
+    | FlattenedCommand_NavigationReplaceUrl NavigationKey String
+    | FlattenedCommand_NavigationBack NavigationKey Int
+    | FlattenedCommand_NavigationForward NavigationKey Int
+    | FlattenedCommand_NavigationLoad String
+    | FlattenedCommand_NavigationReload
+    | FlattenedCommand_NavigationReloadAndSkipCache
+    | FlattenedCommand_Task (Task restriction msg msg)
+    | FlattenedCommand_Port String (Json.Encode.Value -> Cmd msg) Json.Encode.Value
+    | FlattenedCommand_SendToFrontend ClientId toMsg
+    | FlattenedCommand_FileDownloadUrl { href : String }
+    | FlattenedCommand_FileDownloadString { name : String, mimeType : String, content : String }
+    | FlattenedCommand_FileDownloadBytes { name : String, mimeType : String, content : Bytes }
+    | FlattenedCommand_FileSelectFile (List String) (File -> msg)
+    | FlattenedCommand_FileSelectFiles (List String) (File -> List File -> msg)
+    | FlattenedCommand_HttpCancel String
+    | FlattenedCommand_Passthrough (Cmd msg)
 
 
 {-| -}
 runBackendEffects :
     Int
-    -> Command BackendOnly toFrontend backendMsg
+    -> FlattenedCommand BackendOnly toFrontend backendMsg
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 runBackendEffects stepIndex effect state =
     case effect of
-        Batch effects ->
-            List.foldl (runBackendEffects stepIndex) state effects
-
-        SendToFrontend (Effect.Internal.ClientId clientId) toFrontend ->
+        FlattenedCommand_SendToFrontend clientId toFrontend ->
             { state
                 | frontends =
                     SeqDict.updateIfExists
-                        (Effect.Lamdera.clientIdFromString clientId)
+                        clientId
                         (\frontend ->
                             { frontend
                                 | toFrontend =
@@ -3639,93 +3903,60 @@ runBackendEffects stepIndex effect state =
                         state.frontends
             }
 
-        SendToFrontends (Effect.Internal.SessionId sessionId) toFrontend ->
-            let
-                sessionId_ =
-                    Effect.Lamdera.sessionIdFromString sessionId
-            in
-            { state
-                | frontends =
-                    SeqDict.map
-                        (\_ frontend ->
-                            if frontend.sessionId == sessionId_ then
-                                { frontend
-                                    | toFrontend =
-                                        frontend.toFrontend
-                                            ++ [ { toFrontend = toFrontend, stepIndex = stepIndex } ]
-                                }
-
-                            else
-                                frontend
-                        )
-                        state.frontends
-            }
-
-        None ->
-            state
-
-        Task task ->
+        FlattenedCommand_Task task ->
             let
                 ( state2, msg ) =
                     runTask Nothing state task
             in
             handleBackendUpdate (currentTime state2) state2.backendApp msg state2
 
-        SendToBackend _ ->
+        FlattenedCommand_SendToBackend _ ->
             state
 
-        NavigationPushUrl _ _ ->
+        FlattenedCommand_NavigationPushUrl _ _ ->
             state
 
-        NavigationReplaceUrl _ _ ->
+        FlattenedCommand_NavigationReplaceUrl _ _ ->
             state
 
-        NavigationLoad _ ->
+        FlattenedCommand_NavigationLoad _ ->
             state
 
-        NavigationBack _ _ ->
+        FlattenedCommand_NavigationBack _ _ ->
             state
 
-        NavigationForward _ _ ->
+        FlattenedCommand_NavigationForward _ _ ->
             state
 
-        NavigationReload ->
+        FlattenedCommand_NavigationReload ->
             state
 
-        NavigationReloadAndSkipCache ->
+        FlattenedCommand_NavigationReloadAndSkipCache ->
             state
 
-        Port _ _ _ ->
+        FlattenedCommand_Port _ _ _ ->
             state
 
-        FileDownloadUrl _ ->
+        FlattenedCommand_FileDownloadUrl _ ->
             state
 
-        FileDownloadString _ ->
+        FlattenedCommand_FileDownloadString _ ->
             state
 
-        FileDownloadBytes _ ->
+        FlattenedCommand_FileDownloadBytes _ ->
             state
 
-        FileSelectFile _ _ ->
+        FlattenedCommand_FileSelectFile _ _ ->
             state
 
-        FileSelectFiles _ _ ->
+        FlattenedCommand_FileSelectFiles _ _ ->
             state
 
-        Broadcast toFrontend ->
-            { state
-                | frontends =
-                    SeqDict.map
-                        (\_ frontend -> { frontend | toFrontend = frontend.toFrontend ++ [ { toFrontend = toFrontend, stepIndex = stepIndex } ] })
-                        state.frontends
-            }
-
-        HttpCancel _ ->
+        FlattenedCommand_HttpCancel _ ->
             -- TODO
             state
 
-        Passthrough _ ->
+        FlattenedCommand_Passthrough _ ->
             state
 
 
@@ -4882,6 +5113,9 @@ eventTypeToTimelineType eventType =
         NavigateForward clientId ->
             FrontendTimeline clientId
 
+        SetLatency clientId _ ->
+            FrontendTimeline clientId
+
 
 {-| -}
 isSkippable : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Bool
@@ -4930,6 +5164,9 @@ isSkippable eventType =
             True
 
         NavigateForward _ ->
+            True
+
+        SetLatency _ _ ->
             True
 
 
@@ -5154,6 +5391,9 @@ checkCachedElmValueHelper event state =
                     Nothing
 
                 NavigateForward _ ->
+                    Nothing
+
+                SetLatency _ _ ->
                     Nothing
     }
 
@@ -5755,6 +5995,13 @@ currentStepText currentStep testView_ =
 
                 NavigateForward _ ->
                     "Pressed browser navigate backward button"
+
+                SetLatency _ { toBackendLatency, toFrontendLatency } ->
+                    "Changed network latency toBackend:"
+                        ++ String.fromFloat toBackendLatency
+                        ++ "ms toFrontend:"
+                        ++ String.fromFloat toFrontendLatency
+                        ++ "ms"
     in
     Html.div
         [ Html.Attributes.style "padding" "4px", Html.Attributes.title fullMsg ]
@@ -5889,6 +6136,9 @@ addTimelineEvent currentTimelineIndex { previousStep, currentStep } event state 
                     []
 
                 NavigateForward _ ->
+                    []
+
+                SetLatency _ _ ->
                     []
     in
     { columnIndex = state.columnIndex + 1
@@ -6416,6 +6666,9 @@ eventIcon color event columnIndex rowIndex =
 
         NavigateForward _ ->
             [ circleHelper "big-circle" ]
+
+        SetLatency _ _ ->
+            [ circleHelper "big-circle" ]
     )
         ++ (if noErrors then
                 []
@@ -6856,7 +7109,7 @@ testView windowWidth instructions testView_ =
 drawCursor : PointerEvent -> Html msg
 drawCursor ( x, y ) =
     Svg.svg
-        [ Svg.Attributes.width (String.fromInt 20)
+        [ Svg.Attributes.width "20"
         , Html.Attributes.style "left" (String.fromFloat x ++ "px")
         , Html.Attributes.style "top" (String.fromFloat y ++ "px")
         , Html.Attributes.style "position" "absolute"
@@ -7458,7 +7711,7 @@ addStringFile file model =
     }
 
 
-{-| Add a file containing data for a `Effect.WebGL.Texture.Texture` to your tests. Right now this is performed with HTTP get requests which means you can only access files in /public (or make get requests to other websites though this isn't recommended since this API might change in the future)
+{-| Add a file containing data for a `Effect.WebGL.Texture.Texture` to your tests. Right now this is performed with HTTP get requests which means you can only access files in /public (or make get requests to other websites but this isn't recommended)
 
     import Effect.Test
 
@@ -7484,7 +7737,56 @@ addTexture file model =
     }
 
 
-{-| Add a file containing data for a `Effect.WebGL.Texture.Texture` to your tests. Right now this is performed with HTTP get requests which means you can only access files in /public (or make get requests to other websites though this isn't recommended since this API might change in the future)
+textureOptionsConvertWrap : Effect.Internal.Wrap -> WebGLFix.Texture.Wrap
+textureOptionsConvertWrap wrap =
+    case wrap of
+        Effect.Internal.Repeat ->
+            WebGLFix.Texture.repeat
+
+        Effect.Internal.ClampToEdge ->
+            WebGLFix.Texture.clampToEdge
+
+        Effect.Internal.MirroredRepeat ->
+            WebGLFix.Texture.mirroredRepeat
+
+
+textureOptions options file =
+    WebGLFix.Texture.loadWith
+        { magnify =
+            case options.magnify of
+                Effect.Internal.Linear ->
+                    WebGLFix.Texture.linear
+
+                _ ->
+                    WebGLFix.Texture.nearest
+        , minify =
+            case options.minify of
+                Effect.Internal.Linear ->
+                    WebGLFix.Texture.linear
+
+                Effect.Internal.Nearest ->
+                    WebGLFix.Texture.nearest
+
+                Effect.Internal.NearestMipmapNearest ->
+                    WebGLFix.Texture.nearestMipmapNearest
+
+                Effect.Internal.LinearMipmapNearest ->
+                    WebGLFix.Texture.linearMipmapNearest
+
+                Effect.Internal.NearestMipmapLinear ->
+                    WebGLFix.Texture.nearestMipmapLinear
+
+                Effect.Internal.LinearMipmapLinear ->
+                    WebGLFix.Texture.linearMipmapLinear
+        , horizontalWrap = textureOptionsConvertWrap options.horizontalWrap
+        , verticalWrap = textureOptionsConvertWrap options.verticalWrap
+        , flipY = options.flipY
+        , premultiplyAlpha = options.premultiplyAlpha
+        }
+        file
+
+
+{-| Add a file containing data for a `Effect.WebGL.Texture.Texture` to your tests. Right now this is performed with HTTP get requests which means you can only access files in /public (or make get requests to other websites but this isn't recommended)
 
     import Effect.Test
 
@@ -7501,57 +7803,76 @@ addTexture file model =
 -}
 addTextureWithOptions : Effect.WebGL.Texture.Options -> String -> ViewerWith (Effect.WebGL.Texture.Texture -> b) -> ViewerWith b
 addTextureWithOptions options file model =
-    let
-        convertWrap : Effect.Internal.Wrap -> WebGLFix.Texture.Wrap
-        convertWrap wrap =
-            case wrap of
-                Effect.Internal.Repeat ->
-                    WebGLFix.Texture.repeat
-
-                Effect.Internal.ClampToEdge ->
-                    WebGLFix.Texture.clampToEdge
-
-                Effect.Internal.MirroredRepeat ->
-                    WebGLFix.Texture.mirroredRepeat
-    in
     { cmds =
         Task.andThen
             (\tests ->
-                WebGLFix.Texture.loadWith
-                    { magnify =
-                        case options.magnify of
-                            Effect.Internal.Linear ->
-                                WebGLFix.Texture.linear
-
-                            _ ->
-                                WebGLFix.Texture.nearest
-                    , minify =
-                        case options.minify of
-                            Effect.Internal.Linear ->
-                                WebGLFix.Texture.linear
-
-                            Effect.Internal.Nearest ->
-                                WebGLFix.Texture.nearest
-
-                            Effect.Internal.NearestMipmapNearest ->
-                                WebGLFix.Texture.nearestMipmapNearest
-
-                            Effect.Internal.LinearMipmapNearest ->
-                                WebGLFix.Texture.linearMipmapNearest
-
-                            Effect.Internal.NearestMipmapLinear ->
-                                WebGLFix.Texture.nearestMipmapLinear
-
-                            Effect.Internal.LinearMipmapLinear ->
-                                WebGLFix.Texture.linearMipmapLinear
-                    , horizontalWrap = convertWrap options.horizontalWrap
-                    , verticalWrap = convertWrap options.verticalWrap
-                    , flipY = options.flipY
-                    , premultiplyAlpha = options.premultiplyAlpha
-                    }
-                    file
+                textureOptions options file
                     |> Task.mapError (\error -> { name = file, error = TextureError error })
                     |> Task.map tests
+            )
+            model.cmds
+    }
+
+
+{-| Add a file containing data for a `Effect.WebGL.Texture.Texture` to your tests. Right now this is performed with HTTP get requests which means you can only access files in /public (or make get requests to other websites but this isn't recommended)
+
+    import Effect.Test
+
+    main =
+        Effect.Test.viewerWith
+            (\dict ->
+                [{- End to end tests go here -}]
+            )
+            |> Effect.Test.addTextures [ "/cat.png", "/dog.jpg" ]
+            |> Effect.Test.startViewer
+
+-}
+addTextures : List String -> ViewerWith (RegularDict.Dict String Effect.WebGL.Texture.Texture -> b) -> ViewerWith b
+addTextures files model =
+    { cmds =
+        Task.andThen
+            (\tests ->
+                List.map
+                    (\file ->
+                        WebGLFix.Texture.load file
+                            |> Task.mapError (\error -> { name = file, error = TextureError error })
+                            |> Task.map (Tuple.pair file)
+                    )
+                    files
+                    |> Task.sequence
+                    |> Task.map (\loaded -> tests (RegularDict.fromList loaded))
+            )
+            model.cmds
+    }
+
+
+{-| Add a file containing data for a `Effect.WebGL.Texture.Texture` to your tests. Right now this is performed with HTTP get requests which means you can only access files in /public (or make get requests to other websites but this isn't recommended)
+
+    import Effect.Test
+
+    main =
+        Effect.Test.viewerWith
+            (\dict ->
+                [{- End to end tests go here -}]
+            )
+            |> Effect.Test.addTexturesWithOptions Effect.WebGL.Texture.defaultOptions [ "/cat.png", "/dog.jpg" ]
+            |> Effect.Test.startViewer
+
+-}
+addTexturesWithOptions : Effect.WebGL.Texture.Options -> List String -> ViewerWith (RegularDict.Dict String Effect.WebGL.Texture.Texture -> b) -> ViewerWith b
+addTexturesWithOptions options files model =
+    { cmds =
+        Task.andThen
+            (\tests ->
+                List.map
+                    (\file ->
+                        textureOptions options file
+                            |> Task.mapError (\error -> { name = file, error = TextureError error })
+                            |> Task.map (Tuple.pair file)
+                    )
+                    files
+                    |> Task.sequence
+                    |> Task.map (\loaded -> tests (RegularDict.fromList loaded))
             )
             model.cmds
     }
