@@ -1,12 +1,11 @@
 module Effect.Test exposing
     ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile, Data, FileContents(..)
-    , FrontendActions, backendUpdate, fastForward, group, andThen, EndToEndTest, Action, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
+    , FrontendActions, backendUpdate, fastForward, group, collapsableGroup, andThen, EndToEndTest, Action, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions, addTextures, addTexturesWithOptions
     , startHeadless, HeadlessMsg
-    , Button(..), WheelOptions(..), DeltaMode(..), CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent
+    , Button(..), WheelOptions(..), DeltaMode(..), CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent, Latency
     , configForApplication, configForDocument, configForElement, configForSandbox
-    , Latency, collapsableGroup
     )
 
 {-|
@@ -19,7 +18,7 @@ module Effect.Test exposing
 
 ## Control the tests
 
-@docs FrontendActions, backendUpdate, fastForward, group, andThen, EndToEndTest, Action, HttpBody, HttpPart, DelayInMs, KeyEvent, KeyOptions, PointerEvent, PointerOptions
+@docs FrontendActions, backendUpdate, fastForward, group, collapsableGroup, andThen, EndToEndTest, Action, HttpBody, HttpPart, DelayInMs, KeyEvent, KeyOptions, PointerEvent, PointerOptions
 
 
 ## Check the current state
@@ -43,7 +42,7 @@ If you want to just run the end to end tests to make sure they work, or automati
 
 ## Types
 
-@docs Button, WheelOptions, DeltaMode, CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent
+@docs Button, WheelOptions, DeltaMode, CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent, Latency
 
 
 ## Setting up end-to-end tests for non-Lamdera apps
@@ -1368,7 +1367,7 @@ group list =
 
 
 {-| All actions and events that happen within this group can be minimized in the UI.
-Can be helpful to make it easier to tell what's happening in your end to end tests.
+Useful for organizing different parts of your end to end test.
 -}
 collapsableGroup :
     String
@@ -1701,6 +1700,7 @@ type EventType toBackend frontendMsg frontendModel toFrontend backendMsg backend
     | CollapsableGroupEnd String
 
 
+{-| -}
 type alias Latency =
     { toBackendLatency : DelayInMs, toFrontendLatency : DelayInMs }
 
@@ -1760,7 +1760,7 @@ handleFrontendUpdate :
     -> frontendMsg
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-handleFrontendUpdate clientId currentTime2 msg state =
+handleFrontendUpdate clientId time msg state =
     case SeqDict.get clientId state.frontends of
         Just frontend ->
             let
@@ -1790,7 +1790,7 @@ handleFrontendUpdate clientId currentTime2 msg state =
                                     frontend.pendingEffects
                             , timers =
                                 SeqDict.merge
-                                    (\duration _ dict -> SeqDict.insert duration { startTime = currentTime2 } dict)
+                                    (\duration _ dict -> SeqDict.insert duration { startTime = time } dict)
                                     (\_ _ _ dict -> dict)
                                     (\duration _ dict -> SeqDict.remove duration dict)
                                     newTimers
@@ -1812,7 +1812,7 @@ handleBackendUpdate :
     -> backendMsg
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-handleBackendUpdate currentTime2 app msg state =
+handleBackendUpdate time app msg state =
     let
         ( newModel, cmd ) =
             app.update msg state.model
@@ -1836,7 +1836,7 @@ handleBackendUpdate currentTime2 app msg state =
                 state.pendingEffects
         , timers =
             SeqDict.merge
-                (\duration _ dict -> SeqDict.insert duration { startTime = currentTime2 } dict)
+                (\duration _ dict -> SeqDict.insert duration { startTime = time } dict)
                 (\_ _ _ dict -> dict)
                 (\duration _ dict -> SeqDict.remove duration dict)
                 newTimers
@@ -1858,7 +1858,7 @@ handleUpdateFromBackend :
     -> ToFrontendData toFrontend
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-handleUpdateFromBackend clientId currentTime2 { toFrontend, stepIndex } state =
+handleUpdateFromBackend clientId time { toFrontend, stepIndex } state =
     case SeqDict.get clientId state.frontends of
         Just frontendState ->
             let
@@ -1888,7 +1888,7 @@ handleUpdateFromBackend clientId currentTime2 { toFrontend, stepIndex } state =
                                     frontendState.pendingEffects
                             , timers =
                                 SeqDict.merge
-                                    (\duration _ dict -> SeqDict.insert duration { startTime = currentTime2 } dict)
+                                    (\duration _ dict -> SeqDict.insert duration { startTime = time } dict)
                                     (\_ _ _ dict -> dict)
                                     (\duration _ dict -> SeqDict.remove duration dict)
                                     newTimers
@@ -3252,6 +3252,9 @@ runEffects :
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 runEffects state =
     let
+        oldState =
+            state
+
         { stillPending, ready } =
             readyEffects Nothing state.pendingEffects state
 
@@ -3266,7 +3269,7 @@ runEffects state =
         (\clientId frontend state3 ->
             let
                 pending =
-                    readyEffects (Just clientId) frontend.pendingEffects state
+                    readyEffects (Just clientId) frontend.pendingEffects oldState
 
                 frontend2 : FrontendState toBackend frontendMsg frontendModel toFrontend
                 frontend2 =
@@ -4511,7 +4514,7 @@ viewTest test index stepIndex timelineIndex position expandedCollapsableGroups2 
             Array.foldl
                 (\event ( index2, stack, groups ) ->
                     case event.eventType of
-                        CollapsableGroupStart name ->
+                        CollapsableGroupStart _ ->
                             ( index2 + 1, index2 :: stack, groups )
 
                         CollapsableGroupEnd name ->
@@ -4602,7 +4605,7 @@ viewTest test index stepIndex timelineIndex position expandedCollapsableGroups2 
                         stepIndex3 =
                             adjustColumnIndex
                                 (collapsedRanges currentTest.collapsedGroups currentTest.precomputed.collapsableGroupRanges)
-                                stepIndex
+                                stepIndex2
                     in
                     Browser.Dom.setViewportOf
                         timelineContainerId
@@ -4788,7 +4791,7 @@ update config msg (Model model) =
                     in
                     ( currentTest2
                     , Cmd.batch
-                        [ case Array.get (visibleStepIndex currentTest) currentTest.steps of
+                        [ case Array.get (visibleStepIndex currentTest2) currentTest2.steps of
                             Just step ->
                                 getButtonPosition step
 
@@ -4915,7 +4918,7 @@ update config msg (Model model) =
                     )
             )
 
-        PressedTimelineEvent2 mouseButton mouseX mouseY ->
+        PressedTimelineEvent2 mouseButton mouseX _ ->
             updateCurrentTest
                 (\test ->
                     let
@@ -5257,7 +5260,7 @@ stepTo centerScrollView stepIndex currentTest =
                                 stepIndex2 : Int
                                 stepIndex2 =
                                     adjustColumnIndex
-                                        (collapsedRanges currentTest.collapsedGroups currentTest.precomputed.collapsableGroupRanges)
+                                        (collapsedRanges currentTest2.collapsedGroups currentTest2.precomputed.collapsableGroupRanges)
                                         stepIndex
 
                                 x =
@@ -5512,10 +5515,10 @@ eventTypeToTimelineType eventType =
         SetLatency clientId _ ->
             FrontendTimeline clientId
 
-        CollapsableGroupStart string ->
+        CollapsableGroupStart _ ->
             BackendTimeline
 
-        CollapsableGroupEnd string ->
+        CollapsableGroupEnd _ ->
             BackendTimeline
 
 
@@ -5571,10 +5574,10 @@ isSkippable eventType =
         SetLatency _ _ ->
             True
 
-        CollapsableGroupStart string ->
+        CollapsableGroupStart _ ->
             True
 
-        CollapsableGroupEnd string ->
+        CollapsableGroupEnd _ ->
             True
 
 
@@ -5857,10 +5860,10 @@ checkCachedElmValueHelper event state =
                 SetLatency _ _ ->
                     Nothing
 
-                CollapsableGroupStart string ->
+                CollapsableGroupStart _ ->
                     Nothing
 
-                CollapsableGroupEnd string ->
+                CollapsableGroupEnd _ ->
                     Nothing
     }
 
@@ -6684,10 +6687,10 @@ eventToArrows timelines collapsedRanges2 adjustedColumnIndex event rowIndex =
         SetLatency _ _ ->
             []
 
-        CollapsableGroupStart string ->
+        CollapsableGroupStart _ ->
             []
 
-        CollapsableGroupEnd string ->
+        CollapsableGroupEnd _ ->
             []
 
 
@@ -6883,13 +6886,12 @@ timelineView windowWidth stepIndex testView_ =
                 testView_.timelineViewData
             )
         , if testView_.showModel then
-            Html.Lazy.lazy8
+            Html.Lazy.lazy7
                 timelineViewHelperShowModel
                 testView_.collapsedGroups
                 (windowWidth - sideBarWidth - 1 {- The extra minus 1 is to account for rounding errors -})
                 testView_.timelineIndex
                 stepIndex
-                testView_.steps
                 testView_.precomputed
                 testView_.timelineViewData
                 testView_.diffWithIndex
@@ -6911,12 +6913,11 @@ timelineViewHelperShowModel :
     -> Int
     -> Int
     -> Int
-    -> Array (Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     -> TestViewPrecomputed
     -> List ( CurrentTimeline, TimelineViewData toBackend frontendMsg frontendModel toFrontend backendMsg backendModel )
     -> Maybe Int
     -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-timelineViewHelperShowModel collapsedGroups timelineWidth timelineIndex stepIndex steps precomputed timelineViewData2 diffWithIndex =
+timelineViewHelperShowModel collapsedGroups timelineWidth timelineIndex stepIndex precomputed timelineViewData2 diffWithIndex =
     let
         collapsedRanges2 : List CollapsableRange
         collapsedRanges2 =
@@ -8205,6 +8206,10 @@ testOverlay windowWidth testView_ stepIndex currentStep =
         ]
 
 
+elapsedTimeView :
+    Event toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> Html msg
 elapsedTimeView currentStep testView_ =
     Html.div
         [ Html.Attributes.style "display" "inline-block"
@@ -8764,6 +8769,7 @@ textureOptionsConvertWrap wrap =
             WebGLFix.Texture.mirroredRepeat
 
 
+textureOptions : Effect.WebGL.Texture.Options -> String -> Task.Task WebGLFix.Texture.Error WebGLFix.Texture.Texture
 textureOptions options file =
     WebGLFix.Texture.loadWith
         { magnify =
