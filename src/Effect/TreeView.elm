@@ -1,4 +1,4 @@
-module Effect.TreeView exposing (CollapsedField(..), MsgConfig, PathNode, treeView, treeViewDiff)
+module Effect.TreeView exposing (CollapsedField(..), MsgConfig, PathNode, newColor, oldColor, treeView, treeViewDiff)
 
 import DebugParser exposing (ElmValue(..), ExpandableValue(..))
 import Html exposing (Attribute, Html)
