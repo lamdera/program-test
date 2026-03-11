@@ -1,8 +1,8 @@
-module Effect.Websocket exposing (Connection, SendError(..), close, createHandle, listen, sendString, CloseEventCode(..))
+module Effect.Websocket exposing (Connection, SendError(..), close, createHandle, listen, sendString, CloseEventCode(..), connectionToInternal, internalToConnection)
 
 {-|
 
-@docs Connection, SendError, close, createHandle, listen, sendString, CloseEventCode
+@docs Connection, SendError, close, createHandle, listen, sendString, CloseEventCode, connectionToInternal, internalToConnection
 
 -}
 
@@ -17,6 +17,20 @@ import Websocket
 -}
 type Connection
     = Connection String String
+
+
+{-| Internal function, please ignore
+-}
+connectionToInternal : Connection -> Websocket.Connection
+connectionToInternal (Connection id url) =
+    Websocket.Connection id url
+
+
+{-| Internal function, please ignore
+-}
+internalToConnection : Websocket.Connection -> Connection
+internalToConnection (Websocket.Connection id url) =
+    Connection id url
 
 
 {-| Create a websocket handle that you can then open by calling `listen` or `sendString`.

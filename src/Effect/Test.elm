@@ -1,6 +1,6 @@
 module Effect.Test exposing
-    ( start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile, Data, FileContents(..)
-    , FrontendActions, backendUpdate, fastForward, group, collapsableGroup, andThen, EndToEndTest, Action, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
+    ( start, testGroup, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile, Data, FileContents(..)
+    , FrontendActions, backendUpdate, fastForward, group, collapsableGroup, andThen, websocketSendString, WebsocketState, EndToEndTest, Action, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions, addTextures, addTexturesWithOptions
     , startHeadless, HeadlessMsg
@@ -13,12 +13,12 @@ module Effect.Test exposing
 
 ## Setting up end to end tests
 
-@docs start, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse, RequestedBy, PortToJs, FileData, FileUpload, MultipleFilesUpload, uploadBytesFile, uploadStringFile, Data, FileContents
+@docs start, testGroup, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse, RequestedBy, PortToJs, FileData, FileUpload, MultipleFilesUpload, uploadBytesFile, uploadStringFile, Data, FileContents
 
 
 ## Control the tests
 
-@docs FrontendActions, backendUpdate, fastForward, group, collapsableGroup, andThen, EndToEndTest, Action, HttpBody, HttpPart, DelayInMs, KeyEvent, KeyOptions, PointerEvent, PointerOptions
+@docs FrontendActions, backendUpdate, fastForward, group, collapsableGroup, andThen, websocketSendString, WebsocketState, EndToEndTest, Action, HttpBody, HttpPart, DelayInMs, KeyEvent, KeyOptions, PointerEvent, PointerOptions
 
 
 ## Check the current state
@@ -73,6 +73,7 @@ import Effect.Snapshot exposing (Snapshot)
 import Effect.Subscription exposing (Subscription)
 import Effect.TreeView exposing (CollapsedField(..), PathNode)
 import Effect.WebGL.Texture
+import Effect.Websocket
 import Expect exposing (Expectation)
 import Html exposing (Html)
 import Html.Attributes
@@ -407,6 +408,7 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
     , timers : SeqDict Duration { startTime : Time.Posix }
     , testErrors : List TestError
     , httpRequests : List HttpRequest
+    , websockets : SeqDict Websocket.Connection WebsocketState
     , fileUploads : List { uploadedAt : Time.Posix, uploadedBy : ClientId, upload : FileUpload }
     , multipleFileUploads : List { uploadedAt : Time.Posix, uploadedBy : ClientId, upload : MultipleFilesUpload }
     , handleHttpRequest : { data : Data frontendModel backendModel, currentRequest : HttpRequest } -> HttpResponse
@@ -423,8 +425,14 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
 
 
 {-| -}
+type alias WebsocketState =
+    { createdAt : Time.Posix, closedAt : Maybe Time.Posix, dataSent : Array { data : String, sentAt : Time.Posix } }
+
+
+{-| -}
 type alias Data frontendModel backendModel =
     { httpRequests : List HttpRequest
+    , websockets : SeqDict ( RequestedBy, Effect.Websocket.Connection ) WebsocketState
     , portRequests : List PortToJs
     , fileUploads : List { uploadedAt : Time.Posix, uploadedBy : ClientId, upload : FileUpload }
     , multipleFileUploads : List { uploadedAt : Time.Posix, uploadedBy : ClientId, upload : MultipleFilesUpload }
@@ -439,6 +447,20 @@ type alias Data frontendModel backendModel =
 stateToData : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Data frontendModel backendModel
 stateToData state =
     { httpRequests = state.httpRequests
+    , websockets =
+        List.foldl
+            (\( clientId, frontend ) list ->
+                List.map
+                    (\( key, value ) -> ( ( RequestedByFrontend clientId, Effect.Websocket.internalToConnection key ), value ))
+                    (SeqDict.toList frontend.websockets)
+                    ++ list
+            )
+            (List.map
+                (\( key, value ) -> ( ( RequestedByBackend, Effect.Websocket.internalToConnection key ), value ))
+                (SeqDict.toList state.websockets)
+            )
+            (SeqDict.toList state.frontends)
+            |> SeqDict.fromList
     , portRequests = state.portRequests
     , fileUploads = state.fileUploads
     , multipleFileUploads = state.multipleFileUploads
@@ -564,6 +586,8 @@ type TestError
     | HttpResponseCantConvertTextureToString HttpRequest
     | HttpRequestNotHandled HttpRequest
     | PortEventNotHandled String
+    | WebsocketClosed
+    | WebsocketMissing
 
 
 {-| -}
@@ -575,16 +599,38 @@ type HttpPart
 
 {-| -}
 type EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    = NextStep (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-    | AndThen (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    = EndToEndTest (EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    | EndToEndTestGroup String (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+
+
+{-| Group together multiple end to end tests so they are easier to find.
+
+    import Effect.Test
+
+    Effect.Test.testGroup
+        "Login tests"
+        [ Effect.Test.start "Login via homepage" ...
+        , Effect.Test.start "Login via promotional link" ...
+        ]
+
+-}
+testGroup : String -> List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+testGroup =
+    EndToEndTestGroup
+
+
+{-| -}
+type EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    = NextStep (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    | AndThen (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) (EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     | Start (State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 
 
 {-| -}
 type Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     = Action
-        (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-         -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+        (EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+         -> EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
         )
 
 
@@ -795,9 +841,15 @@ testErrorToString error =
         PortEventNotHandled portName ->
             "Data was sent to the frontend through a port named \"" ++ portName ++ "\" but there was no subscription for it"
 
+        WebsocketClosed ->
+            "websocketSendString was called on a websocket that is already closed."
+
+        WebsocketMissing ->
+            "websocketSendString was called on a websocket that doesn't exist."
+
 
 {-| -}
-toTest : EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Test
+toTest : EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Test
 toTest instructions =
     let
         state =
@@ -893,7 +945,7 @@ gatherWith testFn list =
 This can be used with Effect.Snapshot.uploadSnapshots to perform visual regression testing.
 -}
 toSnapshots :
-    EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> List (Snapshot frontendMsg)
 toSnapshots instructions =
     let
@@ -914,7 +966,7 @@ toSnapshots instructions =
 
 {-| -}
 instructionsToState :
-    EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 instructionsToState inProgress =
     case inProgress of
@@ -939,6 +991,7 @@ type alias FrontendState toBackend frontendMsg frontendModel toFrontend =
     , windowSize : { width : Int, height : Int }
     , toBackendLatency : Duration
     , toFrontendLatency : Duration
+    , websockets : SeqDict Websocket.Connection WebsocketState
     }
 
 
@@ -1200,7 +1253,126 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
     , navigateBack : DelayInMs -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , navigateForward : DelayInMs -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , setNetworkLatency : DelayInMs -> Latency -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , websocketSendString : DelayInMs -> Effect.Websocket.Connection -> String -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     }
+
+
+{-| Send data to a websocket listener on the backend.
+-}
+websocketSendString : DelayInMs -> Effect.Websocket.Connection -> String -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+websocketSendString delay connection data =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        let
+                            connection2 : Websocket.Connection
+                            connection2 =
+                                Effect.Websocket.connectionToInternal connection
+                        in
+                        case SeqDict.get connection2 state.websockets of
+                            Just websocket ->
+                                List.foldl
+                                    (\msg state2 ->
+                                        handleBackendUpdate (currentTime state2) (msg data) state2
+                                    )
+                                    (addEvent
+                                        (WebsocketSendStringEvent Nothing connection2 data)
+                                        (case websocket.closedAt of
+                                            Just _ ->
+                                                Just WebsocketClosed
+
+                                            Nothing ->
+                                                Nothing
+                                        )
+                                        { state
+                                            | websockets =
+                                                SeqDict.insert
+                                                    connection2
+                                                    { websocket
+                                                        | dataSent =
+                                                            Array.push
+                                                                { sentAt = currentTime state, data = data }
+                                                                websocket.dataSent
+                                                    }
+                                                    state.websockets
+                                        }
+                                    )
+                                    (getWebsocketOnData (state.backendApp.subscriptions state.model))
+
+                            Nothing ->
+                                addEvent
+                                    (WebsocketSendStringEvent Nothing connection2 data)
+                                    (Just WebsocketMissing)
+                                    state
+                    )
+        )
+
+
+frontendWebsocketSendString : ClientId -> DelayInMs -> Effect.Websocket.Connection -> String -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+frontendWebsocketSendString clientId delay connection data =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        let
+                            connection2 : Websocket.Connection
+                            connection2 =
+                                Effect.Websocket.connectionToInternal connection
+                        in
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                case SeqDict.get connection2 frontend.websockets of
+                                    Just websocket ->
+                                        List.foldl
+                                            (\msg state2 ->
+                                                handleFrontendUpdate clientId (currentTime state2) (msg data) state2
+                                            )
+                                            (addEvent
+                                                (WebsocketSendStringEvent (Just clientId) connection2 data)
+                                                (case websocket.closedAt of
+                                                    Just _ ->
+                                                        Just WebsocketClosed
+
+                                                    Nothing ->
+                                                        Nothing
+                                                )
+                                                { state
+                                                    | frontends =
+                                                        SeqDict.insert
+                                                            clientId
+                                                            { frontend
+                                                                | websockets =
+                                                                    SeqDict.insert
+                                                                        connection2
+                                                                        { websocket
+                                                                            | dataSent =
+                                                                                Array.push
+                                                                                    { sentAt = currentTime state, data = data }
+                                                                                    websocket.dataSent
+                                                                        }
+                                                                        frontend.websockets
+                                                            }
+                                                            state.frontends
+                                                }
+                                            )
+                                            (getWebsocketOnData (state.frontendApp.subscriptions frontend.model))
+
+                                    Nothing ->
+                                        addEvent
+                                            (WebsocketSendStringEvent (Just clientId) connection2 data)
+                                            (Just WebsocketMissing)
+                                            state
+
+                            Nothing ->
+                                addEvent
+                                    (WebsocketSendStringEvent (Just clientId) connection2 data)
+                                    (ClientIdNotFound clientId |> Just)
+                                    state
+                    )
+        )
 
 
 setNetworkLatency : ClientId -> DelayInMs -> Latency -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -1342,6 +1514,7 @@ start testName startTime2 config actions =
             , timers = getTimers (config.backendApp.subscriptions backend) |> SeqDict.map (\_ _ -> { startTime = startTime2 })
             , testErrors = []
             , httpRequests = []
+            , websockets = SeqDict.empty
             , fileUploads = []
             , multipleFileUploads = []
             , handleHttpRequest = config.handleHttpRequest
@@ -1355,7 +1528,7 @@ start testName startTime2 config actions =
             }
                 |> addEvent (BackendInitEvent cmd) Nothing
     in
-    foldList (List.map (\(Action a) -> a) actions) (Start state)
+    foldList (List.map (\(Action a) -> a) actions) (Start state) |> EndToEndTest
 
 
 {-| -}
@@ -1441,7 +1614,6 @@ backendUpdate delayInMs backendMsg =
                     (\state ->
                         handleBackendUpdate
                             (currentTime state)
-                            state.backendApp
                             backendMsg
                             (addEvent (TestEvent Nothing ("Trigger BackendMsg: " ++ Debug.toString backendMsg)) Nothing state)
                     )
@@ -1479,6 +1651,34 @@ getClientConnectSubs backendSub =
                     (Effect.Lamdera.sessionIdToString sessionId |> Effect.Internal.SessionId)
                     (Effect.Lamdera.clientIdToString clientId |> Effect.Internal.ClientId)
             ]
+
+        _ ->
+            []
+
+
+{-| -}
+getWebsocketOnData : Effect.Internal.Subscription r msg -> List (String -> msg)
+getWebsocketOnData sub =
+    case sub of
+        Effect.Internal.SubBatch batch ->
+            List.foldl (\sub2 list -> getWebsocketOnData sub2 ++ list) [] batch
+
+        Effect.Internal.WebsocketListen _ onData _ ->
+            [ onData ]
+
+        _ ->
+            []
+
+
+{-| -}
+getWebsocketOnClose : Effect.Internal.Subscription r msg -> List ({ code : Websocket.CloseEventCode, reason : String } -> msg)
+getWebsocketOnClose sub =
+    case sub of
+        Effect.Internal.SubBatch batch ->
+            List.foldl (\sub2 list -> getWebsocketOnClose sub2 ++ list) [] batch
+
+        Effect.Internal.WebsocketListen _ _ onClose ->
+            [ onClose ]
 
         _ ->
             []
@@ -1585,6 +1785,7 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                                             , windowSize = windowSize
                                             , toBackendLatency = Quantity.zero
                                             , toFrontendLatency = Quantity.zero
+                                            , websockets = SeqDict.empty
                                             }
                                             state.frontends
                                     , counter = state.counter + 1
@@ -1643,12 +1844,13 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                                     , navigateForward = navigateForwardAction clientId
                                     , navigateBack = navigateBackAction clientId
                                     , setNetworkLatency = setNetworkLatency clientId
+                                    , websocketSendString = frontendWebsocketSendString clientId
                                     }
                         in
                         getClientConnectSubs (state2.backendApp.subscriptions state2.model)
                             |> List.foldl
                                 (\msg state3 ->
-                                    handleBackendUpdate (currentTime state3) state3.backendApp (msg sessionId clientId) state3
+                                    handleBackendUpdate (currentTime state3) (msg sessionId clientId) state3
                                 )
                                 state2
                             |> Start
@@ -1698,6 +1900,7 @@ type EventType toBackend frontendMsg frontendModel toFrontend backendMsg backend
     | SetLatency ClientId Latency
     | CollapsableGroupStart String
     | CollapsableGroupEnd String
+    | WebsocketSendStringEvent (Maybe ClientId) Websocket.Connection String
 
 
 {-| -}
@@ -1808,18 +2011,17 @@ handleFrontendUpdate clientId time msg state =
 {-| -}
 handleBackendUpdate :
     Time.Posix
-    -> BackendApp toBackend toFrontend backendMsg backendModel
     -> backendMsg
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-handleBackendUpdate time app msg state =
+handleBackendUpdate time msg state =
     let
         ( newModel, cmd ) =
-            app.update msg state.model
+            state.backendApp.update msg state.model
 
         subscriptions : Subscription BackendOnly backendMsg
         subscriptions =
-            app.subscriptions newModel
+            state.backendApp.subscriptions newModel
 
         newTimers : SeqDict Duration { msg : Nonempty (Time.Posix -> backendMsg) }
         newTimers =
@@ -2934,8 +3136,8 @@ userEvent delay userInputType clientId htmlId event =
 {-| -}
 disconnectFrontend :
     ClientId
-    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 disconnectFrontend clientId instructions =
     wait (Duration.milliseconds 100) instructions
         |> AndThen
@@ -2948,7 +3150,7 @@ disconnectFrontend clientId instructions =
                                 getClientDisconnectSubs (state.backendApp.subscriptions state.model)
                                     |> List.foldl
                                         (\msg state3 ->
-                                            handleBackendUpdate (currentTime state3) state3.backendApp (msg frontend.sessionId clientId) state3
+                                            handleBackendUpdate (currentTime state3) (msg frontend.sessionId clientId) state3
                                         )
                                         state
                         in
@@ -3125,7 +3327,7 @@ simulateStep timeLeft state =
                                 getTriggersTimerMsgs state.backendApp.subscriptions state nextTimerEnd.endTime
                         in
                         List.foldl
-                            (handleBackendUpdate nextTimerEnd.endTime state.backendApp)
+                            (handleBackendUpdate nextTimerEnd.endTime)
                             { state | timers = List.foldl SeqDict.remove state.timers completedDurations }
                             triggeredMsgs
 
@@ -3175,8 +3377,8 @@ If you need to simulate a large passage of time and are finding that it's taking
 -}
 wait :
     Duration
-    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 wait duration =
     NextStep (simulateStep duration)
 
@@ -3933,7 +4135,7 @@ runBackendEffects stepIndex effect state =
                 ( state2, msg ) =
                     runTask Nothing state task
             in
-            handleBackendUpdate (currentTime state2) state2.backendApp msg state2
+            handleBackendUpdate (currentTime state2) msg state2
 
         FlattenedCommand_SendToBackend _ ->
             state
@@ -4286,13 +4488,134 @@ runTask maybeClientId state task =
             function () |> runTask maybeClientId state
 
         WebsocketCreateHandle url function ->
-            function (Websocket.Connection "" url) |> runTask maybeClientId state
+            let
+                helper : { a | websockets : SeqDict Websocket.Connection WebsocketState } -> ( Task restriction x x, { a | websockets : SeqDict Websocket.Connection WebsocketState } )
+                helper a =
+                    let
+                        websocketId : String
+                        websocketId =
+                            SeqDict.size a.websockets |> String.fromInt
 
-        WebsocketSendString _ _ function ->
-            function (Ok ()) |> runTask maybeClientId state
+                        connection : Websocket.Connection
+                        connection =
+                            Websocket.Connection websocketId url
+                    in
+                    ( function connection
+                    , { a
+                        | websockets =
+                            SeqDict.insert
+                                connection
+                                { createdAt = currentTime state, closedAt = Nothing, dataSent = Array.empty }
+                                a.websockets
+                      }
+                    )
+            in
+            case maybeClientId of
+                Just clientId ->
+                    case SeqDict.get clientId state.frontends of
+                        Just frontend ->
+                            let
+                                ( task2, frontend2 ) =
+                                    helper frontend
+                            in
+                            runTask
+                                maybeClientId
+                                { state | frontends = SeqDict.insert clientId frontend2 state.frontends }
+                                task2
 
-        WebsocketClose _ function ->
-            function () |> runTask maybeClientId state
+                        Nothing ->
+                            function (Websocket.Connection "" url) |> runTask maybeClientId state
+
+                Nothing ->
+                    let
+                        ( task2, state2 ) =
+                            helper state
+                    in
+                    runTask maybeClientId state2 task2
+
+        WebsocketSendString connection text2 function ->
+            let
+                helper : { a | websockets : SeqDict Websocket.Connection WebsocketState } -> ( Task restriction x x, { a | websockets : SeqDict Websocket.Connection WebsocketState } )
+                helper a =
+                    case SeqDict.get connection a.websockets of
+                        Just websocketState ->
+                            case websocketState.closedAt of
+                                Just _ ->
+                                    ( function (Err Websocket.ConnectionClosed), a )
+
+                                Nothing ->
+                                    ( function (Ok ())
+                                    , { a
+                                        | websockets =
+                                            SeqDict.insert
+                                                connection
+                                                { websocketState
+                                                    | dataSent =
+                                                        Array.push
+                                                            { sentAt = currentTime state, data = text2 }
+                                                            websocketState.dataSent
+                                                }
+                                                a.websockets
+                                      }
+                                    )
+
+                        Nothing ->
+                            ( function (Err Websocket.ConnectionClosed), a )
+            in
+            case maybeClientId of
+                Just clientId ->
+                    case SeqDict.get clientId state.frontends of
+                        Just frontend ->
+                            let
+                                ( task2, frontend2 ) =
+                                    helper frontend
+                            in
+                            runTask
+                                maybeClientId
+                                { state | frontends = SeqDict.insert clientId frontend2 state.frontends }
+                                task2
+
+                        Nothing ->
+                            function (Err Websocket.ConnectionClosed) |> runTask maybeClientId state
+
+                Nothing ->
+                    let
+                        ( task2, state2 ) =
+                            helper state
+                    in
+                    runTask maybeClientId state2 task2
+
+        WebsocketClose connection function ->
+            let
+                helper : { a | websockets : SeqDict Websocket.Connection WebsocketState } -> { a | websockets : SeqDict Websocket.Connection WebsocketState }
+                helper a =
+                    { a
+                        | websockets =
+                            SeqDict.updateIfExists
+                                connection
+                                (\connectionState ->
+                                    { connectionState
+                                        | closedAt =
+                                            Maybe.withDefault (currentTime state) connectionState.closedAt |> Just
+                                    }
+                                )
+                                a.websockets
+                    }
+            in
+            case maybeClientId of
+                Just clientId ->
+                    case SeqDict.get clientId state.frontends of
+                        Just frontend ->
+                            runTask
+                                maybeClientId
+                                { state | frontends = SeqDict.insert clientId (helper frontend) state.frontends }
+                                (function ())
+
+                        Nothing ->
+                            function () |> runTask maybeClientId state
+
+                Nothing ->
+                    runTask maybeClientId (helper state) (function ())
 
 
 handleHttpResponseWithTestError :
@@ -4482,7 +4805,7 @@ updateTimelineViewData test =
 
 
 viewTest :
-    EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> Int
     -> Int
     -> Int
@@ -4651,7 +4974,7 @@ update config msg (Model model) =
                     ( Model model, Cmd.none )
 
                 Just (Ok tests) ->
-                    case getAt index tests of
+                    case getAt index (flattenEndToEndTestGroup tests) of
                         Just test ->
                             let
                                 ( model2, cmds ) =
@@ -4735,7 +5058,7 @@ update config msg (Model model) =
                                             else
                                                 Nothing
                                         )
-                                        tests
+                                        (flattenEndToEndTestGroup tests)
                                         |> List.filterMap identity
                                         |> List.head
 
@@ -5042,6 +5365,22 @@ update config msg (Model model) =
         |> checkCachedElmValue
 
 
+flattenEndToEndTestGroup :
+    List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> List (EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+flattenEndToEndTestGroup tests =
+    List.concatMap
+        (\testGroup2 ->
+            case testGroup2 of
+                EndToEndTest test ->
+                    [ test ]
+
+                EndToEndTestGroup _ tests2 ->
+                    flattenEndToEndTestGroup tests2
+        )
+        tests
+
+
 runTests :
     List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
     -> Model toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -5050,7 +5389,7 @@ runTests :
         , Cmd (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
         )
 runTests tests (Model model) =
-    case getAt (List.length model.testResults) tests of
+    case getAt (List.length model.testResults) (flattenEndToEndTestGroup tests) of
         Just test ->
             ( Model
                 { model
@@ -5376,7 +5715,7 @@ checkCachedElmValue ( Model model, cmdA ) =
                 (\currentTest ->
                     ( case ( currentTest.showModel, model.tests ) of
                         ( True, Just (Ok tests) ) ->
-                            case getAt currentTest.index tests of
+                            case getAt currentTest.index (flattenEndToEndTestGroup tests) of
                                 Just test ->
                                     let
                                         state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -5521,6 +5860,14 @@ eventTypeToTimelineType eventType =
         CollapsableGroupEnd _ ->
             BackendTimeline
 
+        WebsocketSendStringEvent maybeClientId _ _ ->
+            case maybeClientId of
+                Just clientId ->
+                    FrontendTimeline clientId
+
+                Nothing ->
+                    BackendTimeline
+
 
 {-| -}
 isSkippable : EventType toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Bool
@@ -5578,6 +5925,9 @@ isSkippable eventType =
             True
 
         CollapsableGroupEnd _ ->
+            True
+
+        WebsocketSendStringEvent _ _ _ ->
             True
 
 
@@ -5865,6 +6215,9 @@ checkCachedElmValueHelper event state =
 
                 CollapsableGroupEnd _ ->
                     Nothing
+
+                WebsocketSendStringEvent _ _ _ ->
+                    Nothing
     }
 
 
@@ -5916,7 +6269,7 @@ view (Model model) =
             Just (Ok tests) ->
                 case model.currentTest of
                     Just testView_ ->
-                        case getAt testView_.index tests of
+                        case getAt testView_.index (flattenEndToEndTestGroup tests) of
                             Just instructions ->
                                 testView (Tuple.first model.windowSize) instructions testView_
 
@@ -5995,58 +6348,102 @@ overview :
     -> List (Result TestError ())
     -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 overview tests testResults_ =
-    let
-        overviewBody =
-            case tests of
-                [] ->
-                    [ Html.div
-                        [ defaultFontColor
-                        , Html.Attributes.style "padding" "4px"
-                        ]
-                        [ Html.text "You don't have any tests written yet!" ]
+    case tests of
+        [] ->
+            overviewContainer
+                [ Html.div
+                    [ defaultFontColor
+                    , Html.Attributes.style "padding" "4px"
                     ]
+                    [ Html.text "You don't have any tests written yet!" ]
+                ]
 
-                _ ->
-                    List.foldl
-                        (\test { index, testResults, elements } ->
-                            { index = index + 1
-                            , testResults = List.drop 1 testResults
-                            , elements =
-                                Html.div
-                                    [ Html.Attributes.style "padding-bottom" "4px" ]
-                                    [ button (PressedViewTest index) (getTestName test)
-                                    , case testResults of
-                                        (Ok ()) :: _ ->
-                                            Html.span
-                                                [ Html.Attributes.style "color" "rgb(0, 200, 0)"
-                                                , Html.Attributes.style "padding" "4px"
-                                                ]
-                                                [ Html.text "Passed" ]
+        _ ->
+            overviewHelper 0 testResults_ tests |> .elements |> List.reverse |> overviewContainer
 
-                                        (Err head) :: _ ->
-                                            let
-                                                error =
-                                                    testErrorToString head
-                                            in
-                                            Html.b
-                                                [ Html.Attributes.style "color" errorColor
-                                                , Html.Attributes.style "padding" "4px"
-                                                , Html.Attributes.style "white-space" "pre-wrap"
-                                                ]
-                                                [ Html.text error ]
 
-                                        [] ->
-                                            Html.text ""
+overviewHelper :
+    Int
+    -> List (Result TestError ())
+    -> List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    ->
+        { index : Int
+        , testResults : List (Result TestError ())
+        , elements : List (Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+        }
+overviewHelper initialIndex testResults_ tests =
+    List.foldl
+        (\testGroup2 { index, testResults, elements } ->
+            case testGroup2 of
+                EndToEndTest test2 ->
+                    { index = index + 1
+                    , testResults = List.drop 1 testResults
+                    , elements = testResultRow index test2 testResults :: elements
+                    }
+
+                EndToEndTestGroup name testGroups ->
+                    let
+                        data =
+                            overviewHelper index testResults_ testGroups
+                    in
+                    { index = data.index
+                    , testResults = data.testResults
+                    , elements =
+                        Html.div
+                            [ Html.Attributes.style "padding" "8px" ]
+                            [ Html.div
+                                [ Html.Attributes.style "border" "1px rgb(100,100,100) solid"
+                                , Html.Attributes.style "border-radius" "4px"
+                                , Html.Attributes.style "padding" "8px"
+                                ]
+                                (Html.div
+                                    [ Html.Attributes.style "color" "rgb(255,255,255)"
+                                    , Html.Attributes.style "padding-bottom" "4px"
+                                    , Html.Attributes.style "font-weight" "700"
                                     ]
-                                    :: elements
-                            }
-                        )
-                        { index = 0, testResults = testResults_, elements = [] }
-                        tests
-                        |> .elements
-                        |> List.reverse
-    in
-    overviewContainer overviewBody
+                                    [ Html.text name ]
+                                    :: List.reverse data.elements
+                                )
+                            ]
+                            :: elements
+                    }
+        )
+        { index = initialIndex, testResults = testResults_, elements = [] }
+        tests
+
+
+testResultRow :
+    Int
+    -> EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> List (Result TestError ())
+    -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+testResultRow index test testResults =
+    Html.div
+        [ Html.Attributes.style "padding-bottom" "4px" ]
+        [ button (PressedViewTest index) (getTestName test)
+        , case testResults of
+            (Ok ()) :: _ ->
+                Html.span
+                    [ Html.Attributes.style "color" "rgb(0, 200, 0)"
+                    , Html.Attributes.style "padding" "4px"
+                    ]
+                    [ Html.text "Passed" ]
+
+            (Err head) :: _ ->
+                let
+                    error =
+                        testErrorToString head
+                in
+                Html.b
+                    [ Html.Attributes.style "color" errorColor
+                    , Html.Attributes.style "padding" "4px"
+                    , Html.Attributes.style "white-space" "pre-wrap"
+                    ]
+                    [ Html.text error ]
+
+            [] ->
+                Html.text ""
+        ]
 
 
 overviewContainer : List (Html msg) -> Html msg
@@ -6158,7 +6555,7 @@ defaultFontColor =
 
 {-| -}
 getState :
-    EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 getState instructions =
     case instructions of
@@ -6173,7 +6570,7 @@ getState instructions =
 
 
 {-| -}
-getTestName : EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> String
+getTestName : EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> String
 getTestName instructions =
     case instructions of
         NextStep _ instructions_ ->
@@ -6484,6 +6881,9 @@ currentStepText stepIndex currentStep testView_ =
 
                 CollapsableGroupEnd name ->
                     "Collapsable group end: " ++ name
+
+                WebsocketSendStringEvent _ (Websocket.Connection _ url) _ ->
+                    "Websocket sent data from " ++ url
     in
     Html.div
         [ Html.Attributes.style "padding" "4px", Html.Attributes.title fullMsg ]
@@ -6691,6 +7091,9 @@ eventToArrows timelines collapsedRanges2 adjustedColumnIndex event rowIndex =
             []
 
         CollapsableGroupEnd _ ->
+            []
+
+        WebsocketSendStringEvent _ _ _ ->
             []
 
 
@@ -7428,6 +7831,9 @@ eventIcon timelines testView2 event collapsedRanges2 adjustedColumIndex columnIn
                 ]
                 []
             ]
+
+        WebsocketSendStringEvent _ _ _ ->
+            [ circleHelper "e2e-big-circle" ]
     )
         ++ (if noErrors then
                 []
@@ -7846,7 +8252,7 @@ visibleStepIndex testView_ =
 {-| -}
 testView :
     Int
-    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> TestView toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> List (Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
 testView windowWidth instructions testView_ =
@@ -8389,7 +8795,7 @@ startViewer viewerWith2 =
 {-| Msg type for a headless end to end test runner.
 -}
 type HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    = HeadlessMsg (Result FileLoadError (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
+    = HeadlessMsg (Result FileLoadError (List (EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
 
 
 {-| Create a headless test runner.
@@ -8408,7 +8814,7 @@ type HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backe
 -}
 startHeadless :
     (Json.Encode.Value -> Cmd (HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
-    -> ViewerWith (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+    -> ViewerWith (List (EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
     -> Program () () (HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 startHeadless outputResults viewerWith2 =
     Platform.worker
