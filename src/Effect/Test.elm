@@ -849,53 +849,58 @@ testErrorToString error =
 
 
 {-| -}
-toTest : EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Test
-toTest instructions =
-    let
-        state =
-            instructionsToState instructions
-    in
-    Test.test state.testName
-        (\() ->
-            case state.testErrors of
-                firstError :: _ ->
-                    testErrorToString firstError |> Expect.fail
+toTest : EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Test
+toTest endToEndTestGroup =
+    case endToEndTestGroup of
+        EndToEndTestGroup name group2 ->
+            Test.describe name (List.map toTest group2)
 
-                [] ->
-                    let
-                        duplicates =
-                            gatherEqualsBy .name state.snapshots
-                                |> List.filterMap
-                                    (\( first, rest ) ->
-                                        if List.isEmpty rest then
-                                            Nothing
+        EndToEndTest instructions ->
+            let
+                state =
+                    instructionsToState instructions
+            in
+            Test.test state.testName
+                (\() ->
+                    case state.testErrors of
+                        firstError :: _ ->
+                            testErrorToString firstError |> Expect.fail
 
-                                        else
-                                            Just ( first.name, List.length rest + 1 )
-                                    )
-                    in
-                    case duplicates of
                         [] ->
-                            Expect.pass
+                            let
+                                duplicates =
+                                    gatherEqualsBy .name state.snapshots
+                                        |> List.filterMap
+                                            (\( first, rest ) ->
+                                                if List.isEmpty rest then
+                                                    Nothing
 
-                        ( name, count ) :: [] ->
-                            "A snapshot named \""
-                                ++ name
-                                ++ "\" appears "
-                                ++ String.fromInt count
-                                ++ " times. Make sure snapshot names are unique!"
-                                |> Expect.fail
+                                                else
+                                                    Just ( first.name, List.length rest + 1 )
+                                            )
+                            in
+                            case duplicates of
+                                [] ->
+                                    Expect.pass
 
-                        rest ->
-                            "These snapshot names appear multiple times:"
-                                ++ String.concat
-                                    (List.map
-                                        (\( name, count ) -> "\n" ++ name ++ " (" ++ String.fromInt count ++ " times)")
-                                        rest
-                                    )
-                                ++ " Make sure snapshot names are unique!"
-                                |> Expect.fail
-        )
+                                ( name, count ) :: [] ->
+                                    "A snapshot named \""
+                                        ++ name
+                                        ++ "\" appears "
+                                        ++ String.fromInt count
+                                        ++ " times. Make sure snapshot names are unique!"
+                                        |> Expect.fail
+
+                                rest ->
+                                    "These snapshot names appear multiple times:"
+                                        ++ String.concat
+                                            (List.map
+                                                (\( name, count ) -> "\n" ++ name ++ " (" ++ String.fromInt count ++ " times)")
+                                                rest
+                                            )
+                                        ++ " Make sure snapshot names are unique!"
+                                        |> Expect.fail
+                )
 
 
 {-| Copied from elm-community/list-extra
@@ -945,23 +950,38 @@ gatherWith testFn list =
 This can be used with Effect.Snapshot.uploadSnapshots to perform visual regression testing.
 -}
 toSnapshots :
-    EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     -> List (Snapshot frontendMsg)
-toSnapshots instructions =
-    let
-        state =
-            instructionsToState instructions
-    in
-    state
-        |> .snapshots
-        |> List.map
-            (\{ name, body, width, height } ->
-                { name = state.testName ++ ": " ++ name
-                , body = body
-                , widths = List.Nonempty.fromElement width
-                , minimumHeight = Just height
-                }
-            )
+toSnapshots endToEndTestGroup =
+    toSnapshotsHelper "" endToEndTestGroup
+
+
+{-| Get all snapshots from a test.
+This can be used with Effect.Snapshot.uploadSnapshots to perform visual regression testing.
+-}
+toSnapshotsHelper :
+    String
+    -> EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> List (Snapshot frontendMsg)
+toSnapshotsHelper path endToEndTestGroup =
+    case endToEndTestGroup of
+        EndToEndTestGroup name group2 ->
+            List.concatMap (toSnapshotsHelper (path ++ name ++ "/")) group2
+
+        EndToEndTest instructions ->
+            let
+                state =
+                    instructionsToState instructions
+            in
+            List.map
+                (\{ name, body, width, height } ->
+                    { name = path ++ state.testName ++ ": " ++ name
+                    , body = body
+                    , widths = List.Nonempty.fromElement width
+                    , minimumHeight = Just height
+                    }
+                )
+                state.snapshots
 
 
 {-| -}
