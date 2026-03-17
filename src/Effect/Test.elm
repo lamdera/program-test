@@ -8815,7 +8815,7 @@ startViewer viewerWith2 =
 {-| Msg type for a headless end to end test runner.
 -}
 type HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    = HeadlessMsg (Result FileLoadError (List (EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
+    = HeadlessMsg (Result FileLoadError (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)))
 
 
 {-| Create a headless test runner.
@@ -8834,7 +8834,7 @@ type HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backe
 -}
 startHeadless :
     (Json.Encode.Value -> Cmd (HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
-    -> ViewerWith (List (EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+    -> ViewerWith (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
     -> Program () () (HeadlessMsg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 startHeadless outputResults viewerWith2 =
     Platform.worker
@@ -8854,29 +8854,38 @@ headlessUpdate outputResults (HeadlessMsg result) () =
     case result of
         Ok tests ->
             let
-                errors : List String
-                errors =
-                    List.filterMap
-                        (\test ->
-                            let
-                                state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-                                state =
-                                    instructionsToState test
-                            in
-                            case state.testErrors of
-                                [] ->
-                                    Nothing
+                errors : String -> List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel) -> List String
+                errors path tests2 =
+                    List.concatMap
+                        (\group2 ->
+                            case group2 of
+                                EndToEndTest test ->
+                                    let
+                                        state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                                        state =
+                                            instructionsToState test
+                                    in
+                                    case state.testErrors of
+                                        [] ->
+                                            []
 
-                                firstError :: _ ->
-                                    " - " ++ state.testName ++ ": " ++ testErrorToString firstError |> Just
+                                        firstError :: _ ->
+                                            [ " - " ++ path ++ state.testName ++ ": " ++ testErrorToString firstError ]
+
+                                EndToEndTestGroup name endToEndTests ->
+                                    errors (path ++ name ++ "/") endToEndTests
                         )
-                        tests
+                        tests2
+
+                errors2 : List String
+                errors2 =
+                    errors "" tests
             in
-            if List.isEmpty errors then
+            if List.isEmpty errors2 then
                 ( (), outputResults Json.Encode.null )
 
             else
-                ( (), "The following tests failed:\n" ++ String.join "\n" errors |> Json.Encode.string |> outputResults )
+                ( (), "The following tests failed:\n" ++ String.join "\n" errors2 |> Json.Encode.string |> outputResults )
 
         Err error ->
             ( ()
