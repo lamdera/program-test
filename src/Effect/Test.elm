@@ -6400,14 +6400,14 @@ overviewHelper initialIndex testResults tests =
                         head :: rest ->
                             { index = state.index + 1
                             , testResults = rest
-                            , elements = testResultRow state.index test2 head :: state.elements
+                            , elements = testResultRow state.index test2 (Just head) :: state.elements
                             }
 
                         [] ->
                             { index = state.index + 1
                             , testResults = []
                             , elements =
-                                testResultRow state.index test2 (Err (CustomError "Test didn't run for some reason")) :: state.elements
+                                testResultRow state.index test2 Nothing :: state.elements
                             }
 
                 EndToEndTestGroup name testGroups ->
@@ -6449,21 +6449,21 @@ overviewHelper initialIndex testResults tests =
 testResultRow :
     Int
     -> EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> Result TestError ()
+    -> Maybe (Result TestError ())
     -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
 testResultRow index test testResult =
     Html.div
         [ Html.Attributes.style "padding-bottom" "4px" ]
         [ button (PressedViewTest index) (getTestName test)
         , case testResult of
-            Ok () ->
+            Just (Ok ()) ->
                 Html.span
                     [ Html.Attributes.style "color" "rgb(0, 200, 0)"
                     , Html.Attributes.style "padding" "4px"
                     ]
                     [ Html.text "Passed" ]
 
-            Err head ->
+            Just (Err head) ->
                 let
                     error =
                         testErrorToString head
@@ -6474,6 +6474,9 @@ testResultRow index test testResult =
                     , Html.Attributes.style "white-space" "pre-wrap"
                     ]
                     [ Html.text error ]
+
+            Nothing ->
+                Html.text ""
         ]
 
 
