@@ -6391,20 +6391,34 @@ overviewHelper :
         , testResults : List (Result TestError ())
         , elements : List (Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
         }
-overviewHelper initialIndex testResults_ tests =
+overviewHelper initialIndex testResults tests =
     List.foldl
-        (\testGroup2 { index, testResults, elements } ->
+        (\testGroup2 state ->
             case testGroup2 of
                 EndToEndTest test2 ->
-                    { index = index + 1
-                    , testResults = List.drop 1 testResults
-                    , elements = testResultRow index test2 testResults :: elements
-                    }
+                    case state.testResults of
+                        head :: rest ->
+                            { index = state.index + 1
+                            , testResults = rest
+                            , elements = testResultRow state.index test2 head :: state.elements
+                            }
+
+                        [] ->
+                            { index = state.index + 1
+                            , testResults = []
+                            , elements =
+                                testResultRow state.index test2 (Err (CustomError "Test didn't run for some reason")) :: state.elements
+                            }
 
                 EndToEndTestGroup name testGroups ->
                     let
+                        data :
+                            { index : Int
+                            , testResults : List (Result TestError ())
+                            , elements : List (Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+                            }
                         data =
-                            overviewHelper index testResults_ testGroups
+                            overviewHelper state.index state.testResults testGroups
                     in
                     { index = data.index
                     , testResults = data.testResults
@@ -6425,31 +6439,31 @@ overviewHelper initialIndex testResults_ tests =
                                     :: List.reverse data.elements
                                 )
                             ]
-                            :: elements
+                            :: state.elements
                     }
         )
-        { index = initialIndex, testResults = testResults_, elements = [] }
+        { index = initialIndex, testResults = testResults, elements = [] }
         tests
 
 
 testResultRow :
     Int
     -> EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
-    -> List (Result TestError ())
+    -> Result TestError ()
     -> Html (Msg toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
-testResultRow index test testResults =
+testResultRow index test testResult =
     Html.div
         [ Html.Attributes.style "padding-bottom" "4px" ]
         [ button (PressedViewTest index) (getTestName test)
-        , case testResults of
-            (Ok ()) :: _ ->
+        , case testResult of
+            Ok () ->
                 Html.span
                     [ Html.Attributes.style "color" "rgb(0, 200, 0)"
                     , Html.Attributes.style "padding" "4px"
                     ]
                     [ Html.text "Passed" ]
 
-            (Err head) :: _ ->
+            Err head ->
                 let
                     error =
                         testErrorToString head
@@ -6460,9 +6474,6 @@ testResultRow index test testResults =
                     , Html.Attributes.style "white-space" "pre-wrap"
                     ]
                     [ Html.text error ]
-
-            [] ->
-                Html.text ""
         ]
 
 
