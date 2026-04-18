@@ -856,12 +856,12 @@ toTest endToEndTestGroup =
             Test.describe name (List.map toTest group2)
 
         EndToEndTest instructions ->
-            let
-                state =
-                    instructionsToState instructions
-            in
-            Test.test state.testName
+            Test.test (getTestName instructions)
                 (\() ->
+                    let
+                        state =
+                            instructionsToState instructions
+                    in
                     case state.testErrors of
                         firstError :: _ ->
                             testErrorToString firstError |> Expect.fail
