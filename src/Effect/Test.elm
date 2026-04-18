@@ -793,15 +793,32 @@ testErrorToString error =
             "Data was sent to the frontend through a port named \"" ++ portName ++ "\" but there was no subscription for it"
 
 
+{-| Walk the EndToEndTest chain back to its initial Start state to read the
+test name set by `start`. Cheap because it never applies the NextStep/AndThen
+functions — only unwraps the constructors.
+-}
+extractTestName : EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> String
+extractTestName instructions =
+    case instructions of
+        Start state ->
+            state.testName
+
+        NextStep _ inner ->
+            extractTestName inner
+
+        AndThen _ inner ->
+            extractTestName inner
+
+
 {-| -}
 toTest : EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Test
 toTest instructions =
-    let
-        state =
-            instructionsToState instructions
-    in
-    Test.test state.testName
+    Test.test (extractTestName instructions)
         (\() ->
+            let
+                state =
+                    instructionsToState instructions
+            in
             case state.testErrors of
                 firstError :: _ ->
                     testErrorToString firstError |> Expect.fail
