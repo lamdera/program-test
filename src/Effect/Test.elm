@@ -4024,15 +4024,23 @@ getWindowResizeSubscriptions subscription =
             []
 
 
-{-| -}
 flattenEffects :
     SeqDict ClientId (FrontendState a b c d)
     -> Command restriction toBackend frontendMsg
     -> List (FlattenedCommand restriction toBackend frontendMsg)
 flattenEffects frontends effect =
+    flattenEffectsHelper frontends effect |> List.reverse
+
+
+{-| -}
+flattenEffectsHelper :
+    SeqDict ClientId (FrontendState a b c d)
+    -> Command restriction toBackend frontendMsg
+    -> List (FlattenedCommand restriction toBackend frontendMsg)
+flattenEffectsHelper frontends effect =
     case effect of
         Batch effects ->
-            List.concatMap (flattenEffects frontends) effects
+            List.concatMap (flattenEffectsHelper frontends) effects
 
         None ->
             []
@@ -6487,7 +6495,7 @@ overviewContainer body =
         , Html.Attributes.style "font-family" "arial"
         , Html.Attributes.style "font-size" "16px"
         , darkBackground
-        , Html.Attributes.style "height" "100vh"
+        , Html.Attributes.style "min-height" "100vh"
         ]
         (titleText "End-to-end test viewer" :: body)
 
