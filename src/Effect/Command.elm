@@ -1,5 +1,5 @@
 module Effect.Command exposing
-    ( Command, none, batch, sendToJs, FrontendOnly, BackendOnly
+    ( Command, none, batch, sendToJs, sendToJsBytes, FrontendOnly, BackendOnly
     , map
     , fromCmd
     )
@@ -18,7 +18,7 @@ module Effect.Command exposing
 
 # Commands
 
-@docs Command, none, batch, sendToJs, FrontendOnly, BackendOnly
+@docs Command, none, batch, sendToJs, sendToJsBytes, FrontendOnly, BackendOnly
 
 
 # Fancy Stuff
@@ -32,6 +32,7 @@ module Effect.Command exposing
 
 -}
 
+import Bytes exposing (Bytes)
 import Effect.Internal exposing (Command(..))
 import Json.Encode
 
@@ -119,6 +120,22 @@ sendToJs =
     Port
 
 
+{-| Same as [`sendToJs`](#sendToJs) but for ports that send `Bytes` instead of JSON.
+
+    import Bytes exposing (Bytes)
+    import Command
+
+    port sendBytesPort : Bytes -> Cmd msg
+
+    sendBytes value =
+        Command.sendToJsBytes "sendBytesPort" sendBytesPort value
+
+-}
+sendToJsBytes : String -> (Bytes -> Cmd msg) -> Bytes -> Command FrontendOnly toMsg msg
+sendToJsBytes =
+    PortBytes
+
+
 {-| Transform the messages produced by a command.
 Very similar to [`Html.map`](/packages/elm/html/latest/Html#map).
 
@@ -172,6 +189,9 @@ map mapToMsg mapMsg frontendEffect =
 
         Port portName function value ->
             Port portName (function >> Cmd.map mapMsg) value
+
+        PortBytes portName function value ->
+            PortBytes portName (function >> Cmd.map mapMsg) value
 
         SendToFrontend clientId toMsg ->
             SendToFrontend clientId (mapToMsg toMsg)

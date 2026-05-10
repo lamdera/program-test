@@ -3603,6 +3603,9 @@ readyEffectsHelper maybeClientId state createdAt effects =
                 FlattenedCommand_Port _ _ _ ->
                     { stillPending = stillPending, ready = effect :: ready }
 
+                FlattenedCommand_PortBytes _ _ _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
                 FlattenedCommand_SendToFrontend clientId _ ->
                     case SeqDict.get clientId state.frontends of
                         Just frontend ->
@@ -3897,6 +3900,12 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                 Nothing ->
                     newState
 
+        FlattenedCommand_PortBytes _ _ _ ->
+            -- TODO: Bytes ports are not currently simulated in tests beyond
+            -- compiling. Outgoing data is dropped and incoming subscriptions
+            -- never fire.
+            state
+
         FlattenedCommand_SendToFrontend _ _ ->
             state
 
@@ -4086,6 +4095,9 @@ flattenEffectsHelper frontends effect =
         Port string function value ->
             [ FlattenedCommand_Port string function value ]
 
+        PortBytes string function value ->
+            [ FlattenedCommand_PortBytes string function value ]
+
         SendToFrontend (Effect.Internal.ClientId clientId) toMsg ->
             [ FlattenedCommand_SendToFrontend (Effect.Lamdera.clientIdFromString clientId) toMsg ]
 
@@ -4125,6 +4137,7 @@ type FlattenedCommand restriction toMsg msg
     | FlattenedCommand_NavigationReloadAndSkipCache
     | FlattenedCommand_Task (Task restriction msg msg)
     | FlattenedCommand_Port String (Json.Encode.Value -> Cmd msg) Json.Encode.Value
+    | FlattenedCommand_PortBytes String (Bytes -> Cmd msg) Bytes
     | FlattenedCommand_SendToFrontend ClientId toMsg
     | FlattenedCommand_FileDownloadUrl { href : String }
     | FlattenedCommand_FileDownloadString { name : String, mimeType : String, content : String }
@@ -4190,6 +4203,9 @@ runBackendEffects stepIndex effect state =
             state
 
         FlattenedCommand_Port _ _ _ ->
+            state
+
+        FlattenedCommand_PortBytes _ _ _ ->
             state
 
         FlattenedCommand_FileDownloadUrl _ ->

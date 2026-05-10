@@ -1,5 +1,5 @@
 module Effect.Subscription exposing
-    ( Subscription, none, batch, fromJs
+    ( Subscription, none, batch, fromJs, fromJsBytes
     , map
     )
 
@@ -17,7 +17,7 @@ module Effect.Subscription exposing
 
 # Subscriptions
 
-@docs Subscription, none, batch, fromJs
+@docs Subscription, none, batch, fromJs, fromJsBytes
 
 
 # Fancy Stuff
@@ -26,6 +26,7 @@ module Effect.Subscription exposing
 
 -}
 
+import Bytes exposing (Bytes)
 import Effect.Command exposing (FrontendOnly)
 import Effect.Internal
 import Json.Decode
@@ -89,6 +90,24 @@ fromJs portName portFunction msg =
     Effect.Internal.SubPort portName (portFunction msg) msg
 
 
+{-| Same as [`fromJs`](#fromJs) but for ports that receive `Bytes` instead of JSON.
+
+    import Bytes exposing (Bytes)
+    import Command exposing (FrontendOnly)
+    import Subscription exposing (Subscription)
+
+    port bytesEventPort : (Bytes -> msg) -> Sub msg
+
+    bytesEvent : (Bytes -> msg) -> Subscription FrontendOnly msg
+    bytesEvent msg =
+        Subscription.fromJsBytes "bytesEventPort" bytesEventPort msg
+
+-}
+fromJsBytes : String -> ((Bytes -> msg) -> Sub msg) -> (Bytes -> msg) -> Subscription FrontendOnly msg
+fromJsBytes portName portFunction msg =
+    Effect.Internal.SubPortBytes portName (portFunction msg) msg
+
+
 {-| Transform the messages produced by a subscription.
 Very similar to [`Html.map`](/packages/elm/html/latest/Html#map).
 
@@ -142,6 +161,9 @@ map mapFunc subscription =
 
         Effect.Internal.SubPort portName sub msg ->
             Effect.Internal.SubPort portName (Sub.map mapFunc sub) (msg >> mapFunc)
+
+        Effect.Internal.SubPortBytes portName sub msg ->
+            Effect.Internal.SubPortBytes portName (Sub.map mapFunc sub) (msg >> mapFunc)
 
         Effect.Internal.SubNone ->
             Effect.Internal.SubNone

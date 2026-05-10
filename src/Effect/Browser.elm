@@ -380,6 +380,9 @@ toSub sub =
         SubPort _ portFunction _ ->
             portFunction
 
+        SubPortBytes _ portFunction _ ->
+            portFunction
+
         OnConnect _ ->
             Sub.none
 

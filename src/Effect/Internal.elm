@@ -83,6 +83,7 @@ type Subscription restriction msg
     | OnResize (Int -> Int -> msg)
     | OnVisibilityChange (Visibility -> msg)
     | SubPort String (Sub msg) (Json.Decode.Value -> msg)
+    | SubPortBytes String (Sub msg) (Bytes -> msg)
     | OnConnect (SessionId -> ClientId -> msg)
     | OnDisconnect (SessionId -> ClientId -> msg)
     | HttpTrack String (Http.Progress -> msg)
@@ -107,6 +108,7 @@ type Command restriction toMsg msg
     | NavigationReloadAndSkipCache
     | Task (Task restriction msg msg)
     | Port String (Json.Encode.Value -> Cmd msg) Json.Encode.Value
+    | PortBytes String (Bytes -> Cmd msg) Bytes
     | SendToFrontend ClientId toMsg
     | SendToFrontends SessionId toMsg
     | Broadcast toMsg

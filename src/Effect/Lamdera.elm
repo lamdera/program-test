@@ -267,6 +267,9 @@ toCmd broadcastCmd toFrontendCmd toBackendCmd effect =
         Effect.Internal.Port _ portFunction value ->
             portFunction value
 
+        Effect.Internal.PortBytes _ portFunction value ->
+            portFunction value
+
         Effect.Internal.SendToFrontend (Effect.Internal.ClientId clientId) toFrontend ->
             toFrontendCmd clientId toFrontend
 
@@ -603,6 +606,9 @@ toSub sub =
             Browser.Events.onResize msg
 
         SubPort _ portFunction _ ->
+            portFunction
+
+        SubPortBytes _ portFunction _ ->
             portFunction
 
         OnConnect msg ->
