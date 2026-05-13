@@ -6922,10 +6922,10 @@ currentStepText stepIndex currentStep testView_ =
                             "File.Select.files error"
 
                 NavigateBack _ ->
-                    "Pressed browser navigate forward button"
+                    "Pressed browser navigate back button"
 
                 NavigateForward _ ->
-                    "Pressed browser navigate backward button"
+                    "Pressed browser navigate forward button"
 
                 SetLatency _ { toBackendLatency, toFrontendLatency } ->
                     "Changed network latency toBackend:"
