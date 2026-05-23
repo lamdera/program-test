@@ -149,7 +149,7 @@ var _LamderaWebsocket_listen = F2(function(router, connection)
                         console.log(event);
                         __Scheduler_rawSpawn(A2(__Platform_sendToSelf, router, __Utils_Tuple2(
                             connection,
-                            A2(__Websocket_closedEvent, event.code, event.reason)
+                            A2(__Websocket_closedEvent, 1006, event.message || "")
                         )));
                     }
                 }
