@@ -4698,11 +4698,12 @@ getDomTask maybeClientId state htmlId function value =
                 |> Test.Html.Query.has [ Test.Html.Selector.id htmlId ]
                 |> Test.Runner.getFailureReason
                 |> (\a ->
+                        -- getFailureReason returns Nothing when the element was found
                         if a == Nothing then
-                            Effect.Internal.BrowserDomNotFound htmlId |> Err
+                            Ok value
 
                         else
-                            Ok value
+                            Effect.Internal.BrowserDomNotFound htmlId |> Err
                    )
 
         Nothing ->

@@ -53,7 +53,16 @@ function _DebugParser_toAnsiString(value)
 
 		if (typeof tag === 'number')
 		{
-			return __DebugParser_Plain(__DebugParser_ElmInternals);
+		    switch (tag) {
+		        case 0:
+                {
+                    return __DebugParser_Plain(__DebugParser_ElmString(JSON.stringify(value.a)));
+                }
+                default:
+                {
+                    return __DebugParser_Plain(__DebugParser_ElmInternals);
+                }
+		    }
 		}
 
 		if (tag[0] === '#')
