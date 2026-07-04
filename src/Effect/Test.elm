@@ -421,6 +421,7 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
     , domain : Url
     , snapshots : List { name : String, body : List (Html frontendMsg), width : Int, height : Int }
     , downloads : List { filename : String, mimeType : String, content : FileContents, downloadedAt : Time.Posix }
+    , logHistory : Bool
     }
 
 
@@ -860,7 +861,7 @@ toTest endToEndTestGroup =
                 (\() ->
                     let
                         state =
-                            instructionsToState instructions
+                            instructionsToStateWithoutHistory instructions
                     in
                     case state.testErrors of
                         firstError :: _ ->
@@ -971,7 +972,7 @@ toSnapshotsHelper path endToEndTestGroup =
         EndToEndTest instructions ->
             let
                 state =
-                    instructionsToState instructions
+                    instructionsToStateWithoutHistory instructions
             in
             List.map
                 (\{ name, body, width, height } ->
@@ -998,6 +999,24 @@ instructionsToState inProgress =
 
         Start state ->
             state
+
+
+{-| Same as instructionsToState except the event history is not stored. The history is only needed for the test viewer, so when we just want to know if a test passed (for example in toTest or startHeadless) we can skip it. This makes tests run faster and use far less memory since intermediate frontend/backend models aren't kept alive.
+-}
+instructionsToStateWithoutHistory :
+    EndToEndTestHelper toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+instructionsToStateWithoutHistory inProgress =
+    case inProgress of
+        NextStep stateFunc inProgress_ ->
+            instructionsToStateWithoutHistory inProgress_ |> stateFunc
+
+        AndThen stateFunc inProgress_ ->
+            -- The state produced by the inner instructions already has logHistory set to False so the plain instructionsToState can be used here.
+            instructionsToStateWithoutHistory inProgress_ |> stateFunc |> instructionsToState
+
+        Start state ->
+            { state | logHistory = False, history = Array.empty }
 
 
 {-| -}
@@ -1525,7 +1544,7 @@ start testName startTime2 config actions =
             , backendApp = config.backendApp
             , model = backend
             , history = Array.empty
-            , pendingEffects = Array.fromList [ { cmds = flattenEffects SeqDict.empty cmd, createdAt = startTime2, stepIndex = 0 } ]
+            , pendingEffects = pushPendingEffect (flattenEffects SeqDict.empty cmd) startTime2 0 Array.empty
             , frontends = SeqDict.empty
             , counter = 0
             , elapsedTime = Quantity.zero
@@ -1545,6 +1564,7 @@ start testName startTime2 config actions =
             , domain = config.domain
             , snapshots = []
             , downloads = []
+            , logHistory = True
             }
                 |> addEvent (BackendInitEvent cmd) Nothing
     in
@@ -1785,16 +1805,15 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                                             { model = frontend
                                             , sessionId = sessionId
                                             , pendingEffects =
-                                                Array.fromList
-                                                    [ { cmds =
-                                                            flattenEffects
-                                                                -- This frontends doesn't include the one we are just now connecting but it shouldn't matter since it's only used for flattening backend broadcasts
-                                                                state.frontends
-                                                                cmd
-                                                      , createdAt = currentTime state
-                                                      , stepIndex = Array.length state.history
-                                                      }
-                                                    ]
+                                                pushPendingEffect
+                                                    (flattenEffects
+                                                        -- This frontends doesn't include the one we are just now connecting but it shouldn't matter since it's only used for flattening backend broadcasts
+                                                        state.frontends
+                                                        cmd
+                                                    )
+                                                    (currentTime state)
+                                                    (Array.length state.history)
+                                                    Array.empty
                                             , toFrontend = []
                                             , timers = getTimers subscriptions |> SeqDict.map (\_ _ -> { startTime = currentTime state })
                                             , navigation =
@@ -2005,11 +2024,10 @@ handleFrontendUpdate clientId time msg state =
                         { frontend
                             | model = newModel
                             , pendingEffects =
-                                Array.push
-                                    { cmds = flattenEffects state.frontends cmd
-                                    , createdAt = currentTime state
-                                    , stepIndex = Array.length state.history
-                                    }
+                                pushPendingEffect
+                                    (flattenEffects state.frontends cmd)
+                                    (currentTime state)
+                                    (Array.length state.history)
                                     frontend.pendingEffects
                             , timers =
                                 SeqDict.merge
@@ -2050,11 +2068,10 @@ handleBackendUpdate time msg state =
     { state
         | model = newModel
         , pendingEffects =
-            Array.push
-                { cmds = flattenEffects state.frontends cmd
-                , createdAt = currentTime state
-                , stepIndex = Array.length state.history
-                }
+            pushPendingEffect
+                (flattenEffects state.frontends cmd)
+                (currentTime state)
+                (Array.length state.history)
                 state.pendingEffects
         , timers =
             SeqDict.merge
@@ -2102,11 +2119,10 @@ handleUpdateFromBackend clientId time { toFrontend, stepIndex } state =
                         { frontendState
                             | model = newModel
                             , pendingEffects =
-                                Array.push
-                                    { cmds = flattenEffects state.frontends cmd
-                                    , createdAt = currentTime state
-                                    , stepIndex = Array.length state.history
-                                    }
+                                pushPendingEffect
+                                    (flattenEffects state.frontends cmd)
+                                    (currentTime state)
+                                    (Array.length state.history)
                                     frontendState.pendingEffects
                             , timers =
                                 SeqDict.merge
@@ -2154,11 +2170,10 @@ handleUpdateFromFrontend { sessionId, clientId, toBackend, stepIndex } state =
     { state
         | model = newModel
         , pendingEffects =
-            Array.push
-                { cmds = flattenEffects state.frontends cmd
-                , createdAt = currentTime state
-                , stepIndex = Array.length state.history
-                }
+            pushPendingEffect
+                (flattenEffects state.frontends cmd)
+                (currentTime state)
+                (Array.length state.history)
                 state.pendingEffects
         , timers =
             SeqDict.merge
@@ -2183,23 +2198,28 @@ addEvent :
 addEvent eventType maybeError state =
     { state
         | history =
-            Array.push
-                { eventType = eventType
-                , time = currentTime state
-                , frontends =
-                    SeqDict.map
-                        (\_ a ->
-                            { model = a.model
-                            , sessionId = a.sessionId
-                            , url = a.navigation.url
-                            , windowSize = a.windowSize
-                            }
-                        )
-                        state.frontends
-                , backend = state.model
-                , testErrors = maybeToList maybeError
-                , cachedElmValue = Nothing
-                }
+            -- History is only needed by the test viewer. Skipping it when it isn't needed saves a lot of memory and time.
+            if state.logHistory then
+                Array.push
+                    { eventType = eventType
+                    , time = currentTime state
+                    , frontends =
+                        SeqDict.map
+                            (\_ a ->
+                                { model = a.model
+                                , sessionId = a.sessionId
+                                , url = a.navigation.url
+                                , windowSize = a.windowSize
+                                }
+                            )
+                            state.frontends
+                    , backend = state.model
+                    , testErrors = maybeToList maybeError
+                    , cachedElmValue = Nothing
+                    }
+                    state.history
+
+            else
                 state.history
         , testErrors = state.testErrors ++ maybeToList maybeError
     }
@@ -3229,31 +3249,30 @@ timerEndTimes dict =
         (SeqDict.toList dict)
 
 
-{-| Find the first minimum element in a list using a comparable transformation. Copied from elm-community/list-extra package
+{-| Get the earliest end time out of these timers and a previously found end time (if any). Equivalent to folding over timerEndTimes but without allocating intermediate lists since this is called on every step of the simulation.
 -}
-minimumBy : (a -> comparable) -> List a -> Maybe a
-minimumBy f ls =
-    let
-        minBy x ( y, fy ) =
+earliestTimerEndTime : SeqDict Duration { startTime : Time.Posix } -> Maybe Time.Posix -> Maybe Time.Posix
+earliestTimerEndTime timers maybeEarliest =
+    SeqDict.foldl
+        (\duration { startTime } earliest ->
             let
-                fx =
-                    f x
+                endTime : Time.Posix
+                endTime =
+                    Duration.addTo startTime duration
             in
-            if fx < fy then
-                ( x, fx )
+            case earliest of
+                Just earliest2 ->
+                    if Time.posixToMillis endTime < Time.posixToMillis earliest2 then
+                        Just endTime
 
-            else
-                ( y, fy )
-    in
-    case ls of
-        [ l_ ] ->
-            Just l_
+                    else
+                        earliest
 
-        l_ :: ls_ ->
-            Just (Tuple.first (List.foldl minBy ( l_, f l_ ) ls_))
-
-        _ ->
-            Nothing
+                Nothing ->
+                    Just endTime
+        )
+        maybeEarliest
+        timers
 
 
 {-| -}
@@ -3302,15 +3321,12 @@ getTriggersTimerMsgs subscriptionsFunc state endTime =
 {-| -}
 hasPendingEffects : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel -> Bool
 hasPendingEffects state =
-    let
-        hasEffectsHelper pendingEffects =
-            Array.foldl
-                (\{ cmds } hasEffects -> hasEffects || not (List.isEmpty cmds))
-                False
-                pendingEffects
-    in
-    hasEffectsHelper state.pendingEffects
-        || List.any (\a -> hasEffectsHelper a.pendingEffects) (SeqDict.values state.frontends)
+    -- Pending effects are only stored if they contain at least one command (see pushPendingEffect) so checking that the arrays are non-empty is enough.
+    not (Array.isEmpty state.pendingEffects)
+        || SeqDict.foldl
+            (\_ frontend hasEffects -> hasEffects || not (Array.isEmpty frontend.pendingEffects))
+            False
+            state.frontends
 
 
 {-| -}
@@ -3320,15 +3336,16 @@ simulateStep :
     -> State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
 simulateStep timeLeft state =
     case
-        timerEndTimes state.timers
-            ++ List.concatMap (\( _, frontend ) -> timerEndTimes frontend.timers) (SeqDict.toList state.frontends)
-            |> minimumBy (\a -> Time.posixToMillis a.endTime)
+        SeqDict.foldl
+            (\_ frontend earliest -> earliestTimerEndTime frontend.timers earliest)
+            (earliestTimerEndTime state.timers Nothing)
+            state.frontends
     of
         Just nextTimerEnd ->
             let
                 delta : Duration
                 delta =
-                    Duration.from (currentTime state) nextTimerEnd.endTime
+                    Duration.from (currentTime state) nextTimerEnd
             in
             if
                 hasPendingEffects state
@@ -3344,10 +3361,10 @@ simulateStep timeLeft state =
                     state2 =
                         let
                             { triggeredMsgs, completedDurations } =
-                                getTriggersTimerMsgs state.backendApp.subscriptions state nextTimerEnd.endTime
+                                getTriggersTimerMsgs state.backendApp.subscriptions state nextTimerEnd
                         in
                         List.foldl
-                            (handleBackendUpdate nextTimerEnd.endTime)
+                            (handleBackendUpdate nextTimerEnd)
                             { state | timers = List.foldl SeqDict.remove state.timers completedDurations }
                             triggeredMsgs
 
@@ -3356,10 +3373,10 @@ simulateStep timeLeft state =
                             (\clientId frontend state4 ->
                                 let
                                     { triggeredMsgs, completedDurations } =
-                                        getTriggersTimerMsgs state4.frontendApp.subscriptions frontend nextTimerEnd.endTime
+                                        getTriggersTimerMsgs state4.frontendApp.subscriptions frontend nextTimerEnd
                                 in
                                 List.foldl
-                                    (handleFrontendUpdate clientId nextTimerEnd.endTime)
+                                    (handleFrontendUpdate clientId nextTimerEnd)
                                     { state4
                                         | frontends =
                                             SeqDict.insert
@@ -3374,7 +3391,7 @@ simulateStep timeLeft state =
                 in
                 simulateStep
                     (timeLeft |> Quantity.minus delta)
-                    (runEffects { state3 | elapsedTime = Duration.from state3.startTime nextTimerEnd.endTime })
+                    (runEffects { state3 | elapsedTime = Duration.from state3.startTime nextTimerEnd })
 
             else
                 { state | elapsedTime = Quantity.plus state.elapsedTime timeLeft }
@@ -3512,6 +3529,23 @@ type alias PendingEffect r toMsg msg =
     , createdAt : Time.Posix
     , stepIndex : Int
     }
+
+
+{-| Commands are usually Command.none so it's worthwhile to skip storing anything in that case. hasPendingEffects relies on this invariant (a pending effect always contains at least one command) to be able to just check if the arrays are empty.
+-}
+pushPendingEffect :
+    List (FlattenedCommand r toMsg msg)
+    -> Time.Posix
+    -> Int
+    -> Array (PendingEffect r toMsg msg)
+    -> Array (PendingEffect r toMsg msg)
+pushPendingEffect cmds createdAt stepIndex pendingEffects =
+    case cmds of
+        [] ->
+            pendingEffects
+
+        _ ->
+            Array.push { cmds = cmds, createdAt = createdAt, stepIndex = stepIndex } pendingEffects
 
 
 readyEffects :
@@ -5440,7 +5474,7 @@ runTests tests (Model model) =
                 { model
                     | testResults =
                         model.testResults
-                            ++ [ case instructionsToState test |> .testErrors of
+                            ++ [ case instructionsToStateWithoutHistory test |> .testErrors of
                                     firstError :: _ ->
                                         Err firstError
 
@@ -8902,7 +8936,7 @@ headlessUpdate outputResults (HeadlessMsg result) () =
                                     let
                                         state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
                                         state =
-                                            instructionsToState test
+                                            instructionsToStateWithoutHistory test
                                     in
                                     case state.testErrors of
                                         [] ->
