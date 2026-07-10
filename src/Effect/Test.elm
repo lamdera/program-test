@@ -3,7 +3,7 @@ module Effect.Test exposing
     , FrontendActions, backendUpdate, fastForward, group, collapsableGroup, andThen, websocketSendString, WebsocketState, EndToEndTest, Action, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions, addTextures, addTexturesWithOptions
-    , startHeadless, HeadlessMsg
+    , startHeadless, HeadlessMsg, getTestResults
     , Button(..), WheelOptions(..), DeltaMode(..), CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent, Latency
     , configForApplication, configForDocument, configForElement, configForSandbox
     )
@@ -37,7 +37,7 @@ Sometimes it's hard to tell what's going on in an end to end test. One way to ma
 
 If you want to just run the end to end tests to make sure they work, or automatically check that they pass in your CI pipeline then you can setup a headless test runner with this function:
 
-@docs startHeadless, HeadlessMsg
+@docs startHeadless, HeadlessMsg, getTestResults
 
 
 ## Types
@@ -8930,6 +8930,46 @@ headlessUpdate outputResults (HeadlessMsg result) () =
             ( ()
             , "Test setup failed: " ++ fileLoadErrorToString error |> Json.Encode.string |> outputResults
             )
+
+
+{-| Loads necessary files and returns a list of tests to run. Useful if you want to create your own test runner.
+-}
+getTestResults :
+    ViewerWith (List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel))
+    -> Task.Task FileLoadError (List ( String, () -> Result String () ))
+getTestResults viewerWith2 =
+    Task.map (getTestResultsHelper "") viewerWith2.cmds
+
+
+getTestResultsHelper :
+    String
+    -> List (EndToEndTest toBackend frontendMsg frontendModel toFrontend backendMsg backendModel)
+    -> List ( String, () -> Result String () )
+getTestResultsHelper path tests2 =
+    List.concatMap
+        (\group2 ->
+            case group2 of
+                EndToEndTest test ->
+                    [ ( path ++ getTestName test
+                      , \() ->
+                            let
+                                state : State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+                                state =
+                                    instructionsToState test
+                            in
+                            case state.testErrors of
+                                [] ->
+                                    Ok ()
+
+                                firstError :: _ ->
+                                    testErrorToString firstError |> Err
+                      )
+                    ]
+
+                EndToEndTestGroup name endToEndTests ->
+                    getTestResultsHelper (path ++ name ++ "/") endToEndTests
+        )
+        tests2
 
 
 {-| -}
