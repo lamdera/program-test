@@ -4,7 +4,7 @@ module Effect.Test exposing
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions, addTextures, addTexturesWithOptions
     , startHeadless, HeadlessMsg, getTestResults
-    , Button(..), WheelOptions(..), DeltaMode(..), CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType, MouseEvent, OverlayPosition, TestError, Touch, TouchEvent, Latency
+    , Button(..), WheelOptions(..), DeltaMode(..), CurrentTimeline, EventFrontend, EventType, FileLoadError, FileLoadErrorType(..), MouseEvent, OverlayPosition, TestError, Touch, TouchEvent, Latency
     , configForApplication, configForDocument, configForElement, configForSandbox
     )
 
