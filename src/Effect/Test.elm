@@ -490,6 +490,7 @@ type alias HttpRequest =
     , body : HttpBody
     , headers : List ( String, String )
     , sentAt : Time.Posix
+    , tracker : Maybe String
     }
 
 
@@ -3866,6 +3867,9 @@ readyEffectsHelper maybeClientId state createdAt effects =
                 FlattenedCommand_HttpCancel _ ->
                     { stillPending = stillPending, ready = effect :: ready }
 
+                FlattenedCommand_HttpTrackedRequest _ ->
+                    { stillPending = stillPending, ready = effect :: ready }
+
                 FlattenedCommand_Passthrough _ ->
                     { stillPending = stillPending, ready = effect :: ready }
         )
@@ -4227,6 +4231,15 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
             -- TODO
             state
 
+        FlattenedCommand_HttpTrackedRequest httpRequest ->
+            -- Progress isn't simulated (http requests complete immediately) but the request itself still needs to be made
+            let
+                ( state2, msg ) =
+                    Effect.Internal.trackedHttpRequestToTask httpRequest
+                        |> runTask (Just clientId) state
+            in
+            handleFrontendUpdate clientId (currentTime state2) msg state2
+
         FlattenedCommand_Passthrough _ ->
             state
 
@@ -4352,6 +4365,9 @@ flattenEffectsHelper frontends effect =
         HttpCancel string ->
             [ FlattenedCommand_HttpCancel string ]
 
+        HttpTrackedRequest httpRequest ->
+            [ FlattenedCommand_HttpTrackedRequest httpRequest ]
+
         Passthrough cmd ->
             [ FlattenedCommand_Passthrough cmd ]
 
@@ -4375,6 +4391,7 @@ type FlattenedCommand restriction toMsg msg
     | FlattenedCommand_FileSelectFile (List String) (File -> msg)
     | FlattenedCommand_FileSelectFiles (List String) (File -> List File -> msg)
     | FlattenedCommand_HttpCancel String
+    | FlattenedCommand_HttpTrackedRequest (Effect.Internal.TrackedHttpRequest msg)
     | FlattenedCommand_Passthrough (Cmd msg)
 
 
@@ -4457,6 +4474,15 @@ runBackendEffects stepIndex effect state =
             -- TODO
             state
 
+        FlattenedCommand_HttpTrackedRequest httpRequest ->
+            -- Progress isn't simulated (http requests complete immediately) but the request itself still needs to be made
+            let
+                ( state2, msg ) =
+                    Effect.Internal.trackedHttpRequestToTask httpRequest
+                        |> runTask Nothing state
+            in
+            handleBackendUpdate (currentTime state2) msg state2
+
         FlattenedCommand_Passthrough _ ->
             state
 
@@ -4492,6 +4518,7 @@ runTask maybeClientId state task =
                     , body = httpBodyFromInternal httpRequest.body
                     , headers = httpRequest.headers
                     , sentAt = currentTime state
+                    , tracker = httpRequest.tracker
                     }
 
                 handleResponse : Http.Response String -> ( State toBackend frontendMsg frontendModel toFrontend backendMsg backendModel, x )
@@ -4549,6 +4576,7 @@ runTask maybeClientId state task =
                     , body = httpBodyFromInternal httpRequest.body
                     , headers = httpRequest.headers
                     , sentAt = currentTime state
+                    , tracker = httpRequest.tracker
                     }
 
                 handleResponse a =
@@ -4726,6 +4754,7 @@ runTask maybeClientId state task =
                             , body = EmptyBody
                             , headers = []
                             , sentAt = currentTime state
+                            , tracker = Nothing
                             }
                         , data = stateToData state
                         }

@@ -8,6 +8,7 @@ module Effect.Internal exposing
     , FileUploadContent(..)
     , FrontendOnly
     , HttpBody(..)
+    , HttpExpect(..)
     , HttpPart(..)
     , HttpRequest
     , NavigationKey(..)
@@ -16,6 +17,7 @@ module Effect.Internal exposing
     , Smaller(..)
     , Subscription(..)
     , Task(..)
+    , TrackedHttpRequest
     , Visibility(..)
     , Wrap(..)
     , XrButton
@@ -28,8 +30,10 @@ module Effect.Internal exposing
     , XrStartError(..)
     , XrView
     , andThen
+    , mapTrackedHttpRequest
     , taskMap
     , taskMapError
+    , trackedHttpRequestToTask
     )
 
 import Browser.Dom
@@ -118,6 +122,7 @@ type Command restriction toMsg msg
     | FileSelectFile (List String) (File -> msg)
     | FileSelectFiles (List String) (File -> List File -> msg)
     | HttpCancel String
+    | HttpTrackedRequest (TrackedHttpRequest msg)
     | Passthrough (Cmd msg)
 
 
@@ -258,7 +263,78 @@ type alias HttpRequest data restriction x a =
     , onRequestComplete : Http.Response data -> Task restriction x a
     , timeout : Maybe Duration
     , isRisky : Bool
+    , tracker : Maybe String
     }
+
+
+{-| An http request that has a tracker. Since `Http.task` doesn't support trackers, these requests are
+represented as a command (which can be handled with `Http.request`) rather than as a task.
+-}
+type alias TrackedHttpRequest msg =
+    { method : String
+    , url : String
+    , body : HttpBody
+    , headers : List ( String, String )
+    , expect : HttpExpect msg
+    , timeout : Maybe Duration
+    , isRisky : Bool
+    , tracker : String
+    }
+
+
+type HttpExpect msg
+    = ExpectStringResponse (Http.Response String -> msg)
+    | ExpectBytesResponse (Http.Response Bytes -> msg)
+
+
+mapTrackedHttpRequest : (a -> b) -> TrackedHttpRequest a -> TrackedHttpRequest b
+mapTrackedHttpRequest mapMsg request =
+    { method = request.method
+    , url = request.url
+    , body = request.body
+    , headers = request.headers
+    , expect =
+        case request.expect of
+            ExpectStringResponse onRequestComplete ->
+                ExpectStringResponse (onRequestComplete >> mapMsg)
+
+            ExpectBytesResponse onRequestComplete ->
+                ExpectBytesResponse (onRequestComplete >> mapMsg)
+    , timeout = request.timeout
+    , isRisky = request.isRisky
+    , tracker = request.tracker
+    }
+
+
+{-| Used when running a tracked http request in an environment that can't actually track progress
+(such as `Effect.Test`). The tracker is kept so that it's still visible to whoever handles the request.
+-}
+trackedHttpRequestToTask : TrackedHttpRequest msg -> Task restriction msg msg
+trackedHttpRequestToTask request =
+    case request.expect of
+        ExpectStringResponse onRequestComplete ->
+            HttpStringTask
+                { method = request.method
+                , url = request.url
+                , body = request.body
+                , headers = request.headers
+                , onRequestComplete = onRequestComplete >> Succeed
+                , timeout = request.timeout
+                , isRisky = request.isRisky
+                , tracker = Just request.tracker
+                }
+
+        ExpectBytesResponse onRequestComplete ->
+            HttpBytesTask
+                { method = request.method
+                , url = request.url
+                , body = request.body
+                , headers = request.headers
+                , onRequestComplete = onRequestComplete >> Succeed
+                , timeout = request.timeout
+                , isRisky = request.isRisky
+                , tracker = Just request.tracker
+                }
 
 
 type HttpBody
@@ -302,6 +378,7 @@ andThen f task =
                 , onRequestComplete = request.onRequestComplete >> andThen f
                 , timeout = request.timeout
                 , isRisky = request.isRisky
+                , tracker = request.tracker
                 }
 
         HttpBytesTask request ->
@@ -313,6 +390,7 @@ andThen f task =
                 , onRequestComplete = request.onRequestComplete >> andThen f
                 , timeout = request.timeout
                 , isRisky = request.isRisky
+                , tracker = request.tracker
                 }
 
         SleepTask delay onResult ->
@@ -397,6 +475,7 @@ taskMapError f task =
                 , onRequestComplete = request.onRequestComplete >> taskMapError f
                 , timeout = request.timeout
                 , isRisky = request.isRisky
+                , tracker = request.tracker
                 }
 
         HttpBytesTask request ->
@@ -408,6 +487,7 @@ taskMapError f task =
                 , onRequestComplete = request.onRequestComplete >> taskMapError f
                 , timeout = request.timeout
                 , isRisky = request.isRisky
+                , tracker = request.tracker
                 }
 
         SleepTask delay onResult ->

@@ -143,12 +143,7 @@ request :
     }
     -> Command restriction toFrontend msg
 request r =
-    case r.expect of
-        ExpectString onResult ->
-            HttpStringTask (requestHelper False r onResult) |> Effect.Internal.Task
-
-        ExpectBytes onResult ->
-            HttpBytesTask (requestHelper False r onResult) |> Effect.Internal.Task
+    requestHelper False r
 
 
 mapResponse : Http.Response body -> Response body
@@ -527,22 +522,68 @@ riskyRequest :
     }
     -> Command restriction toMsg msg
 riskyRequest r =
-    case r.expect of
-        ExpectString onResult ->
-            HttpStringTask (requestHelper True r onResult) |> Effect.Internal.Task
-
-        ExpectBytes onResult ->
-            HttpBytesTask (requestHelper True r onResult) |> Effect.Internal.Task
+    requestHelper True r
 
 
-requestHelper isRisky r onResult =
+requestHelper :
+    Bool
+    ->
+        { method : String
+        , headers : List Header
+        , url : String
+        , body : Body
+        , expect : Expect msg
+        , timeout : Maybe Duration
+        , tracker : Maybe String
+        }
+    -> Command restriction toMsg msg
+requestHelper isRisky r =
+    case r.tracker of
+        Just tracker ->
+            -- Requests with a tracker can't be run as a task (Http.task doesn't support trackers) so
+            -- they are handled as a command instead. That way Effect.Http.track and Effect.Http.cancel work.
+            Effect.Internal.HttpTrackedRequest
+                { method = r.method
+                , url = r.url
+                , headers = r.headers
+                , body = r.body
+                , expect =
+                    case r.expect of
+                        ExpectString onResult ->
+                            Effect.Internal.ExpectStringResponse (mapResponse >> onResult)
+
+                        ExpectBytes onResult ->
+                            Effect.Internal.ExpectBytesResponse (mapResponse >> onResult)
+                , timeout = r.timeout
+                , isRisky = isRisky
+                , tracker = tracker
+                }
+
+        Nothing ->
+            (case r.expect of
+                ExpectString onResult ->
+                    HttpStringTask (taskHelper isRisky r (mapResponse >> onResult >> Effect.Task.succeed))
+
+                ExpectBytes onResult ->
+                    HttpBytesTask (taskHelper isRisky r (mapResponse >> onResult >> Effect.Task.succeed))
+            )
+                |> Effect.Internal.Task
+
+
+taskHelper :
+    Bool
+    -> { r | method : String, headers : List Header, url : String, body : Body, timeout : Maybe Duration }
+    -> (Http.Response data -> Effect.Internal.Task restriction x a)
+    -> Effect.Internal.HttpRequest data restriction x a
+taskHelper isRisky r onRequestComplete =
     { method = r.method
     , url = r.url
     , headers = r.headers
     , body = r.body
-    , onRequestComplete = mapResponse >> onResult >> Effect.Task.succeed
+    , onRequestComplete = onRequestComplete
     , timeout = r.timeout
     , isRisky = isRisky
+    , tracker = Nothing
     }
 
 
@@ -784,6 +825,7 @@ task r =
                 , onRequestComplete = mapResponse >> f
                 , timeout = r.timeout
                 , isRisky = False
+                , tracker = Nothing
                 }
 
         BytesResolver f ->
@@ -795,6 +837,7 @@ task r =
                 , onRequestComplete = mapResponse >> f
                 , timeout = r.timeout
                 , isRisky = False
+                , tracker = Nothing
                 }
 
 
@@ -861,6 +904,7 @@ riskyTask r =
                 , onRequestComplete = mapResponse >> f
                 , timeout = r.timeout
                 , isRisky = True
+                , tracker = Nothing
                 }
 
         BytesResolver f ->
@@ -872,4 +916,5 @@ riskyTask r =
                 , onRequestComplete = mapResponse >> f
                 , timeout = r.timeout
                 , isRisky = True
+                , tracker = Nothing
                 }

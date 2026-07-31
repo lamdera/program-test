@@ -372,6 +372,7 @@ onError f task =
                 , onRequestComplete = request.onRequestComplete >> onError f
                 , timeout = request.timeout
                 , isRisky = request.isRisky
+                , tracker = request.tracker
                 }
 
         HttpBytesTask request ->
@@ -383,6 +384,7 @@ onError f task =
                 , onRequestComplete = request.onRequestComplete >> onError f
                 , timeout = request.timeout
                 , isRisky = request.isRisky
+                , tracker = request.tracker
                 }
 
         SleepTask delay onResult ->

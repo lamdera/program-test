@@ -297,8 +297,103 @@ toCmd broadcastCmd toFrontendCmd toBackendCmd effect =
         Effect.Internal.HttpCancel string ->
             Http.cancel string
 
+        Effect.Internal.HttpTrackedRequest httpRequest ->
+            trackedHttpRequestCmd httpRequest
+
         Effect.Internal.Passthrough cmd ->
             cmd
+
+
+toHttpBody : Effect.Internal.HttpBody -> Http.Body
+toHttpBody body =
+    case body of
+        Effect.Internal.EmptyBody ->
+            Http.emptyBody
+
+        Effect.Internal.StringBody { contentType, content } ->
+            Http.stringBody contentType content
+
+        Effect.Internal.JsonBody value ->
+            Http.jsonBody value
+
+        Effect.Internal.MultipartBody httpParts ->
+            List.map
+                (\part ->
+                    case part of
+                        Effect.Internal.StringPart a b ->
+                            Http.stringPart a b
+
+                        Effect.Internal.FilePart a b ->
+                            case b of
+                                Effect.Internal.RealFile file ->
+                                    Http.filePart a file
+
+                                Effect.Internal.MockFile _ ->
+                                    Http.stringPart "" ""
+
+                        Effect.Internal.BytesPart key mimeType content ->
+                            Http.bytesPart key mimeType content
+                )
+                httpParts
+                |> Http.multipartBody
+
+        Effect.Internal.BytesBody a b ->
+            Http.bytesBody a b
+
+        Effect.Internal.FileBody file ->
+            case file of
+                Effect.Internal.RealFile realFile ->
+                    Http.fileBody realFile
+
+                MockFile _ ->
+                    Http.emptyBody
+
+
+{-| Http requests that have a tracker can't be handled with `Http.task` (it doesn't support trackers)
+so they are sent with `Http.request` instead. That way `Effect.Http.track` and `Effect.Http.cancel` work.
+-}
+trackedHttpRequestCmd : Effect.Internal.TrackedHttpRequest msg -> Cmd msg
+trackedHttpRequestCmd httpRequest =
+    let
+        toMsg : Result msg msg -> msg
+        toMsg result =
+            case result of
+                Ok msg ->
+                    msg
+
+                Err msg ->
+                    msg
+
+        request :
+            { method : String
+            , headers : List Http.Header
+            , url : String
+            , body : Http.Body
+            , expect : Http.Expect msg
+            , timeout : Maybe Float
+            , tracker : Maybe String
+            }
+        request =
+            { method = httpRequest.method
+            , headers = List.map (\( key, value ) -> Http.header key value) httpRequest.headers
+            , url = httpRequest.url
+            , body = toHttpBody httpRequest.body
+            , expect =
+                case httpRequest.expect of
+                    Effect.Internal.ExpectStringResponse onRequestComplete ->
+                        Http.expectStringResponse toMsg (\response -> onRequestComplete response |> Ok)
+
+                    Effect.Internal.ExpectBytesResponse onRequestComplete ->
+                        Http.expectBytesResponse toMsg (\response -> onRequestComplete response |> Ok)
+            , timeout = Maybe.map Duration.inMilliseconds httpRequest.timeout
+            , tracker = Just httpRequest.tracker
+            }
+    in
+    if httpRequest.isRisky then
+        Http.riskyRequest request
+
+    else
+        Http.request request
 
 
 httpHelper httpRequest resolver =
@@ -306,48 +401,7 @@ httpHelper httpRequest resolver =
         { method = httpRequest.method
         , headers = List.map (\( key, value ) -> Http.header key value) httpRequest.headers
         , url = httpRequest.url
-        , body =
-            case httpRequest.body of
-                Effect.Internal.EmptyBody ->
-                    Http.emptyBody
-
-                Effect.Internal.StringBody { contentType, content } ->
-                    Http.stringBody contentType content
-
-                Effect.Internal.JsonBody value ->
-                    Http.jsonBody value
-
-                Effect.Internal.MultipartBody httpParts ->
-                    List.map
-                        (\part ->
-                            case part of
-                                Effect.Internal.StringPart a b ->
-                                    Http.stringPart a b
-
-                                Effect.Internal.FilePart a b ->
-                                    case b of
-                                        Effect.Internal.RealFile file ->
-                                            Http.filePart a file
-
-                                        Effect.Internal.MockFile _ ->
-                                            Http.stringPart "" ""
-
-                                Effect.Internal.BytesPart key mimeType content ->
-                                    Http.bytesPart key mimeType content
-                        )
-                        httpParts
-                        |> Http.multipartBody
-
-                Effect.Internal.BytesBody a b ->
-                    Http.bytesBody a b
-
-                Effect.Internal.FileBody file ->
-                    case file of
-                        Effect.Internal.RealFile realFile ->
-                            Http.fileBody realFile
-
-                        MockFile _ ->
-                            Http.emptyBody
+        , body = toHttpBody httpRequest.body
         , resolver = resolver Ok
         , timeout = Maybe.map Duration.inMilliseconds httpRequest.timeout
         }

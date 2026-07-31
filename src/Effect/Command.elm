@@ -220,6 +220,9 @@ map mapToMsg mapMsg frontendEffect =
         HttpCancel string ->
             HttpCancel string
 
+        HttpTrackedRequest request ->
+            Effect.Internal.mapTrackedHttpRequest mapMsg request |> HttpTrackedRequest
+
         Passthrough cmd ->
             Passthrough (cmd |> Cmd.map mapMsg)
 
