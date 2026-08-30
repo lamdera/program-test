@@ -1,5 +1,5 @@
 module Effect.Test exposing
-    ( start, testGroup, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile, Data, FileContents(..)
+    ( start, testGroup, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse(..), RequestedBy(..), PortToJs, PortToJsBytes, FileData, FileUpload(..), MultipleFilesUpload(..), uploadBytesFile, uploadStringFile, Data, FileContents(..)
     , FrontendActions, backendUpdate, fastForward, group, collapsableGroup, andThen, websocketSendString, websocketClose, WebsocketState, EndToEndTest, Action, HttpBody(..), HttpPart(..), DelayInMs, KeyEvent, KeyOptions(..), PointerEvent, PointerOptions(..)
     , checkState, checkBackend, toTest, toSnapshots
     , fakeNavigationKey, viewer, Msg, Model, viewerWith, ViewerWith, startViewer, addStringFile, addStringFiles, addBytesFile, addBytesFiles, addTexture, addTextureWithOptions, addTextures, addTexturesWithOptions
@@ -13,7 +13,7 @@ module Effect.Test exposing
 
 ## Setting up end to end tests
 
-@docs start, testGroup, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse, RequestedBy, PortToJs, FileData, FileUpload, MultipleFilesUpload, uploadBytesFile, uploadStringFile, Data, FileContents
+@docs start, testGroup, Config, connectFrontend, FrontendApp, BackendApp, HttpRequest, HttpResponse, RequestedBy, PortToJs, PortToJsBytes, FileData, FileUpload, MultipleFilesUpload, uploadBytesFile, uploadStringFile, Data, FileContents
 
 
 ## Control the tests
@@ -416,6 +416,7 @@ type alias State toBackend frontendMsg frontendModel toFrontend backendMsg backe
         { currentRequest : PortToJs, data : Data frontendModel backendModel }
         -> Maybe ( String, Json.Decode.Value )
     , portRequests : List PortToJs
+    , portBytesRequests : List PortToJsBytes
     , handleFileUpload : { data : Data frontendModel backendModel, mimeTypes : List String } -> FileUpload
     , handleMultipleFilesUpload : { data : Data frontendModel backendModel, mimeTypes : List String } -> MultipleFilesUpload
     , domain : Url
@@ -434,6 +435,7 @@ type alias Data frontendModel backendModel =
     { httpRequests : List HttpRequest
     , websockets : SeqDict ( RequestedBy, Effect.Websocket.Connection ) WebsocketState
     , portRequests : List PortToJs
+    , portBytesRequests : List PortToJsBytes
     , fileUploads : List { uploadedAt : Time.Posix, uploadedBy : ClientId, upload : FileUpload }
     , multipleFileUploads : List { uploadedAt : Time.Posix, uploadedBy : ClientId, upload : MultipleFilesUpload }
     , time : Time.Posix
@@ -462,6 +464,7 @@ stateToData state =
             (SeqDict.toList state.frontends)
             |> SeqDict.fromList
     , portRequests = state.portRequests
+    , portBytesRequests = state.portBytesRequests
     , fileUploads = state.fileUploads
     , multipleFileUploads = state.multipleFileUploads
     , time = currentTime state
@@ -480,6 +483,12 @@ type FileContents
 {-| -}
 type alias PortToJs =
     { clientId : ClientId, portName : String, value : Json.Encode.Value }
+
+
+{-| What a client sent over a port that carries `Bytes` rather than JSON.
+-}
+type alias PortToJsBytes =
+    { clientId : ClientId, portName : String, value : Bytes }
 
 
 {-| -}
@@ -1271,6 +1280,11 @@ type alias FrontendActions toBackend frontendMsg frontendModel toFrontend backen
         -> String
         -> Json.Encode.Value
         -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+    , portEventBytes :
+        DelayInMs
+        -> String
+        -> Bytes
+        -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , navigateBack : DelayInMs -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , navigateForward : DelayInMs -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
     , setNetworkLatency : DelayInMs -> Latency -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
@@ -1748,6 +1762,7 @@ start testName startTime2 config actions =
             , handleHttpRequest = config.handleHttpRequest
             , handlePortToJs = config.handlePortToJs
             , portRequests = []
+            , portBytesRequests = []
             , handleFileUpload = config.handleFileUpload
             , handleMultipleFilesUpload = config.handleMultipleFilesUpload
             , domain = config.domain
@@ -2090,6 +2105,7 @@ connectFrontend delay sessionId url windowSize andThenFunc =
                                     , checkModel = checkFrontend clientId
                                     , custom = custom clientId
                                     , portEvent = portEvent clientId
+                                    , portEventBytes = portEventBytes clientId
                                     , navigateForward = navigateForwardAction clientId
                                     , navigateBack = navigateBackAction clientId
                                     , setNetworkLatency = setNetworkLatency clientId
@@ -2144,6 +2160,7 @@ type EventType toBackend frontendMsg frontendModel toFrontend backendMsg backend
     | SnapshotEvent { clientId : ClientId, name : String }
     | ManuallySendToBackend { clientId : ClientId, toBackend : toBackend }
     | ManuallySendPortEvent { clientId : ClientId, portName : String, value : Json.Encode.Value }
+    | ManuallySendPortBytesEvent { clientId : ClientId, portName : String, value : Bytes }
     | EffectFailedEvent (Maybe ClientId) FailedEffect
     | NavigateBack ClientId
     | NavigateForward ClientId
@@ -3047,6 +3064,73 @@ portEvent clientId delay portName value =
                             Nothing ->
                                 addEvent
                                     (ManuallySendPortEvent
+                                        { clientId = clientId
+                                        , portName = portName
+                                        , value = value
+                                        }
+                                    )
+                                    (Just (ClientIdNotFound clientId))
+                                    state
+                    )
+        )
+
+
+portEventBytes :
+    ClientId
+    -> DelayInMs
+    -> String
+    -> Bytes
+    -> Action toBackend frontendMsg frontendModel toFrontend backendMsg backendModel
+portEventBytes clientId delay portName value =
+    Action
+        (\instructions ->
+            wait (Duration.milliseconds delay) instructions
+                |> NextStep
+                    (\state ->
+                        case SeqDict.get clientId state.frontends of
+                            Just frontend ->
+                                let
+                                    msgs : List frontendMsg
+                                    msgs =
+                                        getPortBytesSubscriptions (state.frontendApp.subscriptions frontend.model)
+                                            |> List.filterMap
+                                                (\a ->
+                                                    if a.portName == portName then
+                                                        a.msg value |> Just
+
+                                                    else
+                                                        Nothing
+                                                )
+                                in
+                                if List.isEmpty msgs then
+                                    addEvent
+                                        (ManuallySendPortBytesEvent
+                                            { clientId = clientId
+                                            , portName = portName
+                                            , value = value
+                                            }
+                                        )
+                                        (Just (PortEventNotHandled portName))
+                                        state
+
+                                else
+                                    List.foldl
+                                        (handleFrontendUpdate clientId (currentTime state))
+                                        (addEvent
+                                            (ManuallySendPortBytesEvent
+                                                { clientId = clientId
+                                                , portName = portName
+                                                , value = value
+                                                }
+                                            )
+                                            Nothing
+                                            state
+                                        )
+                                        msgs
+
+                            Nothing ->
+                                addEvent
+                                    (ManuallySendPortBytesEvent
                                         { clientId = clientId
                                         , portName = portName
                                         , value = value
@@ -4134,11 +4218,12 @@ runFrontendEffects sessionId clientId stepIndex effectsToPerform state =
                 Nothing ->
                     newState
 
-        FlattenedCommand_PortBytes _ _ _ ->
-            -- TODO: Bytes ports are not currently simulated in tests beyond
-            -- compiling. Outgoing data is dropped and incoming subscriptions
-            -- never fire.
-            state
+        FlattenedCommand_PortBytes portName _ value ->
+            { state
+                | portBytesRequests =
+                    { clientId = clientId, portName = portName, value = value }
+                        :: state.portBytesRequests
+            }
 
         FlattenedCommand_SendToFrontend _ _ ->
             state
@@ -4254,6 +4339,22 @@ getPortSubscriptions subscription =
             List.concatMap getPortSubscriptions subscriptions
 
         Effect.Internal.SubPort portName _ msg ->
+            [ { portName = portName, msg = msg } ]
+
+        _ ->
+            []
+
+
+{-| -}
+getPortBytesSubscriptions :
+    Subscription FrontendOnly frontendMsg
+    -> List { portName : String, msg : Bytes -> frontendMsg }
+getPortBytesSubscriptions subscription =
+    case subscription of
+        Effect.Internal.SubBatch subscriptions ->
+            List.concatMap getPortBytesSubscriptions subscriptions
+
+        Effect.Internal.SubPortBytes portName _ msg ->
             [ { portName = portName, msg = msg } ]
 
         _ ->
@@ -6141,6 +6242,9 @@ eventTypeToTimelineType eventType =
         ManuallySendPortEvent data ->
             FrontendTimeline data.clientId
 
+        ManuallySendPortBytesEvent data ->
+            FrontendTimeline data.clientId
+
         EffectFailedEvent maybeClientId _ ->
             case maybeClientId of
                 Just clientId ->
@@ -6219,6 +6323,9 @@ isSkippable eventType =
             True
 
         ManuallySendPortEvent _ ->
+            True
+
+        ManuallySendPortBytesEvent _ ->
             True
 
         EffectFailedEvent _ _ ->
@@ -6511,6 +6618,9 @@ checkCachedElmValueHelper event state =
                     Nothing
 
                 ManuallySendPortEvent _ ->
+                    Nothing
+
+                ManuallySendPortBytesEvent _ ->
                     Nothing
 
                 EffectFailedEvent _ _ ->
@@ -7178,6 +7288,9 @@ currentStepText stepIndex currentStep testView_ =
                 ManuallySendPortEvent data ->
                     "Manually triggered \"" ++ data.portName ++ "\" port: " ++ Json.Encode.encode 0 data.value
 
+                ManuallySendPortBytesEvent data ->
+                    "Manually triggered \"" ++ data.portName ++ "\" port: <" ++ String.fromInt (Bytes.width data.value) ++ " bytes>"
+
                 EffectFailedEvent _ effect ->
                     case effect of
                         PushUrlFailed ->
@@ -7461,6 +7574,9 @@ eventToArrows timelines collapsedRanges2 adjustedColumnIndex event rowIndex =
             []
 
         ManuallySendPortEvent _ ->
+            []
+
+        ManuallySendPortBytesEvent _ ->
             []
 
         EffectFailedEvent _ _ ->
@@ -8164,6 +8280,9 @@ eventIcon timelines testView2 event collapsedRanges2 adjustedColumIndex columnIn
             [ circleHelper "e2e-big-circle" ]
 
         ManuallySendPortEvent _ ->
+            [ circleHelper "e2e-big-circle" ]
+
+        ManuallySendPortBytesEvent _ ->
             [ circleHelper "e2e-big-circle" ]
 
         EffectFailedEvent _ _ ->
